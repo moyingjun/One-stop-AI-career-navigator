@@ -1,0 +1,108 @@
+{
+  "version": "0.3.0",
+  "type": "workflow",
+  "name": "AI模拟面试官（语音版）",
+  "description": "语音输入 → AI HR → 语音输出",
+  "nodes": [
+    {
+      "id": "start",
+      "type": "start",
+      "data": {
+        "title": "用户上传语音",
+        "inputs": [
+          {
+            "name": "audio_file",
+            "type": "file",
+            "required": true
+          }
+        ]
+      }
+    },
+
+    {
+      "id": "speech_to_text",
+      "type": "http-request",
+      "data": {
+        "title": "Whisper语音识别",
+        "method": "POST",
+        "url": "https://api.openai.com/v1/audio/transcriptions",
+        "headers": {
+          "Authorization": "Bearer {{OPENAI_API_KEY}}"
+        },
+        "body_type": "form-data",
+        "body": {
+          "file": "{{start.audio_file}}",
+          "model": "whisper-1"
+        }
+      }
+    },
+
+    {
+      "id": "llm_hr",
+      "type": "llm",
+      "data": {
+        "title": "AI HR面试官",
+        "model": {
+          "provider": "openai",
+          "name": "gpt-4o-mini"
+        },
+        "prompt_template": "你是一名专业HR，正在进行真实面试。\n\n候选人回答：\n{{speech_to_text.text}}\n\n要求：\n1. 像真人HR一样回复\n2. 继续追问问题\n3. 语气专业、自然\n4. 每次回复不超过120字\n\n输出直接给候选人说的话"
+      }
+    },
+
+    {
+      "id": "text_to_speech",
+      "type": "http-request",
+      "data": {
+        "title": "OpenAI TTS",
+        "method": "POST",
+        "url": "https://api.openai.com/v1/audio/speech",
+        "headers": {
+          "Authorization": "Bearer {{OPENAI_API_KEY}}",
+          "Content-Type": "application/json"
+        },
+        "body_type": "json",
+        "body": {
+          "model": "gpt-4o-mini-tts",
+          "voice": "alloy",
+          "input": "{{llm_hr.text}}"
+        }
+      }
+    },
+
+    {
+      "id": "end",
+      "type": "end",
+      "data": {
+        "outputs": [
+          {
+            "name": "hr_text",
+            "value": "{{llm_hr.text}}"
+          },
+          {
+            "name": "hr_voice",
+            "value": "{{text_to_speech.data}}"
+          }
+        ]
+      }
+    }
+  ],
+  "edges": [
+    {
+      "source": "start",
+      "target": "speech_to_text"
+    },
+    {
+      "source": "speech_to_text",
+      "target": "llm_hr"
+    },
+    {
+      "source": "llm_hr",
+      "target": "text_to_speech"
+    },
+    {
+      "source": "text_to_speech",
+      "target": "end"
+    }
+  ]
+}

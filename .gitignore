@@ -1,0 +1,34 @@
+# python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# env
+.env
+venv/
+.env.*
+
+# logs
+*.log
+
+# node
+node_modules/
+
+# build
+dist/
+build/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+
+
+# 忽略备份压缩包
+*.zip
+*.rar
+*.7z
