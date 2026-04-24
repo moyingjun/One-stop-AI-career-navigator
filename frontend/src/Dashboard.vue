@@ -427,7 +427,8 @@ onUnmounted(() => {
                     <p class="text-base text-gray-400 text-left leading-relaxed">分析简历优缺点，提供优化建议</p>
                   </div>
 
-                  <div class="card relative overflow-hidden bg-[#151520]/60 backdrop-blur-2xl border border-white/5 rounded-3xl p-6 cursor-pointer transition-all duration-500 group hover:-translate-y-2 hover:border-pink-500/50 hover:shadow-[0_0_40px_rgba(236,72,153,0.15)] text-left flex flex-col items-start animate-fade-in-up animation-delay-400">
+                  <div class="card relative overflow-hidden bg-[#151520]/60 backdrop-blur-2xl border border-white/5 rounded-3xl p-6 cursor-pointer transition-all duration-500 group hover:-translate-y-2 hover:border-pink-500/50 hover:shadow-[0_0_40px_rgba(236,72,153,0.15)] hover:scale-[1.02] text-left flex flex-col items-start animate-fade-in-up animation-delay-400"
+                    @click="router.push('/interview')">
                     <div class="w-14 h-14 flex items-center justify-center bg-pink-500/10 rounded-xl mb-4">
                       <Bot class="w-7 h-7 text-pink-400" />
                     </div>

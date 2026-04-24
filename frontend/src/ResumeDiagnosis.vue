@@ -146,6 +146,12 @@ const startDiagnosis = async () => {
   }
 }
 
+const goToMockInterview = () => {
+  localStorage.setItem('resume_text', resumeText.value)
+  localStorage.setItem('jd_content', jdText.value)
+  router.push('/premium-interview')
+}
+
 onUnmounted(() => {
   if (typewriterTimer) clearTimeout(typewriterTimer)
 })
@@ -318,7 +324,7 @@ onUnmounted(() => {
                 </div>
 
                 <!-- 内容区 -->
-                <div class="flex-1 p-6 overflow-y-auto">
+                <div class="flex-1 p-6 overflow-y-auto relative">
                   <div v-if="displayedResult">
                     <pre class="whitespace-pre-wrap text-sm leading-relaxed text-gray-300 font-sans">{{ displayedResult }}<span class="inline-block w-2 h-4 bg-purple-500 animate-pulse ml-1"></span></pre>
                   </div>
@@ -338,6 +344,20 @@ onUnmounted(() => {
                     <p class="text-gray-500 text-sm">粘贴简历后点击"开始深度诊断"</p>
                     <p class="text-gray-600 text-xs mt-2">AI 将为你提供详细的优化建议</p>
                   </div>
+                </div>
+
+                <!-- 底部：模拟面试入口 -->
+                <div v-if="isComplete" class="px-6 py-4 border-t border-white/10 bg-gradient-to-r from-pink-600/10 to-rose-600/10">
+                  <button
+                    @click="goToMockInterview"
+                    class="w-full bg-gradient-to-r from-pink-500 to-rose-500 text-white py-3 rounded-xl font-semibold text-sm hover:shadow-lg hover:shadow-pink-500/30 transition-all duration-300 hover:-translate-y-0.5 flex items-center justify-center gap-2 group"
+                  >
+                    <svg class="w-4 h-4 group-hover:rotate-12 transition-transform duration-300" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <circle cx="12" cy="8" r="4" />
+                      <path d="M4 20c0-4 4-7 8-7s8 3 8 7" />
+                    </svg>
+                    已根据诊断生成专属题目，立即开启 AI 模拟面试
+                  </button>
                 </div>
               </div>
             </div>
