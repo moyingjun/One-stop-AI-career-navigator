@@ -3,7 +3,6 @@ import os
 import dotenv
 import aiofiles
 import asyncio
-from typing import list
 
 dotenv.load_dotenv()
 

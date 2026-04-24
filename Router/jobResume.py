@@ -3,8 +3,8 @@ from fastapi.responses import RedirectResponse, JSONResponse
 from fastapi.encoders import jsonable_encoder
 from typing import List, Dict, Any, Optional
 import asyncio
-from .models import uploadBody
-from ..Service import service
+from Router.models import uploadBody
+from Service import service
 
 
 router = APIRouter(

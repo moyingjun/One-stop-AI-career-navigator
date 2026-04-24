@@ -1,6 +1,7 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import Landing from '@/Landing.vue'
 import Dashboard from '@/Dashboard.vue'
+import ResumeDiagnosis from '@/ResumeDiagnosis.vue'
 
 const routes = [
   {
@@ -12,6 +13,11 @@ const routes = [
     path: '/dashboard',
     name: 'Dashboard',
     component: Dashboard
+  },
+  {
+    path: '/resume-diagnosis',
+    name: 'ResumeDiagnosis',
+    component: ResumeDiagnosis
   }
 ]
 
