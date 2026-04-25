@@ -1,5 +1,5 @@
 <script setup>
-import { ref, onUnmounted } from 'vue'
+import { ref, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { FileText, ArrowLeft, Paperclip, Sparkles, Bot, Loader2 } from 'lucide-vue-next'
 
@@ -151,6 +151,19 @@ const goToMockInterview = () => {
   localStorage.setItem('jd_content', jdText.value)
   router.push('/premium-interview')
 }
+
+// 初始化：自动读取全局简历
+const initResume = () => {
+  const globalResume = localStorage.getItem('resume_text')
+  if (globalResume) {
+    resumeText.value = globalResume
+    uploadedFileName.value = '已加载全局简历'
+  }
+}
+
+onMounted(() => {
+  initResume()
+})
 
 onUnmounted(() => {
   if (typewriterTimer) clearTimeout(typewriterTimer)

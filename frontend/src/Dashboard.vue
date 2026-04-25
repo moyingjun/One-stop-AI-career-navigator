@@ -5,10 +5,26 @@ import { useRouter } from 'vue-router'
 import { vAutoAnimate } from '@formkit/auto-animate/vue'
 
 // Lucide 图标
-import { Bot, FileText, MessageSquare, Folder, Settings, Clock, Puzzle, Plus, Search, Paperclip, MoreHorizontal, ChevronDown, ChevronRight }
+import { Bot, FileText, MessageSquare, Folder, Settings, Clock, Puzzle, Plus, Search, Paperclip, MoreHorizontal, ChevronDown, ChevronRight, Upload, CheckCircle, X }
   from 'lucide-vue-next'
 
 const router = useRouter()
+
+// 本地存储用户名
+const userName = ref(localStorage.getItem('candidate_name') || '')
+
+// 全局简历状态
+const globalResumeStatus = ref(localStorage.getItem('resume_text') ? 'ready' : 'missing')
+const showResumeDialog = ref(false)
+const pendingResumeText = ref('')
+const pendingFileName = ref('')
+const isGlobalDragging = ref(false)
+
+// 面试舱门模态框
+const showInterviewModal = ref(false)
+const interviewJd = ref('')
+const isInterviewUnlocking = ref(false)
+const interviewPaymentDone = ref(false)
 
 // 响应式数据
 const userId = ref('user_001')
@@ -80,6 +96,85 @@ const handleMouseMove = (e) => {
   const y = (e.clientY / window.innerHeight) * 100
   mouseX.value = x
   mouseY.value = y
+}
+
+// 全局简历拖拽处理
+const handleGlobalFileDrop = (event) => {
+  event.preventDefault()
+  isGlobalDragging.value = false
+  const files = event.dataTransfer.files
+  if (files.length > 0) processGlobalResume(files[0])
+}
+
+const handleGlobalFileSelect = (event) => {
+  const files = event.target.files
+  if (files.length > 0) processGlobalResume(files[0])
+}
+
+const processGlobalResume = (file) => {
+  if (file.type === 'text/plain' || file.name.endsWith('.txt')) {
+    pendingFileName.value = file.name
+    const reader = new FileReader()
+    reader.onload = (e) => {
+      pendingResumeText.value = e.target.result || ''
+      showResumeDialog.value = true
+    }
+    reader.readAsText(file)
+  } else {
+    alert('目前仅支持 TXT 格式的简历文件')
+  }
+}
+
+const confirmResumeUpdate = () => {
+  localStorage.setItem('resume_text', pendingResumeText.value.trim())
+  localStorage.setItem('resume_file_name', pendingFileName.value)
+  globalResumeStatus.value = 'ready'
+  showResumeDialog.value = false
+  pendingResumeText.value = ''
+  pendingFileName.value = ''
+}
+
+const cancelResumeUpdate = () => {
+  showResumeDialog.value = false
+  pendingResumeText.value = ''
+  pendingFileName.value = ''
+}
+
+// 监听其他页面更新简历
+const handleStorageChange = (e) => {
+  if (e.key === 'resume_text') {
+    globalResumeStatus.value = e.newValue ? 'ready' : 'missing'
+  }
+}
+
+// 面试舱门逻辑
+const openInterviewModal = () => {
+  if (globalResumeStatus.value === 'missing') {
+    alert('请先在【全局信息录入】或侧边栏上传您的简历')
+    return
+  }
+  const savedJd = localStorage.getItem('current_interview_jd')
+  if (savedJd) interviewJd.value = savedJd
+  showInterviewModal.value = true
+}
+
+const closeInterviewModal = () => {
+  showInterviewModal.value = false
+  interviewJd.value = ''
+  interviewPaymentDone.value = false
+  isInterviewUnlocking.value = false
+}
+
+const unlockInterview = () => {
+  if (!interviewJd.value.trim()) {
+    alert('请先粘贴岗位描述 (JD)')
+    return
+  }
+  localStorage.setItem('current_interview_jd', interviewJd.value.trim())
+  showInterviewModal.value = false
+  interviewPaymentDone.value = false
+  isInterviewUnlocking.value = false
+  router.push('/interview')
 }
 
 // 处理文件选择
@@ -248,6 +343,7 @@ const playConsoleAnimation = async () => {
 onMounted(() => {
   typeWriter()
   window.addEventListener('mousemove', handleMouseMove)
+  window.addEventListener('storage', handleStorageChange)
   playConsoleAnimation()
 })
 
@@ -256,6 +352,7 @@ onUnmounted(() => {
     clearTimeout(placeholderTimer)
   }
   window.removeEventListener('mousemove', handleMouseMove)
+  window.removeEventListener('storage', handleStorageChange)
 })
 </script>
 
@@ -333,6 +430,46 @@ onUnmounted(() => {
               </button>
             </div>
 
+            <!-- 全局简历状态卡片 -->
+            <div class="mt-6">
+              <h2 class="text-xs text-gray-500 uppercase mb-2 font-semibold text-left pl-2">
+                全局资产
+              </h2>
+              <div
+                class="p-3 rounded-xl border transition-all duration-300 cursor-pointer hover:-translate-y-0.5 hover:shadow-lg group/asset"
+                :class="globalResumeStatus === 'ready'
+                  ? 'bg-green-500/5 border-green-500/20 hover:border-green-500/40 hover:shadow-green-500/10'
+                  : 'bg-red-500/5 border-red-500/20 hover:border-red-500/40 hover:shadow-red-500/10'"
+                @click="$refs.globalFileInput?.click()"
+                @dragover.prevent="isGlobalDragging = true"
+                @dragleave.prevent="isGlobalDragging = false"
+                @drop.prevent="handleGlobalFileDrop"
+              >
+                <div class="flex items-center gap-2 mb-1">
+                  <div class="w-2 h-2 rounded-full transition-all duration-300"
+                    :class="globalResumeStatus === 'ready'
+                      ? 'bg-green-500 animate-pulse shadow-[0_0_8px_rgba(34,197,94,0.8)]'
+                      : 'bg-red-500 animate-pulse shadow-[0_0_8px_rgba(239,68,68,0.8)]'"></div>
+                  <span class="text-xs font-medium transition-colors duration-300"
+                    :class="globalResumeStatus === 'ready' ? 'text-green-400' : 'text-red-400'">
+                    {{ globalResumeStatus === 'ready' ? '全局简历：已就绪' : '简历缺失' }}
+                  </span>
+                </div>
+                <p class="text-[10px] text-gray-600 group-hover/asset:text-gray-400 transition-colors duration-300">
+                  {{ globalResumeStatus === 'ready' ? '拖入新文件可更新' : '点击上传简历' }}
+                </p>
+              </div>
+
+              <!-- 隐藏的全局文件输入 -->
+              <input
+                ref="globalFileInput"
+                type="file"
+                class="hidden"
+                accept=".txt"
+                @change="handleGlobalFileSelect"
+              />
+            </div>
+
             <!-- 侧边栏底部署名 -->
             <div class="mt-auto pt-4 border-t border-white/5 pl-2 group/credit">
               <p class="text-xs text-gray-400 font-medium cursor-pointer relative">
@@ -382,7 +519,7 @@ onUnmounted(() => {
             
             <div class="max-w-5xl mx-auto w-full flex-1 flex flex-col justify-center pb-24 relative z-10">
               <div class="welcome-section mb-6 text-left animate-fade-in-up animation-delay-0">
-                <h1 class="text-5xl md:text-6xl lg:text-7xl font-bold text-gray-200 mb-1 tracking-tighter">{{ greeting }}，同学</h1>
+                <h1 class="text-5xl md:text-6xl lg:text-7xl font-bold text-gray-200 mb-1 tracking-tighter">{{ greeting }}，{{ userName || '新' }}同学</h1>
                 <p class="text-xl md:text-2xl text-purple-200/60 mt-2">今天想探索些什么？</p>
               </div>
 
@@ -428,7 +565,7 @@ onUnmounted(() => {
                   </div>
 
                   <div class="card relative overflow-hidden bg-[#151520]/60 backdrop-blur-2xl border border-white/5 rounded-3xl p-6 cursor-pointer transition-all duration-500 group hover:-translate-y-2 hover:border-pink-500/50 hover:shadow-[0_0_40px_rgba(236,72,153,0.15)] hover:scale-[1.02] text-left flex flex-col items-start animate-fade-in-up animation-delay-400"
-                    @click="router.push('/interview')">
+                    @click="openInterviewModal">
                     <div class="w-14 h-14 flex items-center justify-center bg-pink-500/10 rounded-xl mb-4">
                       <Bot class="w-7 h-7 text-pink-400" />
                     </div>
@@ -545,6 +682,188 @@ onUnmounted(() => {
               </div>
             </div>
           </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 全局简历更新对话框 -->
+    <div v-if="showResumeDialog" class="fixed inset-0 z-[100] flex items-center justify-center">
+      <!-- 背景遮罩 -->
+      <div class="absolute inset-0 bg-black/70 backdrop-blur-sm" @click="cancelResumeUpdate"></div>
+      
+      <!-- 对话框内容 -->
+      <div class="relative z-10 w-full max-w-md mx-4 bg-[#0f0f15]/95 backdrop-blur-xl border border-purple-500/30 rounded-2xl p-6 shadow-2xl shadow-purple-500/20"
+        style="animation: dialogFadeIn 0.3s ease-out;">
+        <!-- 标题 -->
+        <div class="flex items-center gap-3 mb-4">
+          <div class="w-10 h-10 rounded-full bg-purple-500/20 flex items-center justify-center">
+            <Upload class="w-5 h-5 text-purple-400" />
+          </div>
+          <div>
+            <h3 class="text-lg font-semibold text-white">检测到新简历文件</h3>
+            <p class="text-xs text-gray-500">{{ pendingFileName }}</p>
+          </div>
+        </div>
+
+        <!-- 内容预览 -->
+        <div class="bg-white/5 rounded-xl p-3 mb-4 max-h-32 overflow-y-auto">
+          <p class="text-xs text-gray-400 leading-relaxed line-clamp-4">{{ pendingResumeText.substring(0, 200) }}...</p>
+        </div>
+
+        <!-- 提示文字 -->
+        <p class="text-sm text-gray-300 mb-6">
+          是否覆盖并更新全局简历库？更新后所有功能将使用此简历内容。
+        </p>
+
+        <!-- 按钮组 -->
+        <div class="flex gap-3">
+          <button
+            @click="cancelResumeUpdate"
+            class="flex-1 py-3 rounded-xl border border-white/10 text-gray-400 hover:bg-white/5 hover:text-white transition-all duration-300 flex items-center justify-center gap-2"
+          >
+            <X class="w-4 h-4" />
+            取消
+          </button>
+          <button
+            @click="confirmResumeUpdate"
+            class="flex-1 py-3 rounded-xl bg-gradient-to-r from-purple-500 to-indigo-600 text-white font-medium hover:shadow-lg hover:shadow-purple-500/30 transition-all duration-300 flex items-center justify-center gap-2"
+          >
+            <CheckCircle class="w-4 h-4" />
+            确认更新
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 面试舱门模态框 -->
+    <div v-if="showInterviewModal" class="fixed inset-0 z-[100] flex items-center justify-center">
+      <!-- 背景遮罩 -->
+      <div class="absolute inset-0 bg-black/80 backdrop-blur-md" @click="closeInterviewModal"></div>
+      
+      <!-- 舱门对话框 -->
+      <div class="relative z-10 w-full max-w-lg mx-4 bg-[#0f0f15]/95 backdrop-blur-xl border border-pink-500/30 rounded-2xl shadow-2xl shadow-pink-500/20 overflow-hidden"
+        style="animation: dialogFadeIn 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards;">
+        
+        <!-- 顶部装饰线 -->
+        <div class="h-1 w-full bg-gradient-to-r from-pink-500 via-fuchsia-500 to-purple-500"></div>
+        
+        <div class="p-6">
+          <!-- 标题区 -->
+          <div class="flex items-center gap-3 mb-5">
+            <div class="w-12 h-12 rounded-xl bg-gradient-to-br from-pink-500/20 to-fuchsia-500/20 border border-pink-500/30 flex items-center justify-center">
+              <Bot class="w-6 h-6 text-pink-400" />
+            </div>
+            <div>
+              <h3 class="text-xl font-bold text-white">即将进入高压面试舱</h3>
+              <p class="text-xs text-gray-500 mt-0.5">AI 面试官已就绪，等待目标锁定</p>
+            </div>
+          </div>
+
+          <!-- 简历状态提示 -->
+          <div class="flex items-center gap-2 mb-4 px-3 py-2 rounded-lg bg-green-500/5 border border-green-500/20">
+            <div class="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse"></div>
+            <p class="text-xs text-green-400">系统已加载您的全局简历</p>
+          </div>
+
+          <!-- JD 输入区 -->
+          <div class="mb-5">
+            <label class="flex items-center gap-2 text-sm font-medium text-gray-300 mb-2">
+              <span class="text-pink-400">*</span>
+              请贴入您本次要挑战的岗位描述 (JD)
+            </label>
+            <textarea
+              v-model="interviewJd"
+              rows="5"
+              placeholder="在此粘贴目标岗位的完整描述，包括岗位要求、技术栈、职责等信息..."
+              class="w-full px-4 py-3 rounded-xl border bg-black/40 text-gray-100 placeholder-gray-600 resize-none focus:outline-none transition-all duration-300 focus:border-pink-500/50 focus:ring-2 focus:ring-pink-500/20 focus:shadow-[0_0_20px_rgba(236,72,153,0.15)] text-sm leading-relaxed"
+            ></textarea>
+          </div>
+
+          <!-- 支付区 -->
+          <div class="mb-5 p-4 rounded-xl border bg-gradient-to-br from-pink-500/5 to-purple-500/5 border-pink-500/20">
+            <div class="flex items-center justify-between mb-3">
+              <div class="flex items-center gap-2">
+                <svg class="w-4 h-4 text-pink-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <rect x="1" y="4" width="22" height="16" rx="2" ry="2"></rect>
+                  <line x1="1" y1="10" x2="23" y2="10"></line>
+                </svg>
+                <span class="text-sm font-medium text-pink-300">支付解锁面试</span>
+              </div>
+              <span class="text-2xl font-bold bg-gradient-to-r from-pink-400 to-fuchsia-400 bg-clip-text text-transparent">￥0.01</span>
+            </div>
+            <div class="bg-white rounded-xl p-3 w-36 h-36 mx-auto flex items-center justify-center">
+              <svg class="w-32 h-32 text-gray-800" viewBox="0 0 256 256">
+                <!-- 简易二维码占位 SVG -->
+                <rect x="10" y="10" width="70" height="70" fill="currentColor" rx="4"/>
+                <rect x="20" y="20" width="50" height="50" fill="white" rx="2"/>
+                <rect x="30" y="30" width="30" height="30" fill="currentColor" rx="2"/>
+                
+                <rect x="176" y="10" width="70" height="70" fill="currentColor" rx="4"/>
+                <rect x="186" y="20" width="50" height="50" fill="white" rx="2"/>
+                <rect x="196" y="30" width="30" height="30" fill="currentColor" rx="2"/>
+                
+                <rect x="10" y="176" width="70" height="70" fill="currentColor" rx="4"/>
+                <rect x="20" y="186" width="50" height="50" fill="white" rx="2"/>
+                <rect x="30" y="196" width="30" height="30" fill="currentColor" rx="2"/>
+                
+                <rect x="90" y="10" width="15" height="15" fill="currentColor"/>
+                <rect x="115" y="10" width="15" height="15" fill="currentColor"/>
+                <rect x="140" y="10" width="15" height="15" fill="currentColor"/>
+                <rect x="90" y="35" width="15" height="15" fill="currentColor"/>
+                <rect x="140" y="35" width="15" height="15" fill="currentColor"/>
+                
+                <rect x="10" y="90" width="15" height="15" fill="currentColor"/>
+                <rect x="35" y="90" width="15" height="15" fill="currentColor"/>
+                <rect x="60" y="90" width="15" height="15" fill="currentColor"/>
+                <rect x="90" y="90" width="15" height="15" fill="currentColor"/>
+                <rect x="115" y="90" width="15" height="15" fill="currentColor"/>
+                <rect x="140" y="90" width="15" height="15" fill="currentColor"/>
+                
+                <rect x="90" y="115" width="15" height="15" fill="currentColor"/>
+                <rect x="140" y="115" width="15" height="15" fill="currentColor"/>
+                <rect x="176" y="115" width="15" height="15" fill="currentColor"/>
+                <rect x="201" y="115" width="15" height="15" fill="currentColor"/>
+                
+                <rect x="90" y="140" width="15" height="15" fill="currentColor"/>
+                <rect x="115" y="140" width="15" height="15" fill="currentColor"/>
+                <rect x="140" y="140" width="15" height="15" fill="currentColor"/>
+                <rect x="176" y="140" width="15" height="15" fill="currentColor"/>
+                <rect x="226" y="140" width="15" height="15" fill="currentColor"/>
+                
+                <rect x="90" y="176" width="15" height="15" fill="currentColor"/>
+                <rect x="140" y="176" width="15" height="15" fill="currentColor"/>
+                <rect x="176" y="176" width="70" height="70" fill="currentColor" rx="4"/>
+                <rect x="186" y="186" width="50" height="50" fill="white" rx="2"/>
+                <rect x="196" y="196" width="30" height="30" fill="currentColor" rx="2"/>
+                
+                <rect x="90" y="201" width="15" height="15" fill="currentColor"/>
+                <rect x="115" y="226" width="15" height="15" fill="currentColor"/>
+                <rect x="226" y="226" width="15" height="15" fill="currentColor"/>
+              </svg>
+            </div>
+            <p class="text-center text-xs text-gray-500 mt-3">微信扫码完成支付</p>
+          </div>
+
+          <!-- 按钮组 -->
+          <button
+            @click="unlockInterview"
+            :disabled="!interviewJd.trim() || isInterviewUnlocking"
+            class="shimmer-btn w-full py-4 rounded-xl font-semibold text-sm transition-all duration-300 hover:scale-[1.02] disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:scale-100 flex items-center justify-center gap-2.5 overflow-hidden relative bg-gradient-to-r from-pink-500 to-fuchsia-500 text-white shadow-lg shadow-pink-500/30 hover:shadow-xl hover:shadow-pink-500/50"
+          >
+            <span class="absolute inset-0 shimmer-effect pointer-events-none"></span>
+            <Loader2 v-if="isInterviewUnlocking" class="w-4 h-4 animate-spin relative z-10" />
+            <CheckCircle v-else class="w-4 h-4 relative z-10" />
+            <span class="relative z-10">{{ isInterviewUnlocking ? '舱门开启中...' : '我已支付，开启挑战' }}</span>
+          </button>
+
+          <!-- 关闭按钮 -->
+          <button
+            @click="closeInterviewModal"
+            class="w-full mt-3 py-3 rounded-xl border border-white/10 text-gray-500 hover:text-gray-300 hover:bg-white/5 transition-all duration-300 text-sm flex items-center justify-center gap-2"
+          >
+            <X class="w-4 h-4" />
+            暂不挑战，返回工作台
+          </button>
         </div>
       </div>
     </div>
@@ -709,5 +1028,16 @@ button.bg-gradient-to-r.from-purple-500.to-indigo-600 {
 
 .quick-action {
   transition: all 0.2s ease;
+}
+
+@keyframes dialogFadeIn {
+  from {
+    opacity: 0;
+    transform: scale(0.95) translateY(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
 }
 </style>
