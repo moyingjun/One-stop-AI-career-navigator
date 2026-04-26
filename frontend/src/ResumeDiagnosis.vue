@@ -2,11 +2,13 @@
 import { ref, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { FileText, ArrowLeft, Paperclip, Sparkles, Bot, Loader2 } from 'lucide-vue-next'
+import { marked } from 'marked'
 
 const router = useRouter()
 
 const resumeText = ref('')
 const jdText = ref('')
+const targetRole = ref('')
 const diagnosisResult = ref('')
 const displayedResult = ref('')
 const isDiagnosing = ref(false)
@@ -82,6 +84,7 @@ const startDiagnosis = async () => {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         resume_text: resumeText.value,
+        target_role: targetRole.value,
         jd_text: jdText.value
       })
     })
@@ -148,16 +151,20 @@ const startDiagnosis = async () => {
 
 const goToMockInterview = () => {
   localStorage.setItem('resume_text', resumeText.value)
+  localStorage.setItem('target_role', targetRole.value)
   localStorage.setItem('jd_content', jdText.value)
   router.push('/premium-interview')
 }
 
-// 初始化：自动读取全局简历
 const initResume = () => {
   const globalResume = localStorage.getItem('resume_text')
   if (globalResume) {
     resumeText.value = globalResume
     uploadedFileName.value = '已加载全局简历'
+  }
+  const globalRole = localStorage.getItem('target_role')
+  if (globalRole) {
+    targetRole.value = globalRole
   }
 }
 
@@ -291,6 +298,18 @@ onUnmounted(() => {
                 <!-- JD 输入 -->
                 <div class="bg-white/5 backdrop-blur-xl border border-white/10 rounded-2xl p-6">
                   <label class="text-sm font-semibold text-gray-400 uppercase tracking-wider mb-3 block">
+                    目标岗位
+                  </label>
+                  <input
+                    v-model="targetRole"
+                    type="text"
+                    placeholder="如：Java后端开发工程师"
+                    class="w-full bg-[#151520]/60 border border-white/10 rounded-xl p-4 text-sm text-gray-200 placeholder-gray-600 focus:outline-none focus:border-purple-500/50 focus:ring-2 focus:ring-purple-500/20 transition-all duration-300"
+                  />
+                </div>
+
+                <div class="bg-white/5 backdrop-blur-xl border border-white/10 rounded-2xl p-6">
+                  <label class="text-sm font-semibold text-gray-400 uppercase tracking-wider mb-3 block">
                     岗位描述 (可选)
                   </label>
                   <textarea
@@ -339,7 +358,8 @@ onUnmounted(() => {
                 <!-- 内容区 -->
                 <div class="flex-1 p-6 overflow-y-auto relative">
                   <div v-if="displayedResult">
-                    <pre class="whitespace-pre-wrap text-sm leading-relaxed text-gray-300 font-sans">{{ displayedResult }}<span class="inline-block w-2 h-4 bg-purple-500 animate-pulse ml-1"></span></pre>
+                    <div v-html="marked.parse(displayedResult)" class="markdown-body"></div>
+                    <span v-if="!isComplete" class="inline-block w-2 h-4 bg-purple-500 animate-pulse ml-1"></span>
                   </div>
 
                   <div v-else-if="isDiagnosing" class="flex flex-col items-center justify-center h-full text-center">
@@ -407,5 +427,149 @@ pre {
 
 .upload-zone {
   transition: all 0.3s ease;
+}
+
+.markdown-body {
+  color: rgba(233, 213, 255, 0.9);
+  font-size: 14px;
+  line-height: 1.8;
+  word-wrap: break-word;
+}
+
+.markdown-body :deep(h1) {
+  font-size: 1.6em;
+  font-weight: 800;
+  margin: 1.2em 0 0.6em;
+  padding-bottom: 0.3em;
+  background: linear-gradient(135deg, #c084fc, #818cf8);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  border-bottom: 1px solid rgba(168, 85, 247, 0.15);
+}
+
+.markdown-body :deep(h2) {
+  font-size: 1.35em;
+  font-weight: 700;
+  margin: 1em 0 0.5em;
+  padding-bottom: 0.25em;
+  background: linear-gradient(135deg, #a855f7, #6366f1);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  border-bottom: 1px solid rgba(168, 85, 247, 0.1);
+}
+
+.markdown-body :deep(h3) {
+  font-size: 1.15em;
+  font-weight: 600;
+  margin: 0.8em 0 0.4em;
+  background: linear-gradient(135deg, #c084fc, #a78bfa);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+.markdown-body :deep(strong),
+.markdown-body :deep(b) {
+  color: #c084fc;
+  font-weight: 700;
+}
+
+.markdown-body :deep(p) {
+  margin: 0.6em 0;
+  color: rgba(233, 213, 255, 0.85);
+}
+
+.markdown-body :deep(ul),
+.markdown-body :deep(ol) {
+  padding-left: 1.5em;
+  margin: 0.5em 0;
+}
+
+.markdown-body :deep(li) {
+  margin: 0.3em 0;
+  color: rgba(233, 213, 255, 0.8);
+}
+
+.markdown-body :deep(li)::marker {
+  color: #a855f7;
+  text-shadow: 0 0 6px rgba(168, 85, 247, 0.6);
+}
+
+.markdown-body :deep(table) {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  margin: 1em 0;
+  border: 1px solid rgba(168, 85, 247, 0.2);
+  border-radius: 10px;
+  overflow: hidden;
+  background: rgba(0, 0, 0, 0.2);
+}
+
+.markdown-body :deep(thead) {
+  background: rgba(168, 85, 247, 0.1);
+}
+
+.markdown-body :deep(th) {
+  padding: 10px 14px;
+  text-align: left;
+  font-weight: 600;
+  color: #c084fc;
+  font-size: 13px;
+  border-bottom: 1px solid rgba(168, 85, 247, 0.25);
+}
+
+.markdown-body :deep(td) {
+  padding: 9px 14px;
+  font-size: 13px;
+  color: rgba(233, 213, 255, 0.8);
+  border-bottom: 1px solid rgba(168, 85, 247, 0.08);
+}
+
+.markdown-body :deep(tr:hover td) {
+  background: rgba(168, 85, 247, 0.06);
+}
+
+.markdown-body :deep(blockquote) {
+  border-left: 3px solid rgba(168, 85, 247, 0.4);
+  padding: 0.5em 1em;
+  margin: 0.8em 0;
+  background: rgba(168, 85, 247, 0.05);
+  border-radius: 0 8px 8px 0;
+  color: rgba(233, 213, 255, 0.7);
+}
+
+.markdown-body :deep(code) {
+  background: rgba(168, 85, 247, 0.1);
+  padding: 0.15em 0.4em;
+  border-radius: 4px;
+  font-size: 0.9em;
+  color: #d8b4fe;
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+}
+
+.markdown-body :deep(pre) {
+  background: rgba(0, 0, 0, 0.4);
+  border: 1px solid rgba(168, 85, 247, 0.15);
+  border-radius: 10px;
+  padding: 1em;
+  overflow-x: auto;
+  margin: 0.8em 0;
+}
+
+.markdown-body :deep(pre code) {
+  background: none;
+  padding: 0;
+  border-radius: 0;
+  color: rgba(233, 213, 255, 0.85);
+}
+
+.markdown-body :deep(hr) {
+  border: none;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(168, 85, 247, 0.3), transparent);
+  margin: 1.5em 0;
 }
 </style>

@@ -2,6 +2,7 @@
 import { ref, computed, nextTick, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { ArrowLeft, Send, UserCircle, Cpu, Loader2, Shield, AlertTriangle } from 'lucide-vue-next'
+import { marked } from 'marked'
 
 const router = useRouter()
 
@@ -10,7 +11,8 @@ const currentSessionId = ref(crypto.randomUUID())
 const messages = ref([])
 const userInput = ref('')
 const isLoading = ref(false)
-const isInterviewEnded = ref(false) // 新增：控制是否锁定输入框
+const isInterviewEnded = ref(false)
+const isEvaluationDone = ref(false)
 const candidateName = ref('')
 const targetRole = ref('')
 const resumeText = ref('')
@@ -176,7 +178,6 @@ const endInterview = async () => {
     const resData = await response.json()
     
     if (resData.success && resData.data) {
-      // 华丽爆开真实的雷达分数！
       radarScores.value = {
         professional: resData.data.professional || 10,
         logic: resData.data.logic || 10,
@@ -184,8 +185,8 @@ const endInterview = async () => {
         problemSolving: resData.data.problemSolving || 10,
         potential: resData.data.potential || 10
       }
-      // 追加 AI 的真实毒舌评语
       addMessage('ai', `【终极评估】\n${resData.data.comment || '无评价。'}`)
+      isEvaluationDone.value = true
     } else {
       throw new Error(resData.msg || "打分数据解析失败")
     }
@@ -387,7 +388,8 @@ onMounted(() => {
               <div
                 v-if="msg.role === 'ai'"
                 class="absolute left-0 top-3 bottom-3 w-[2px] rounded-full bg-fuchsia-500"></div>
-              <p class="text-sm leading-relaxed whitespace-pre-wrap" :class="msg.role === 'ai' ? 'pl-3' : ''">{{ msg.content }}</p>
+              <div v-if="msg.role === 'ai'" v-html="marked.parse(msg.content)" class="markdown-body chat-markdown pl-3"></div>
+              <p v-else class="text-sm leading-relaxed whitespace-pre-wrap">{{ msg.content }}</p>
               <p class="text-[10px] text-gray-500 mt-1.5 text-right" :class="msg.role === 'ai' ? 'pl-3' : ''">{{ msg.timestamp }}</p>
             </div>
           </div>
@@ -427,14 +429,28 @@ onMounted(() => {
               <span class="relative z-10">发送回答</span>
             </button>
           </div>
-          <!-- 结束面试按钮 -->
+          <!-- 结束面试按钮 / 跳转职业规划 -->
           <div class="flex justify-center mt-3">
             <button
+              v-if="!isEvaluationDone"
               @click="endInterview"
               :disabled="isLoading || messages.length === 0"
               class="ghost-btn px-5 py-2 rounded-lg text-xs font-medium transition-all duration-300 flex items-center gap-2 disabled:opacity-30 disabled:cursor-not-allowed">
               <span class="relative z-10">结束面试并获取评估</span>
             </button>
+            <transition name="fade-up">
+              <button
+                v-if="isEvaluationDone"
+                @click="router.push('/career-planning')"
+                class="career-nav-btn px-6 py-3 rounded-xl text-sm font-semibold transition-all duration-300 flex items-center gap-2.5 overflow-hidden relative bg-gradient-to-r from-cyan-500 to-blue-500 text-white shadow-lg shadow-cyan-500/30 hover:shadow-xl hover:shadow-cyan-500/50 hover:scale-[1.02]">
+                <span class="career-nav-shimmer"></span>
+                <svg class="w-4 h-4 relative z-10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <circle cx="12" cy="12" r="10" />
+                  <polygon points="16.24 7.76 14.12 7.76 10 11.88 10 14 12.12 14 16.24 9.88 16.24 7.76" />
+                </svg>
+                <span class="relative z-10">🧭 寻求导师帮助：生成专属职业规划</span>
+              </button>
+            </transition>
           </div>
         </div>
       </div>
@@ -679,5 +695,192 @@ textarea::-webkit-scrollbar-thumb {
 
 textarea::-webkit-scrollbar-thumb:hover {
   background: rgba(255, 255, 255, 0.15);
+}
+
+.markdown-body.chat-markdown {
+  font-size: 14px;
+  line-height: 1.7;
+  word-wrap: break-word;
+  color: rgba(252, 231, 243, 0.9);
+}
+
+.markdown-body.chat-markdown :deep(h1) {
+  font-size: 1.3em;
+  font-weight: 700;
+  margin: 0.6em 0 0.3em;
+  padding-bottom: 0.2em;
+  background: linear-gradient(135deg, #f472b6, #c084fc);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  border-bottom: 1px solid rgba(236, 72, 153, 0.15);
+}
+
+.markdown-body.chat-markdown :deep(h2) {
+  font-size: 1.15em;
+  font-weight: 600;
+  margin: 0.5em 0 0.25em;
+  background: linear-gradient(135deg, #ec4899, #a855f7);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+.markdown-body.chat-markdown :deep(h3) {
+  font-size: 1.05em;
+  font-weight: 600;
+  margin: 0.4em 0 0.2em;
+  background: linear-gradient(135deg, #f472b6, #d946ef);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+.markdown-body.chat-markdown :deep(strong),
+.markdown-body.chat-markdown :deep(b) {
+  color: #f472b6;
+  font-weight: 700;
+}
+
+.markdown-body.chat-markdown :deep(p) {
+  margin: 0.3em 0;
+  color: rgba(252, 231, 243, 0.85);
+}
+
+.markdown-body.chat-markdown :deep(ul),
+.markdown-body.chat-markdown :deep(ol) {
+  padding-left: 1.3em;
+  margin: 0.3em 0;
+}
+
+.markdown-body.chat-markdown :deep(li) {
+  margin: 0.15em 0;
+  color: rgba(252, 231, 243, 0.8);
+}
+
+.markdown-body.chat-markdown :deep(li)::marker {
+  color: #ec4899;
+  text-shadow: 0 0 6px rgba(236, 72, 153, 0.5);
+}
+
+.markdown-body.chat-markdown :deep(table) {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  margin: 0.5em 0;
+  border: 1px solid rgba(236, 72, 153, 0.2);
+  border-radius: 8px;
+  overflow: hidden;
+  background: rgba(0, 0, 0, 0.2);
+  font-size: 13px;
+}
+
+.markdown-body.chat-markdown :deep(thead) {
+  background: rgba(236, 72, 153, 0.08);
+}
+
+.markdown-body.chat-markdown :deep(th) {
+  padding: 7px 10px;
+  text-align: left;
+  font-weight: 600;
+  color: #f472b6;
+  font-size: 12px;
+  border-bottom: 1px solid rgba(236, 72, 153, 0.2);
+}
+
+.markdown-body.chat-markdown :deep(td) {
+  padding: 6px 10px;
+  font-size: 12px;
+  color: rgba(252, 231, 243, 0.8);
+  border-bottom: 1px solid rgba(236, 72, 153, 0.06);
+}
+
+.markdown-body.chat-markdown :deep(tr:hover td) {
+  background: rgba(236, 72, 153, 0.05);
+}
+
+.markdown-body.chat-markdown :deep(blockquote) {
+  border-left: 3px solid rgba(236, 72, 153, 0.35);
+  padding: 0.3em 0.8em;
+  margin: 0.4em 0;
+  background: rgba(236, 72, 153, 0.04);
+  border-radius: 0 6px 6px 0;
+  color: rgba(252, 231, 243, 0.7);
+}
+
+.markdown-body.chat-markdown :deep(code) {
+  background: rgba(236, 72, 153, 0.1);
+  padding: 0.1em 0.35em;
+  border-radius: 3px;
+  font-size: 0.88em;
+  color: #f9a8d4;
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+}
+
+.markdown-body.chat-markdown :deep(pre) {
+  background: rgba(0, 0, 0, 0.35);
+  border: 1px solid rgba(236, 72, 153, 0.12);
+  border-radius: 8px;
+  padding: 0.8em;
+  overflow-x: auto;
+  margin: 0.4em 0;
+}
+
+.markdown-body.chat-markdown :deep(pre code) {
+  background: none;
+  padding: 0;
+  border-radius: 0;
+  color: rgba(252, 231, 243, 0.85);
+}
+
+.markdown-body.chat-markdown :deep(hr) {
+  border: none;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(236, 72, 153, 0.25), transparent);
+  margin: 0.8em 0;
+}
+
+.fade-up-enter-active {
+  transition: opacity 0.5s ease, transform 0.5s ease;
+}
+.fade-up-leave-active {
+  transition: opacity 0.3s ease, transform 0.3s ease;
+}
+.fade-up-enter-from {
+  opacity: 0;
+  transform: translateY(16px);
+}
+.fade-up-leave-to {
+  opacity: 0;
+  transform: translateY(16px);
+}
+
+.career-nav-btn {
+  position: relative;
+  overflow: hidden;
+  animation: careerNavBreathe 2.5s ease-in-out infinite;
+}
+
+@keyframes careerNavBreathe {
+  0%, 100% { box-shadow: 0 0 15px rgba(6, 182, 212, 0.3); }
+  50% { box-shadow: 0 0 30px rgba(6, 182, 212, 0.6), 0 0 60px rgba(59, 130, 246, 0.2); }
+}
+
+.career-nav-shimmer {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(255, 255, 255, 0.15) 40%,
+    rgba(255, 255, 255, 0.3) 50%,
+    rgba(255, 255, 255, 0.15) 60%,
+    transparent 100%
+  );
+  animation: shimmer 3s infinite;
+  width: 200%;
+  top: 0;
+  left: -100%;
+  pointer-events: none;
 }
 </style>

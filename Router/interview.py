@@ -96,8 +96,21 @@ async def call_tencent_agent(query: str, resume: str = "", jd: str = "", session
 # ==========================================
 @router.post("/chat")
 async def interview_chat(request: ChatRequest):
+    
+    # 🌟 核心改动：拦截第一句话，强行注入 JD 灵魂！
+    enhanced_query = request.user_query
+    
+    # 只有当这是第一句话（history为空），且确实有 JD 数据时才触发
+    if len(request.history) == 0 and request.jd_text and request.jd_text.strip():
+        enhanced_query = f"""{request.user_query}
+
+(⚠️ 系统最高隐秘指令：本次面试的具体【岗位JD】如下。请你务必死死盯住这份JD的要求！如果发现候选人的简历和JD产生严重错位（比如拿研发简历面保洁），请立刻开启最高级别的嘲讽模式，并围绕这份JD的真实工作场景疯狂拷问他！绝不能放水！
+岗位JD内容：
+{request.jd_text.strip()})"""
+
+    # 调用大模型时，发送加强版的 enhanced_query
     agent_reply = await call_tencent_agent(
-        query=request.user_query,
+        query=enhanced_query,
         resume=request.resume_text or "",
         jd=request.jd_text or "",
         session_id=request.session_id or "",
@@ -108,7 +121,6 @@ async def interview_chat(request: ChatRequest):
         return {"reply": agent_reply, "is_payment_required": False, "qr_code": ""}
 
     return {"reply": "抱歉，大模型调用失败，请稍后重试。", "is_payment_required": False, "qr_code": ""}
-
 # ==========================================
 # 2. 真实打分专线（听话的分析师大脑）
 # ==========================================

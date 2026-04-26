@@ -56,10 +56,11 @@ const router = createRouter({
 router.beforeEach((to, from, next) => {
   if (to.meta.requiresSetup) {
     const candidateName = localStorage.getItem('candidate_name')
-    const targetRole = localStorage.getItem('target_role')
+    // 🚨 这里的 targetRole 获取已经被我彻底删除了！
     const resumeText = localStorage.getItem('resume_text')
 
-    if (!candidateName || !targetRole || !resumeText) {
+    // 🚨 这里现在只查姓名和简历两样东西！
+    if (!candidateName || !resumeText) {
       next('/setup')
       return
     }

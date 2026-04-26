@@ -6,7 +6,6 @@ import httpx
 import os
 import json
 import uuid
-import asyncio
 
 router = APIRouter(
     tags=["resumeDiagnosis"],
@@ -16,10 +15,11 @@ router = APIRouter(
 
 class ResumeDiagnoseRequest(BaseModel):
     resume_text: str
+    target_role: Optional[str] = ""
     jd_text: Optional[str] = ""
 
 
-async def tencent_adp_stream(resume_text: str, jd_text: str):
+async def tencent_adp_stream(resume_text: str, target_role: str, jd_text: str):
     api_url = os.getenv("TENCENT_ADP_API_URL", "https://wss.lke.cloud.tencent.com/v1/qbot/chat/sse")
     app_key = os.getenv("TENCENT_ADP_APPKEY", "").strip()
 
@@ -30,20 +30,25 @@ async def tencent_adp_stream(resume_text: str, jd_text: str):
     print(f"FINAL_KEY_SENT: {test_key[:10]}...{test_key[-10:]} (Len: {len(test_key)})")
 
     resume_text = resume_text.replace("\r\n", "\n").strip()
+    target_role = target_role.replace("\r\n", "\n").strip()
     jd_text = jd_text.replace("\r\n", "\n").strip()
 
     unique_id = str(uuid.uuid4())
+
+    jd_section = f"【具体岗位描述(JD)】：\n{jd_text}\n" if jd_text.strip() else ""
+    prompt = f"【候选人目标岗位】：{target_role or '未指定'}\n{jd_section}【候选人简历内容】：\n{resume_text}\n\n请你作为大厂顶级 HR，基于上述真实简历和目标岗位（如果有具体JD，请务必逐条对照JD要求），出具一份极其犀利、毒舌的简历诊断报告。指出简历与岗位要求之间的致命鸿沟！"
 
     payload = {
         "session_id": unique_id,
         "bot_app_key": test_key,
         "visitor_biz_id": unique_id,
-        "content": "请开始简历诊断",
+        "content": prompt,
         "incremental": True,
         "streaming_throttle": 5,
         "visitor_labels": [],
         "custom_variables": {
             "resume": resume_text.strip(),
+            "target_role": target_role.strip(),
             "desc": jd_text.strip()
         },
         "search_network": "disable",
@@ -56,9 +61,7 @@ async def tencent_adp_stream(resume_text: str, jd_text: str):
     }
 
     payload_bytes = json.dumps(payload, ensure_ascii=False)
-    print(f"DEBUG_HEADERS_OUT: {headers}")
     print(f"DEBUG_PAYLOAD_LENGTH: {len(payload_bytes.encode('utf-8'))} bytes")
-    print("DEBUG_READY_TO_POST:", json.dumps(payload, ensure_ascii=False, indent=2))
 
     async with httpx.AsyncClient(timeout=60.0) as client:
         resp = await client.post(
@@ -82,12 +85,9 @@ async def tencent_adp_stream(resume_text: str, jd_text: str):
 
 @router.post("/resume/diagnose")
 async def diagnose_resume(request: ResumeDiagnoseRequest):
-    """
-    SSE 流式代理：接收前端简历文本 + JD，转发至腾讯云 ADP，流式透传响应
-    """
     try:
         return StreamingResponse(
-            tencent_adp_stream(request.resume_text, request.jd_text),
+            tencent_adp_stream(request.resume_text, request.target_role, request.jd_text),
             media_type="text/event-stream",
             headers={
                 "Cache-Control": "no-cache",

@@ -20,12 +20,8 @@ let typewriterIndex = 0
 
 const isResumeValid = ref(false)
 
-const quickConfusions = [
-  '前端转后端，如何快速补齐技术栈？',
-  '工作3年遭遇瓶颈，如何向高级开发晋升？',
-  '非科班出身，如何准备大厂面试？',
-  '想转行做AI，需要学哪些核心技能？'
-]
+const recommendedQuestions = ref([])
+const isLoadingSuggestions = ref(false)
 
 const parsedReport = computed(() => {
   if (!displayedResult.value) return ''
@@ -34,6 +30,36 @@ const parsedReport = computed(() => {
 
 const fillConfusion = (text) => {
   userConfusion.value = text
+}
+
+const loadSuggestions = async () => {
+  if (!resumeText.value || resumeText.value.trim().length < 20) return
+
+  isLoadingSuggestions.value = true
+  try {
+    const response = await fetch('http://127.0.0.1:8000/api/career/suggestions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ resume_text: resumeText.value })
+    })
+
+    if (!response.ok) throw new Error(`HTTP ${response.status}`)
+
+    const data = await response.json()
+    if (data.suggestions && data.suggestions.length > 0) {
+      recommendedQuestions.value = data.suggestions
+    }
+  } catch (err) {
+    console.error('加载推荐问题失败:', err)
+    recommendedQuestions.value = [
+      '简历缺乏亮点怎么补救？',
+      '非科班如何进大厂？',
+      '项目经验太简单怎么办？',
+      '技术栈太旧如何转型？'
+    ]
+  } finally {
+    isLoadingSuggestions.value = false
+  }
 }
 
 const copyReport = async () => {
@@ -168,6 +194,7 @@ onMounted(() => {
   if (globalResume) {
     resumeText.value = globalResume
     isResumeValid.value = globalResume.trim().length >= 20
+    if (isResumeValid.value) loadSuggestions()
   }
 })
 
@@ -245,14 +272,22 @@ onUnmounted(() => {
 
           <!-- 快捷困惑 Chips -->
           <div class="flex flex-wrap gap-2 mt-3 mb-3">
-            <button
-              v-for="(chip, i) in quickConfusions"
-              :key="i"
-              @click="fillConfusion(chip)"
-              class="chip-btn px-3 py-1.5 rounded-full text-[11px] font-medium transition-all duration-300 border border-cyan-500/20 text-cyan-400/70 hover:text-cyan-300 hover:border-cyan-500/50 hover:shadow-[0_0_12px_rgba(6,182,212,0.2)] hover:bg-cyan-500/5"
-            >
-              {{ chip }}
-            </button>
+            <template v-if="isLoadingSuggestions">
+              <div v-for="i in 4" :key="'skel-'+i" class="px-3 py-1.5 rounded-full text-[11px] font-medium border border-cyan-500/10 bg-cyan-500/5 animate-pulse">
+                <span class="inline-block w-24 h-3 bg-cyan-500/10 rounded"></span>
+              </div>
+              <p class="w-full text-[10px] text-cyan-400/40 mt-1">AI 正在深度剖析您的简历，生成专属问题...</p>
+            </template>
+            <template v-else>
+              <button
+                v-for="(chip, i) in recommendedQuestions"
+                :key="i"
+                @click="fillConfusion(chip)"
+                class="chip-btn px-3 py-1.5 rounded-full text-[11px] font-medium transition-all duration-300 border border-cyan-500/20 text-cyan-400/70 hover:text-cyan-300 hover:border-cyan-500/50 hover:shadow-[0_0_12px_rgba(6,182,212,0.2)] hover:bg-cyan-500/5"
+              >
+                {{ chip }}
+              </button>
+            </template>
           </div>
 
           <!-- 生成按钮 -->
