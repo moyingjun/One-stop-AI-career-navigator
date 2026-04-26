@@ -4,7 +4,7 @@ import { useRouter } from 'vue-router'
 import { ArrowLeft, Compass, Map, Target, Loader2, FileText, Copy, Download } from 'lucide-vue-next'
 import { marked } from 'marked'
 
-const API_BASE_URL = `${window.location.protocol}//${window.location.hostname}:8000`
+const API_BASE_URL = `${window.location.protocol}//${window.location.hostname}`
 const router = useRouter()
 
 const resumeText = ref('')
