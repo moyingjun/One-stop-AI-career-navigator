@@ -4,6 +4,7 @@ import { useRouter } from 'vue-router'
 import { ArrowLeft, Compass, Map, Target, Loader2, FileText, Copy, Download } from 'lucide-vue-next'
 import { marked } from 'marked'
 
+const API_BASE_URL = `${window.location.protocol}//${window.location.hostname}:8000`
 const router = useRouter()
 
 const resumeText = ref('')
@@ -37,7 +38,7 @@ const loadSuggestions = async () => {
 
   isLoadingSuggestions.value = true
   try {
-    const response = await fetch('http://127.0.0.1:8000/api/career/suggestions', {
+    const response = await fetch(`${API_BASE_URL}/api/career/suggestions`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ resume_text: resumeText.value })
@@ -120,7 +121,7 @@ const generatePlan = async () => {
   error.value = ''
 
   try {
-    const response = await fetch('http://127.0.0.1:8000/api/career/plan', {
+    const response = await fetch(`${API_BASE_URL}/api/career/plan`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -179,7 +180,7 @@ const generatePlan = async () => {
   } catch (err) {
     console.error('职业规划请求失败:', err)
     if (err.message.includes('Failed to fetch')) {
-      error.value = '无法连接到后端 (http://127.0.0.1:8000)，请确认 FastAPI 服务已启动'
+      error.value = '无法连接到后端 ，请确认 FastAPI 服务已启动'
     } else {
       error.value = `生成失败: ${err.message}`
     }

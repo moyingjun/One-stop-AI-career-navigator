@@ -4,6 +4,7 @@ import { useRouter } from 'vue-router'
 import { ArrowLeft, Send, UserCircle, Cpu, Loader2, Shield, AlertTriangle } from 'lucide-vue-next'
 import { marked } from 'marked'
 
+const API_BASE_URL = `${window.location.protocol}//${window.location.hostname}:8000`
 const router = useRouter()
 
 const currentSessionId = ref(crypto.randomUUID())
@@ -43,7 +44,7 @@ const isResumeValid = computed(() => {
   return resumeText.value && resumeText.value.trim().length >= 20
 })
 
-const CHAT_API_URL = 'http://127.0.0.1:8000/api/interview/chat'
+const CHAT_API_URL = `${API_BASE_URL}/api/interview/chat`
 
 const messagesContainer = ref(null)
 
@@ -163,7 +164,7 @@ const endInterview = async () => {
 
   try {
     // 调用后端的真实打分接口
-    const response = await fetch('http://127.0.0.1:8000/api/interview/evaluate', {
+    const response = await fetch(`${API_BASE_URL}/api/interview/evaluate`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({

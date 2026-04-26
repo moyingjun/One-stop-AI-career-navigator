@@ -9,6 +9,7 @@ import mammoth from 'mammoth/mammoth.browser.js'
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = pdfjsWorker
 
+const API_BASE_URL = `${window.location.protocol}//${window.location.hostname}:8000`
 const router = useRouter()
 
 const parseTxtFile = (file) => {
@@ -185,7 +186,7 @@ const startDiagnosis = async () => {
   } catch (err) {
     console.error('诊断请求失败:', err)
     if (err.message.includes('Failed to fetch')) {
-      error.value = '无法连接到后端 (http://127.0.0.1:8000)，请确认 FastAPI 服务已启动'
+      error.value = `无法连接到后端 (${API_BASE_URL})，请确认 FastAPI 服务已启动`
     } else {
       error.value = `诊断失败: ${err.message}`
     }

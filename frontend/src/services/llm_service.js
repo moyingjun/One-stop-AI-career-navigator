@@ -1,8 +1,8 @@
 // src/services/llm_service.js
 import axios from 'axios'
 
-// 1. 规范：从环境变量读取后端基础地址，防止跨环境 Hardcode
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:8000'
+// 1. 规范：优先从环境变量读取，否则动态获取当前访问的协议和域名
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || `${window.location.protocol}//${window.location.hostname}:8000`
 
 // 2. 创建专属的 axios 实例
 const apiClient = axios.create({
