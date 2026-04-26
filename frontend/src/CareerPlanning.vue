@@ -4,7 +4,10 @@ import { useRouter } from 'vue-router'
 import { ArrowLeft, Compass, Map, Target, Loader2, FileText, Copy, Download } from 'lucide-vue-next'
 import { marked } from 'marked'
 
-const API_BASE_URL = `${window.location.protocol}//${window.location.hostname}`
+const API_BASE_URL = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
+  ? 'http://156.229.28.139/api'
+  : '/api'
+
 const router = useRouter()
 
 const resumeText = ref('')
@@ -38,7 +41,7 @@ const loadSuggestions = async () => {
 
   isLoadingSuggestions.value = true
   try {
-    const response = await fetch(`${API_BASE_URL}/api/career/suggestions`, {
+    const response = await fetch(`${API_BASE_URL}/career/suggestions`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ resume_text: resumeText.value })
@@ -121,7 +124,7 @@ const generatePlan = async () => {
   error.value = ''
 
   try {
-    const response = await fetch(`${API_BASE_URL}/api/career/plan`, {
+    const response = await fetch(`${API_BASE_URL}/career/plan`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({

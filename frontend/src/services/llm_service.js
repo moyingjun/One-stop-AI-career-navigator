@@ -1,8 +1,10 @@
 // src/services/llm_service.js
 import axios from 'axios'
 
-// 1. 规范：优先从环境变量读取，否则动态获取当前访问的协议和域名
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || `${window.location.protocol}//${window.location.hostname}`
+// 1. 智能环境适配：本地开发指向云服务器，云端部署使用相对路径
+const API_BASE_URL = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
+  ? 'http://156.229.28.139/api'
+  : '/api'
 
 // 2. 创建专属的 axios 实例
 const apiClient = axios.create({

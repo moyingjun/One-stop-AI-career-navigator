@@ -9,7 +9,10 @@ import mammoth from 'mammoth/mammoth.browser.js'
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = pdfjsWorker
 
-const API_BASE_URL = `${window.location.protocol}//${window.location.hostname}`
+const API_BASE_URL = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
+  ? 'http://156.229.28.139/api'
+  : '/api'
+
 const router = useRouter()
 
 const parseTxtFile = (file) => {
@@ -126,7 +129,7 @@ const startDiagnosis = async () => {
   error.value = ''
 
   try {
-    const response = await fetch('/api/resume/diagnose', {
+    const response = await fetch(`${API_BASE_URL}/resume/diagnose`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
