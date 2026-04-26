@@ -4,6 +4,7 @@ import Dashboard from '@/Dashboard.vue'
 import ResumeDiagnosis from '@/ResumeDiagnosis.vue'
 import PremiumInterview from '@/PremiumInterview.vue'
 import GlobalSetup from '@/GlobalSetup.vue'
+import CareerPlanning from '@/CareerPlanning.vue'
 
 const routes = [
   {
@@ -39,6 +40,11 @@ const routes = [
   {
     path: '/mock-interview',
     redirect: '/interview'
+  },
+  {
+    path: '/career-planning',
+    name: 'CareerPlanning',
+    component: CareerPlanning
   }
 ]
 

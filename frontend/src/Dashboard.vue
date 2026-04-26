@@ -3,9 +3,10 @@ import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { llmService } from '@/services/llm_service.js'
 import { useRouter } from 'vue-router'
 import { vAutoAnimate } from '@formkit/auto-animate/vue'
+import QrcodeVue from 'qrcode.vue'
 
 // Lucide 图标
-import { Bot, FileText, MessageSquare, Folder, Settings, Clock, Puzzle, Plus, Search, Paperclip, MoreHorizontal, ChevronDown, ChevronRight, Upload, CheckCircle, X }
+import { Bot, FileText, MessageSquare, Folder, Settings, Clock, Puzzle, Plus, Search, Paperclip, MoreHorizontal, ChevronDown, ChevronRight, Upload, CheckCircle, X, Loader2 }
   from 'lucide-vue-next'
 
 const router = useRouter()
@@ -25,6 +26,9 @@ const showInterviewModal = ref(false)
 const interviewJd = ref('')
 const isInterviewUnlocking = ref(false)
 const interviewPaymentDone = ref(false)
+
+// 内测彩蛋二维码文本
+const mockPayUrl = ref("【内测福利】检测到您为特邀体验官，恭喜获得免单特权！请直接点击「开启挑战」进入系统。")
 
 // 响应式数据
 const userId = ref('user_001')
@@ -573,15 +577,16 @@ onUnmounted(() => {
                     <p class="text-base text-gray-400 text-left leading-relaxed">AI 模拟面试，提供反馈和建议</p>
                   </div>
 
-                  <div class="card relative overflow-hidden bg-[#151520]/60 backdrop-blur-2xl border border-white/5 rounded-3xl p-6 cursor-pointer transition-all duration-500 group hover:-translate-y-2 hover:border-cyan-500/50 hover:shadow-[0_0_40px_rgba(6,182,212,0.15)] text-left flex flex-col items-start animate-fade-in-up animation-delay-500">
+                  <div 
+                    @click="router.push('/career-planning')" 
+                    class="card relative overflow-hidden bg-[#151520]/60 backdrop-blur-2xl border border-white/5 rounded-3xl p-6 cursor-pointer transition-all duration-500 group hover:-translate-y-2 hover:border-cyan-500/50 hover:shadow-[0_0_40px_rgba(6,182,212,0.15)] text-left flex flex-col items-start animate-fade-in-up animation-delay-500">
                     <div class="w-14 h-14 flex items-center justify-center bg-cyan-500/10 rounded-xl mb-4">
                       <MessageSquare class="w-7 h-7 text-cyan-400" />
                     </div>
                     <h3 class="text-2xl font-black tracking-tight mb-2 text-left">职业规划</h3>
                     <p class="text-base text-gray-400 text-left leading-relaxed">基于你的背景，制定职业发展路径</p>
                   </div>
-                </div>
-              </div>
+                </div></div>
 
               <div class="chat-messages mb-6 space-y-4 animate-[fadeInUp_0.5s_ease-out_0.3s_both]" v-if="chatMessages.length > 0" v-auto-animate>
                 <div v-for="(message, index) in chatMessages" :key="index" class="chat-message">
@@ -779,69 +784,13 @@ onUnmounted(() => {
             ></textarea>
           </div>
 
-          <!-- 支付区 -->
+          <!-- 内测免单区 -->
           <div class="mb-5 p-4 rounded-xl border bg-gradient-to-br from-pink-500/5 to-purple-500/5 border-pink-500/20">
-            <div class="flex items-center justify-between mb-3">
-              <div class="flex items-center gap-2">
-                <svg class="w-4 h-4 text-pink-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                  <rect x="1" y="4" width="22" height="16" rx="2" ry="2"></rect>
-                  <line x1="1" y1="10" x2="23" y2="10"></line>
-                </svg>
-                <span class="text-sm font-medium text-pink-300">支付解锁面试</span>
-              </div>
-              <span class="text-2xl font-bold bg-gradient-to-r from-pink-400 to-fuchsia-400 bg-clip-text text-transparent">￥0.01</span>
+            <p class="text-center text-sm font-semibold text-pink-300 mb-3">👑 内测阶段 · 尊享免单</p>
+            <div class="bg-white rounded-2xl p-4 w-44 h-44 mx-auto flex items-center justify-center shadow-lg shadow-white/10">
+              <QrcodeVue :value="mockPayUrl" :size="140" level="H" />
             </div>
-            <div class="bg-white rounded-xl p-3 w-36 h-36 mx-auto flex items-center justify-center">
-              <svg class="w-32 h-32 text-gray-800" viewBox="0 0 256 256">
-                <!-- 简易二维码占位 SVG -->
-                <rect x="10" y="10" width="70" height="70" fill="currentColor" rx="4"/>
-                <rect x="20" y="20" width="50" height="50" fill="white" rx="2"/>
-                <rect x="30" y="30" width="30" height="30" fill="currentColor" rx="2"/>
-                
-                <rect x="176" y="10" width="70" height="70" fill="currentColor" rx="4"/>
-                <rect x="186" y="20" width="50" height="50" fill="white" rx="2"/>
-                <rect x="196" y="30" width="30" height="30" fill="currentColor" rx="2"/>
-                
-                <rect x="10" y="176" width="70" height="70" fill="currentColor" rx="4"/>
-                <rect x="20" y="186" width="50" height="50" fill="white" rx="2"/>
-                <rect x="30" y="196" width="30" height="30" fill="currentColor" rx="2"/>
-                
-                <rect x="90" y="10" width="15" height="15" fill="currentColor"/>
-                <rect x="115" y="10" width="15" height="15" fill="currentColor"/>
-                <rect x="140" y="10" width="15" height="15" fill="currentColor"/>
-                <rect x="90" y="35" width="15" height="15" fill="currentColor"/>
-                <rect x="140" y="35" width="15" height="15" fill="currentColor"/>
-                
-                <rect x="10" y="90" width="15" height="15" fill="currentColor"/>
-                <rect x="35" y="90" width="15" height="15" fill="currentColor"/>
-                <rect x="60" y="90" width="15" height="15" fill="currentColor"/>
-                <rect x="90" y="90" width="15" height="15" fill="currentColor"/>
-                <rect x="115" y="90" width="15" height="15" fill="currentColor"/>
-                <rect x="140" y="90" width="15" height="15" fill="currentColor"/>
-                
-                <rect x="90" y="115" width="15" height="15" fill="currentColor"/>
-                <rect x="140" y="115" width="15" height="15" fill="currentColor"/>
-                <rect x="176" y="115" width="15" height="15" fill="currentColor"/>
-                <rect x="201" y="115" width="15" height="15" fill="currentColor"/>
-                
-                <rect x="90" y="140" width="15" height="15" fill="currentColor"/>
-                <rect x="115" y="140" width="15" height="15" fill="currentColor"/>
-                <rect x="140" y="140" width="15" height="15" fill="currentColor"/>
-                <rect x="176" y="140" width="15" height="15" fill="currentColor"/>
-                <rect x="226" y="140" width="15" height="15" fill="currentColor"/>
-                
-                <rect x="90" y="176" width="15" height="15" fill="currentColor"/>
-                <rect x="140" y="176" width="15" height="15" fill="currentColor"/>
-                <rect x="176" y="176" width="70" height="70" fill="currentColor" rx="4"/>
-                <rect x="186" y="186" width="50" height="50" fill="white" rx="2"/>
-                <rect x="196" y="196" width="30" height="30" fill="currentColor" rx="2"/>
-                
-                <rect x="90" y="201" width="15" height="15" fill="currentColor"/>
-                <rect x="115" y="226" width="15" height="15" fill="currentColor"/>
-                <rect x="226" y="226" width="15" height="15" fill="currentColor"/>
-              </svg>
-            </div>
-            <p class="text-center text-xs text-gray-500 mt-3">微信扫码完成支付</p>
+            <p class="text-center text-xs text-gray-500 mt-3">扫码获取内测福利</p>
           </div>
 
           <!-- 按钮组 -->
@@ -853,7 +802,7 @@ onUnmounted(() => {
             <span class="absolute inset-0 shimmer-effect pointer-events-none"></span>
             <Loader2 v-if="isInterviewUnlocking" class="w-4 h-4 animate-spin relative z-10" />
             <CheckCircle v-else class="w-4 h-4 relative z-10" />
-            <span class="relative z-10">{{ isInterviewUnlocking ? '舱门开启中...' : '我已支付，开启挑战' }}</span>
+            <span class="relative z-10">{{ isInterviewUnlocking ? '舱门开启中...' : '直接开启挑战 (已免单)' }}</span>
           </button>
 
           <!-- 关闭按钮 -->

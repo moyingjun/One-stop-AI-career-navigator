@@ -1,7 +1,8 @@
 from fastapi import FastAPI
 from dotenv import load_dotenv
 from fastapi.middleware.cors import CORSMiddleware
-from Router import jobResume, resumeDiagnosis, interview
+from Router import jobResume, resumeDiagnosis, interview, careerPlan
+from Router import careerPlan
 
 load_dotenv()
 
@@ -18,3 +19,5 @@ app.add_middleware(
 app.include_router(jobResume.router)
 app.include_router(resumeDiagnosis.router)
 app.include_router(interview.router)
+app.include_router(careerPlan.router)
+

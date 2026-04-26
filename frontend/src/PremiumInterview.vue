@@ -5,23 +5,26 @@ import { ArrowLeft, Send, UserCircle, Cpu, Loader2, Shield, AlertTriangle } from
 
 const router = useRouter()
 
+const currentSessionId = ref(crypto.randomUUID())
+
 const messages = ref([])
 const userInput = ref('')
 const isLoading = ref(false)
+const isInterviewEnded = ref(false) // 新增：控制是否锁定输入框
 const candidateName = ref('')
 const targetRole = ref('')
 const resumeText = ref('')
 const interviewJd = ref('')
 
 const radarScores = ref({
-  technical: 15,
-  architecture: 12,
-  communication: 18,
-  problemSolving: 10,
-  leadership: 8
+  professional: 2,
+  logic: 2,
+  communication: 2,
+  problemSolving: 2,
+  potential: 2
 })
 
-const RADAR_LABELS = ['technical', 'architecture', 'communication', 'problemSolving', 'leadership']
+const RADAR_LABELS = ['professional', 'logic', 'communication', 'problemSolving', 'potential']
 const RADAR_CENTER = 100
 const RADAR_MAX_RADIUS = 70
 
@@ -70,36 +73,36 @@ const initInterview = async () => {
   resumeText.value = resume
   interviewJd.value = jd
 
-  const systemPrompt = `【系统指令】：候选人姓名是 ${name || '未知'}，应聘岗位是 ${role || '未指定'}。目标岗位描述（JD）：${jd || '暂无'}。这是他的简历：${resume || '暂无简历内容'}。现在请你以面试官身份打招呼，并要求他做自我介绍。`
-
+  isLoading.value = true
   try {
     const response = await fetch(CHAT_API_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        user_query: systemPrompt,
+        // 核心改动：剥离冗长的提示词，只发送这句极简的开场白
+        user_query: `面试官您好，我是候选人${name || '未知'}，应聘岗位是${role || '未指定'}。请您直接根据我的简历开始向我提问。`,
         history: [],
-        is_first_message: true,
         resume_text: resume,
-        jd_text: jd
+        jd_text: jd,
+        session_id: currentSessionId.value
       })
     })
 
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}`)
-    }
+    if (!response.ok) throw new Error(`HTTP ${response.status}`)
 
     const data = await response.json()
-    const reply = data.reply || data.content || data.message || `${name || '候选人'}你好，欢迎参加本次技术面试。我是你的面试官。在开始之前，请先简单介绍一下你自己。`
+    const reply = data.reply || `${name || '候选人'}你好，请直接开始1分钟的自我介绍。`
     addMessage('ai', reply)
   } catch (error) {
-    console.error('初始化面试失败，使用降级方案:', error)
-    addMessage('ai', `${name || '候选人'}你好，欢迎参加本次技术面试。我是你的面试官。在开始之前，请先简单介绍一下你自己。`)
+    console.error('初始化面试失败:', error)
+    addMessage('ai', `${name || '候选人'}你好，请直接开始1分钟的自我介绍。`)
+  } finally {
+    isLoading.value = false
   }
 }
 
 const sendMessage = async () => {
-  if (!userInput.value.trim() || isLoading.value) return
+  if (!userInput.value.trim() || isLoading.value || isInterviewEnded.value) return
 
   const userMessage = userInput.value.trim()
   addMessage('user', userMessage)
@@ -107,18 +110,17 @@ const sendMessage = async () => {
   isLoading.value = true
 
   try {
-    const history = messages.value
-      .map(msg => ({ role: msg.role, content: msg.content }))
+    const history = messages.value.map(msg => ({ role: msg.role, content: msg.content }))
 
     const response = await fetch(CHAT_API_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        user_query: userMessage,
+        user_query: userMessage, // 剥掉马甲，恢复裸奔！
         history,
-        is_first_message: false,
         resume_text: resumeText.value,
-        jd_text: interviewJd.value
+        jd_text: interviewJd.value,
+        session_id: currentSessionId.value
       })
     })
 
@@ -127,11 +129,70 @@ const sendMessage = async () => {
     }
 
     const data = await response.json()
-    const reply = data.reply || data.content || data.message || '你的回答需要更深入。让我们继续下一道题。'
+    const reply = data.reply || '请继续。'
     addMessage('ai', reply)
   } catch (error) {
     console.error('发送消息失败:', error)
     addMessage('ai', '系统异常，请重试。')
+  } finally {
+    isLoading.value = false
+  }
+}
+
+// 接入真实打分，附带【防刷分机制】
+const endInterview = async () => {
+  const userMessages = messages.value.filter(m => m.role === 'user')
+  const userMessageCount = userMessages.length
+  
+  // 【核心防刷】：计算用户发过的所有字数总和
+  const totalUserCharCount = userMessages.reduce((sum, m) => sum + m.content.length, 0)
+  
+  // 如果一句没说，或者总字数少于 20 个字，直接判定作弊零分！
+  if (userMessageCount === 0 || totalUserCharCount < 20) {
+    addMessage('ai', '【系统警告】检测到您的有效作答字数过少或涉嫌敷衍，系统拒绝生成能力图谱。本次面试已强行终止！')
+    radarScores.value = { professional: 0, logic: 0, communication: 0, problemSolving: 0, potential: 0 }
+    isInterviewEnded.value = true // 锁定输入框
+    return
+  }
+
+  isInterviewEnded.value = true // 锁定输入框
+  addMessage('ai', '面试已结束。系统正在深度提取您的历史对话数据，生成多维度能力评估图谱，请稍候...')
+  isLoading.value = true
+
+  try {
+    // 调用后端的真实打分接口
+    const response = await fetch('http://127.0.0.1:8000/api/interview/evaluate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        user_query: "请根据对话记录生成 JSON 评估报告", 
+        history: messages.value,
+        session_id: currentSessionId.value
+      })
+    })
+
+    if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`)
+    
+    const resData = await response.json()
+    
+    if (resData.success && resData.data) {
+      // 华丽爆开真实的雷达分数！
+      radarScores.value = {
+        professional: resData.data.professional || 10,
+        logic: resData.data.logic || 10,
+        communication: resData.data.communication || 10,
+        problemSolving: resData.data.problemSolving || 10,
+        potential: resData.data.potential || 10
+      }
+      // 追加 AI 的真实毒舌评语
+      addMessage('ai', `【终极评估】\n${resData.data.comment || '无评价。'}`)
+    } else {
+      throw new Error(resData.msg || "打分数据解析失败")
+    }
+  } catch (error) {
+    console.error("生成评估失败:", error)
+    radarScores.value = { professional: 0, logic: 0, communication: 0, problemSolving: 0, potential: 0 }
+    addMessage('ai', '系统打分引擎异常，生成评估失败。')
   } finally {
     isLoading.value = false
   }
@@ -227,11 +288,11 @@ onMounted(() => {
                 :cx="point.split(',')[0]" :cy="point.split(',')[1]" r="2"
                 fill="#e879f9" class="radar-dot" />
               <!-- 标签 -->
-              <text x="100" y="15" text-anchor="middle" fill="#e879f9" font-size="10">技术深度</text>
-              <text x="180" y="100" text-anchor="middle" fill="#e879f9" font-size="10">架构设计</text>
-              <text x="150" y="185" text-anchor="middle" fill="#e879f9" font-size="10">沟通能力</text>
+              <text x="100" y="15" text-anchor="middle" fill="#e879f9" font-size="10">专业技能</text>
+              <text x="180" y="100" text-anchor="middle" fill="#e879f9" font-size="10">逻辑分析</text>
+              <text x="150" y="185" text-anchor="middle" fill="#e879f9" font-size="10">沟通表达</text>
               <text x="50" y="185" text-anchor="middle" fill="#e879f9" font-size="10">问题解决</text>
-              <text x="20" y="100" text-anchor="middle" fill="#e879f9" font-size="10">领导力</text>
+              <text x="20" y="100" text-anchor="middle" fill="#e879f9" font-size="10">综合潜力</text>
             </svg>
           </div>
         </div>
@@ -354,7 +415,8 @@ onMounted(() => {
               @keydown="handleEnter"
               placeholder="输入你的回答..."
               rows="2"
-              class="flex-1 rounded-xl px-4 py-3 text-sm resize-none focus:outline-none backdrop-blur-xl shadow-[inset_0_1px_1px_rgba(255,255,255,0.1)] transition-all duration-300 bg-black/60 border border-fuchsia-500/20 text-fuchsia-100 placeholder-pink-400/30 focus:border-fuchsia-500/50 focus:ring-2 focus:ring-fuchsia-500/20"
+              :disabled="isLoading"
+              class="flex-1 rounded-xl px-4 py-3 text-sm resize-none focus:outline-none backdrop-blur-xl shadow-[inset_0_1px_1px_rgba(255,255,255,0.1)] transition-all duration-300 bg-black/60 border border-fuchsia-500/20 text-fuchsia-100 placeholder-pink-400/30 focus:border-fuchsia-500/50 focus:ring-2 focus:ring-fuchsia-500/20 disabled:opacity-50 disabled:cursor-not-allowed"
             ></textarea>
             <button
               @click="sendMessage"
@@ -363,6 +425,15 @@ onMounted(() => {
               <span class="send-btn-shimmer"></span>
               <Send class="w-4 h-4 relative z-10" />
               <span class="relative z-10">发送回答</span>
+            </button>
+          </div>
+          <!-- 结束面试按钮 -->
+          <div class="flex justify-center mt-3">
+            <button
+              @click="endInterview"
+              :disabled="isLoading || messages.length === 0"
+              class="ghost-btn px-5 py-2 rounded-lg text-xs font-medium transition-all duration-300 flex items-center gap-2 disabled:opacity-30 disabled:cursor-not-allowed">
+              <span class="relative z-10">结束面试并获取评估</span>
             </button>
           </div>
         </div>
@@ -552,6 +623,25 @@ onMounted(() => {
 @keyframes shimmer {
   0% { transform: translateX(0); }
   100% { transform: translateX(100%); }
+}
+
+/* 幽灵按钮 - 结束面试 */
+.ghost-btn {
+  position: relative;
+  overflow: hidden;
+  background: transparent;
+  border: 1px solid rgba(232, 121, 249, 0.25);
+  color: rgba(232, 121, 249, 0.7);
+}
+
+.ghost-btn:hover:not(:disabled) {
+  border-color: rgba(232, 121, 249, 0.6);
+  color: rgba(232, 121, 249, 1);
+  box-shadow: 0 0 20px rgba(232, 121, 249, 0.2), inset 0 0 20px rgba(232, 121, 249, 0.05);
+}
+
+.ghost-btn:active:not(:disabled) {
+  transform: scale(0.98);
 }
 
 /* 滚动条 */
