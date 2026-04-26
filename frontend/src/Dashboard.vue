@@ -4,12 +4,45 @@ import { llmService } from '@/services/llm_service.js'
 import { useRouter } from 'vue-router'
 import { vAutoAnimate } from '@formkit/auto-animate/vue'
 import QrcodeVue from 'qrcode.vue'
+import * as pdfjsLib from 'pdfjs-dist/build/pdf.mjs'
+import pdfjsWorker from 'pdfjs-dist/build/pdf.worker.mjs?url'
+import mammoth from 'mammoth/mammoth.browser.js'
+
+pdfjsLib.GlobalWorkerOptions.workerSrc = pdfjsWorker
 
 // Lucide 图标
 import { Bot, FileText, MessageSquare, Folder, Settings, Clock, Puzzle, Plus, Search, Paperclip, MoreHorizontal, ChevronDown, ChevronRight, Upload, CheckCircle, X, Loader2 }
   from 'lucide-vue-next'
 
 const router = useRouter()
+
+const parseTxtFile = (file) => {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = (e) => resolve(e.target.result || '')
+    reader.onerror = () => reject(new Error('TXT 文件读取失败'))
+    reader.readAsText(file)
+  })
+}
+
+const parseDocxFile = async (file) => {
+  const arrayBuffer = await file.arrayBuffer()
+  const result = await mammoth.extractRawText({ arrayBuffer })
+  return result.value || ''
+}
+
+const parsePdfFile = async (file) => {
+  const arrayBuffer = await file.arrayBuffer()
+  const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise
+  const pages = []
+  for (let i = 1; i <= pdf.numPages; i++) {
+    const page = await pdf.getPage(i)
+    const textContent = await page.getTextContent()
+    const pageText = textContent.items.map(item => item.str).join(' ')
+    pages.push(pageText)
+  }
+  return pages.join('\n')
+}
 
 // 本地存储用户名
 const userName = ref(localStorage.getItem('candidate_name') || '')
@@ -115,17 +148,29 @@ const handleGlobalFileSelect = (event) => {
   if (files.length > 0) processGlobalResume(files[0])
 }
 
-const processGlobalResume = (file) => {
-  if (file.type === 'text/plain' || file.name.endsWith('.txt')) {
-    pendingFileName.value = file.name
-    const reader = new FileReader()
-    reader.onload = (e) => {
-      pendingResumeText.value = e.target.result || ''
-      showResumeDialog.value = true
+const processGlobalResume = async (file) => {
+  const ext = file.name.split('.').pop().toLowerCase()
+  try {
+    let text = ''
+    if (ext === 'txt') {
+      text = await parseTxtFile(file)
+    } else if (ext === 'docx') {
+      text = await parseDocxFile(file)
+    } else if (ext === 'pdf') {
+      text = await parsePdfFile(file)
+    } else {
+      alert('不支持的文件格式，仅支持 TXT / PDF / DOCX')
+      return
     }
-    reader.readAsText(file)
-  } else {
-    alert('目前仅支持 TXT 格式的简历文件')
+    if (!text.trim()) {
+      alert('文件内容为空，请检查后重试')
+      return
+    }
+    pendingFileName.value = file.name
+    pendingResumeText.value = text
+    showResumeDialog.value = true
+  } catch (e) {
+    alert(e.message || '文件解析失败，请重试')
   }
 }
 
@@ -469,7 +514,7 @@ onUnmounted(() => {
                 ref="globalFileInput"
                 type="file"
                 class="hidden"
-                accept=".txt"
+                accept=".txt,.pdf,.docx"
                 @change="handleGlobalFileSelect"
               />
             </div>

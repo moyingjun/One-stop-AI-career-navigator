@@ -3,8 +3,41 @@ import { ref, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { FileText, ArrowLeft, Paperclip, Sparkles, Bot, Loader2 } from 'lucide-vue-next'
 import { marked } from 'marked'
+import * as pdfjsLib from 'pdfjs-dist/build/pdf.mjs'
+import pdfjsWorker from 'pdfjs-dist/build/pdf.worker.mjs?url'
+import mammoth from 'mammoth/mammoth.browser.js'
+
+pdfjsLib.GlobalWorkerOptions.workerSrc = pdfjsWorker
 
 const router = useRouter()
+
+const parseTxtFile = (file) => {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = (e) => resolve(e.target.result || '')
+    reader.onerror = () => reject(new Error('TXT 文件读取失败'))
+    reader.readAsText(file)
+  })
+}
+
+const parseDocxFile = async (file) => {
+  const arrayBuffer = await file.arrayBuffer()
+  const result = await mammoth.extractRawText({ arrayBuffer })
+  return result.value || ''
+}
+
+const parsePdfFile = async (file) => {
+  const arrayBuffer = await file.arrayBuffer()
+  const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise
+  const pages = []
+  for (let i = 1; i <= pdf.numPages; i++) {
+    const page = await pdf.getPage(i)
+    const textContent = await page.getTextContent()
+    const pageText = textContent.items.map(item => item.str).join(' ')
+    pages.push(pageText)
+  }
+  return pages.join('\n')
+}
 
 const resumeText = ref('')
 const jdText = ref('')
@@ -33,17 +66,30 @@ const handleFileSelect = (event) => {
   if (files.length > 0) processFile(files[0])
 }
 
-const processFile = (file) => {
+const processFile = async (file) => {
   uploadedFileName.value = file.name
-  if (file.type === 'text/plain' || file.name.endsWith('.txt')) {
-    const reader = new FileReader()
-    reader.onload = (e) => { resumeText.value = e.target.result || '' }
-    reader.readAsText(file)
-  } else if (file.type === 'application/pdf' || file.name.endsWith('.pdf')) {
-    error.value = 'PDF 文件需要后端解析服务，请先粘贴 TXT 文本内容'
-    setTimeout(() => { error.value = '' }, 3000)
-  } else {
-    error.value = '目前仅支持 TXT 格式的简历文件'
+  const ext = file.name.split('.').pop().toLowerCase()
+  try {
+    let text = ''
+    if (ext === 'txt') {
+      text = await parseTxtFile(file)
+    } else if (ext === 'docx') {
+      text = await parseDocxFile(file)
+    } else if (ext === 'pdf') {
+      text = await parsePdfFile(file)
+    } else {
+      error.value = '不支持的文件格式，仅支持 TXT / PDF / DOCX'
+      setTimeout(() => { error.value = '' }, 3000)
+      return
+    }
+    if (!text.trim()) {
+      error.value = '文件内容为空，请检查后重试'
+      setTimeout(() => { error.value = '' }, 3000)
+      return
+    }
+    resumeText.value = text
+  } catch (e) {
+    error.value = e.message || '文件解析失败，请重试'
     setTimeout(() => { error.value = '' }, 3000)
   }
 }
@@ -258,7 +304,7 @@ onUnmounted(() => {
                     type="file"
                     ref="fileInput"
                     class="hidden"
-                    accept=".txt,.pdf"
+                    accept=".txt,.pdf,.docx"
                     @change="handleFileSelect"
                   />
                   <div class="flex items-center gap-4">
@@ -273,7 +319,7 @@ onUnmounted(() => {
                         <span class="text-purple-400 cursor-pointer font-medium" @click="$refs.fileInput.click()">点击上传</span>
                         <span class="text-gray-500"> 或拖拽文件到此处</span>
                       </p>
-                      <p class="text-xs text-gray-600 mt-1">支持 TXT、PDF 格式</p>
+                      <p class="text-xs text-gray-600 mt-1">支持 TXT, PDF, DOCX 格式</p>
                     </div>
                   </div>
                   <p v-if="uploadedFileName" class="mt-3 text-xs text-purple-400 flex items-center gap-1">
