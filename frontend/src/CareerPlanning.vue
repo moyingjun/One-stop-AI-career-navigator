@@ -208,7 +208,7 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="min-h-screen relative flex overflow-hidden bg-[#050505]">
+  <div class="min-h-[100dvh] relative flex flex-col lg:flex-row overflow-hidden bg-[#050505]">
     <!-- 极光流体背景 -->
     <div class="absolute inset-0 pointer-events-none overflow-hidden">
       <div class="aurora-blob aurora-blob-1"></div>
@@ -226,9 +226,9 @@ onUnmounted(() => {
     <div class="crt-overlay absolute inset-0 pointer-events-none z-50"></div>
 
     <!-- 主内容 -->
-    <div class="relative z-10 flex w-full h-screen">
+    <div class="relative z-10 flex w-full flex-col lg:flex-row min-h-[100dvh] overflow-y-auto">
       <!-- 左侧控制台 -->
-      <div class="left-panel w-[30%] flex flex-col border-r border-cyan-500/10 bg-white/[0.02] backdrop-blur-3xl shadow-[inset_0_1px_1px_rgba(255,255,255,0.1)]">
+      <div class="left-panel w-full lg:w-[350px] xl:w-[400px] flex flex-col border-r border-cyan-500/10 bg-white/[0.02] backdrop-blur-3xl shadow-[inset_0_1px_1px_rgba(255,255,255,0.1)]">
         <!-- 返回按钮 -->
         <div class="p-4 border-b border-cyan-500/10">
           <button
@@ -271,7 +271,7 @@ onUnmounted(() => {
             v-model="userConfusion"
             rows="5"
             placeholder="描述您当前的职业困惑或未来期望..."
-            class="w-full rounded-xl px-4 py-3 text-sm resize-none focus:outline-none backdrop-blur-xl shadow-[inset_0_1px_1px_rgba(255,255,255,0.1)] transition-all duration-300 bg-black/60 border border-cyan-500/20 text-cyan-100 placeholder-cyan-400/30 focus:border-cyan-500/50 focus:ring-2 focus:ring-cyan-500/20"
+            class="w-full rounded-xl px-4 py-3 text-base resize-none focus:outline-none backdrop-blur-xl shadow-[inset_0_1px_1px_rgba(255,255,255,0.1)] transition-all duration-300 bg-black/60 border border-cyan-500/20 text-cyan-100 placeholder-cyan-400/30 focus:border-cyan-500/50 focus:ring-2 focus:ring-cyan-500/20"
           ></textarea>
 
           <!-- 快捷困惑 Chips -->
@@ -314,15 +314,15 @@ onUnmounted(() => {
       </div>
 
       <!-- 右侧主报告区 -->
-      <div class="flex-1 flex flex-col">
+      <div class="flex-1 w-full mt-6 lg:mt-0 flex flex-col relative z-[60] pointer-events-auto pb-[env(safe-area-inset-bottom)]">
         <!-- Header -->
-        <div class="flex items-center justify-between px-6 py-4 border-b border-cyan-500/20 bg-white/[0.03] backdrop-blur-3xl shadow-[inset_0_1px_1px_rgba(255,255,255,0.1)]">
-          <div class="flex items-center gap-3">
+        <div class="flex items-center justify-between px-4 py-3 md:px-6 md:py-4 border-b border-cyan-500/20 bg-white/[0.03] backdrop-blur-3xl shadow-[inset_0_1px_1px_rgba(255,255,255,0.1)]">
+          <div class="flex items-center gap-2 md:gap-3 flex-shrink-0 cursor-pointer hover:opacity-80 transition-opacity duration-200 active:scale-95" @click="router.push('/')">
             <div class="w-10 h-10 rounded-full bg-gradient-to-br from-cyan-500 to-blue-600 flex items-center justify-center shadow-lg shadow-cyan-500/30">
               <Compass class="w-5 h-5 text-white" />
             </div>
             <div>
-              <h1 class="text-lg font-bold text-cyan-400">🧭 AI 职业领航导师</h1>
+              <h1 class="text-lg md:text-2xl font-bold text-cyan-400 whitespace-nowrap">🧭 AI 职业领航导师</h1>
               <p class="text-xs text-cyan-400/50">深度规划 · 精准导航</p>
             </div>
           </div>
@@ -352,8 +352,8 @@ onUnmounted(() => {
         </div>
 
         <!-- 报告展示区 -->
-        <div class="flex-1 overflow-y-auto p-6">
-          <div v-if="displayedResult" class="report-card rounded-2xl border border-cyan-500/20 bg-blue-950/30 backdrop-blur-xl p-6 shadow-[inset_0_1px_1px_rgba(255,255,255,0.1)]">
+        <div class="flex-1 overflow-y-auto p-4 md:p-6 pb-24 md:pb-32">
+          <div v-if="displayedResult" class="report-card rounded-2xl border border-cyan-500/20 bg-blue-950/30 backdrop-blur-xl p-4 md:p-6 shadow-[inset_0_1px_1px_rgba(255,255,255,0.1)]">
             <div v-html="parsedReport" class="markdown-body"></div>
             <span v-if="!isComplete" class="inline-block w-2 h-4 bg-cyan-500 animate-pulse ml-1"></span>
           </div>

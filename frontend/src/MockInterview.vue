@@ -63,7 +63,7 @@ onMounted(() => {
     </div>
 
     <!-- 顶部导航栏 -->
-    <nav class="flex items-center justify-between px-6 py-3 border-b border-white/5 bg-[#050510]/60 backdrop-blur-xl z-30 relative" style="height: 64px;">
+    <nav class="flex items-center justify-between px-4 py-3 md:px-6 md:py-3 border-b border-white/5 bg-[#050510]/60 backdrop-blur-xl z-30 relative" style="height: 64px;">
       <button
         @click="router.push('/dashboard')"
         class="flex items-center gap-2 text-gray-400 hover:text-white transition-colors duration-300 group"
@@ -83,7 +83,7 @@ onMounted(() => {
     <!-- 主内容区 -->
     <div class="flex-1 relative z-10 flex items-center justify-center">
       <!-- 数字人剪影 -->
-      <div class="flex flex-col items-center gap-8">
+      <div class="flex flex-col items-center gap-6 md:gap-8 px-4">
         <!-- 头像外圈 -->
         <div class="relative">
           <!-- 外圈波纹 -->
@@ -100,7 +100,7 @@ onMounted(() => {
         <!-- 唤醒按钮 -->
         <button
           @click="openInterviewWindow"
-          class="group bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-500 hover:to-pink-500 text-white px-10 py-5 rounded-2xl font-bold text-lg shadow-xl shadow-purple-500/30 hover:shadow-2xl hover:shadow-purple-500/40 transition-all duration-500 hover:-translate-y-1 active:scale-95 flex items-center gap-3"
+          class="group bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-500 hover:to-pink-500 text-white px-8 py-4 md:px-10 md:py-5 rounded-2xl font-bold text-base md:text-lg shadow-xl shadow-purple-500/30 hover:shadow-2xl hover:shadow-purple-500/40 transition-all duration-500 hover:-translate-y-1 active:scale-95 flex items-center gap-3"
         >
           <ExternalLink class="w-5 h-5 group-hover:rotate-12 transition-transform duration-300" />
           唤醒数字人面试官
@@ -139,7 +139,7 @@ onMounted(() => {
     <!-- 浮动简历助手面板 -->
     <div
       v-if="showPanel"
-      class="absolute z-20 right-4 top-20 w-80 bg-white/5 backdrop-blur-2xl border border-white/10 rounded-2xl shadow-2xl shadow-purple-500/10 overflow-hidden"
+      class="absolute md:right-4 md:top-20 right-4 bottom-20 md:bottom-auto w-[calc(100%-2rem)] md:w-80 bg-white/5 backdrop-blur-2xl border border-white/10 rounded-2xl shadow-2xl shadow-purple-500/10 overflow-hidden"
     >
       <!-- 面板头部 -->
       <div class="px-4 py-3 border-b border-white/5 flex items-center justify-between bg-white/[0.02]">

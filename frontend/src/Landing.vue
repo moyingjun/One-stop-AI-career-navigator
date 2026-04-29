@@ -84,7 +84,7 @@ onUnmounted(() => {
     <div class="absolute inset-0 bg-grid-pattern opacity-[0.15] z-[-1] pointer-events-none"></div>
 
     <!-- 导航栏 -->
-    <nav class="relative z-10 flex justify-between items-center py-6 px-8 max-w-7xl mx-auto">
+    <nav class="relative z-10 flex justify-between items-center py-4 px-4 md:py-6 md:px-8 max-w-7xl mx-auto">
       <div class="flex items-center gap-3 cursor-pointer" @click="goToDashboard">
         <div class="w-10 h-10 rounded-full bg-gradient-to-r from-purple-500 to-indigo-600 flex items-center justify-center shadow-lg shadow-purple-500/30">
           <span class="text-white font-bold text-sm">AI</span>
@@ -112,12 +112,12 @@ onUnmounted(() => {
     </nav>
 
     <!-- 主内容区 -->
-    <main class="relative z-10 max-w-7xl mx-auto px-8 min-h-[calc(100vh-120px)] flex flex-col justify-center">
-      <div class="grid grid-cols-1 lg:grid-cols-2 gap-16 items-center">
+    <main class="relative z-10 max-w-7xl mx-auto px-4 md:px-8 min-h-[calc(100vh-120px)] flex flex-col justify-center">
+      <div class="grid grid-cols-1 lg:grid-cols-2 gap-8 md:gap-16 items-center">
         <!-- 左侧：标题与内容 -->
         <div class="text-left">
           <div class="mb-8">
-            <h1 class="font-black tracking-tight text-5xl md:text-6xl leading-tight flex flex-col items-start mb-6">
+            <h1 class="font-black tracking-tight text-3xl md:text-5xl lg:text-6xl leading-tight flex flex-col items-start mb-6">
               <div class="text-white mb-2 overflow-hidden whitespace-nowrap animate-typewriter-1">重塑你的</div>
               <div class="flex items-center overflow-hidden whitespace-nowrap animate-typewriter-2 opacity-0">
                 <span class="bg-clip-text text-transparent bg-gradient-to-r from-purple-400 to-indigo-400 drop-shadow-lg">
@@ -129,18 +129,18 @@ onUnmounted(() => {
             </h1>
           </div>
 
-          <p class="text-gray-400 text-lg md:text-xl leading-relaxed mb-10 max-w-lg animate-blur-in-up animation-delay-300">
+          <p class="text-gray-400 text-lg md:text-xl leading-relaxed mb-6 md:mb-10 max-w-lg animate-blur-in-up animation-delay-300">
             AI 驱动的简历诊断与面试模拟，让你的每一次投递都充满底气，助力你在职场中脱颖而出。
           </p>
 
-          <div class="flex flex-col sm:flex-row gap-4 mb-12 animate-blur-in-up animation-delay-400">
+          <div class="flex flex-col md:flex-row gap-4 mb-6 md:mb-12 animate-blur-in-up animation-delay-400">
             <button 
               @click="goToDashboard"
-              class="bg-gradient-to-r from-purple-600 to-indigo-600 text-white px-10 py-4 rounded-xl font-semibold text-lg shadow-[0_0_30px_rgba(168,85,247,0.4)] hover:shadow-[0_0_40px_rgba(168,85,247,0.6)] transition-all duration-300 hover:-translate-y-0.5"
+              class="bg-gradient-to-r from-purple-600 to-indigo-600 text-white px-6 py-3 md:px-10 md:py-4 rounded-xl font-semibold text-base md:text-lg shadow-[0_0_30px_rgba(168,85,247,0.4)] hover:shadow-[0_0_40px_rgba(168,85,247,0.6)] transition-all duration-300 hover:-translate-y-0.5"
             >
               免费开始使用
             </button>
-            <button class="bg-white/5 backdrop-blur-xl border border-white/10 text-gray-300 px-10 py-4 rounded-xl font-semibold text-lg hover:bg-white/10 transition-all duration-300 hover:-translate-y-0.5">
+            <button class="bg-white/5 backdrop-blur-xl border border-white/10 text-gray-300 px-6 py-3 md:px-10 md:py-4 rounded-xl font-semibold text-base md:text-lg hover:bg-white/10 transition-all duration-300 hover:-translate-y-0.5">
               查看演示
             </button>
           </div>
@@ -159,7 +159,7 @@ onUnmounted(() => {
         </div>
 
         <!-- 右侧：经典科技设备框 -->
-        <div class="relative w-full min-h-[600px] lg:min-h-[650px] animate-fade-in-right animation-delay-500">
+        <div class="relative w-full min-h-[300px] md:min-h-[500px] lg:min-h-[650px] animate-fade-in-right animation-delay-500">
           <!-- 主设备外壳 -->
           <div class="absolute inset-0 z-10 animate-float" style="transform: perspective(1000px) rotateY(-5deg);">
             <div class="w-full h-full flex flex-col bg-white/5 backdrop-blur-xl rounded-3xl border border-purple-500/30 shadow-[0_0_60px_rgba(139,92,246,0.25)] overflow-hidden">
@@ -219,7 +219,7 @@ onUnmounted(() => {
                   >
                     <div class="w-full h-full bg-gradient-to-br from-purple-900/60 via-indigo-900/60 to-black flex items-center justify-center">
                       <!-- 紫色渐变占位 -->
-                      <div class="text-center p-8 animate-pulse">
+                      <div class="text-center p-4 md:p-8 animate-pulse">
                         <div class="w-20 h-20 rounded-full bg-gradient-to-r from-purple-500 to-indigo-500 flex items-center justify-center mx-auto mb-4 shadow-lg shadow-purple-500/30 animate-pulse">
                           <svg class="w-10 h-10 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 10 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
@@ -232,7 +232,7 @@ onUnmounted(() => {
                     </div>
 
                     <!-- 环绕卫星卡片1：简历评分 -->
-                    <div class="glass-card absolute bottom-6 left-6 z-30 w-60 p-4 rounded-2xl bg-white/5 backdrop-blur-xl border border-purple-500/30 shadow-xl shadow-purple-500/10 transition-all duration-300 hover:shadow-[0_0_40px_rgba(168,85,247,0.3)] hover:-translate-y-2 animate-float-1">
+                    <div class="glass-card hidden md:block absolute bottom-6 left-6 z-30 w-44 md:w-60 p-4 rounded-2xl bg-white/5 backdrop-blur-xl border border-purple-500/30 shadow-xl shadow-purple-500/10 transition-all duration-300 hover:shadow-[0_0_40px_rgba(168,85,247,0.3)] hover:-translate-y-2 animate-float-1">
                       <div class="flex items-center gap-3 mb-3">
                         <div class="w-10 h-10 rounded-full bg-gradient-to-r from-purple-500 to-indigo-500 flex items-center justify-center shadow-lg">
                           <span class="text-white font-bold text-lg">95</span>
@@ -248,7 +248,7 @@ onUnmounted(() => {
                     </div>
 
                     <!-- 环绕卫星卡片2：面试通过率 -->
-                    <div class="glass-card absolute top-6 right-6 z-30 w-60 p-4 rounded-2xl bg-white/5 backdrop-blur-xl border border-cyan-500/30 shadow-xl shadow-cyan-500/10 transition-all duration-300 hover:shadow-[0_0_40px_rgba(34,211,238,0.3)] hover:-translate-y-2 animate-float-2">
+                    <div class="glass-card hidden md:block absolute top-6 right-6 z-30 w-44 md:w-60 p-4 rounded-2xl bg-white/5 backdrop-blur-xl border border-cyan-500/30 shadow-xl shadow-cyan-500/10 transition-all duration-300 hover:shadow-[0_0_40px_rgba(34,211,238,0.3)] hover:-translate-y-2 animate-float-2">
                       <div class="flex items-center gap-3 mb-2">
                         <span class="text-green-400 font-bold text-xl">+42%</span>
                       </div>
@@ -257,7 +257,7 @@ onUnmounted(() => {
                     </div>
 
                     <!-- 环绕卫星卡片3：AI助手 -->
-                    <div class="glass-card absolute bottom-6 right-6 z-30 w-60 p-4 rounded-2xl bg-white/5 backdrop-blur-xl border border-pink-500/30 shadow-xl shadow-pink-500/10 transition-all duration-300 hover:shadow-[0_0_40px_rgba(236,72,153,0.3)] hover:-translate-y-2 animate-float-3 flex flex-col items-start">
+                    <div class="glass-card hidden md:block absolute bottom-6 right-6 z-30 w-44 md:w-60 p-4 rounded-2xl bg-white/5 backdrop-blur-xl border border-pink-500/30 shadow-xl shadow-pink-500/10 transition-all duration-300 hover:shadow-[0_0_40px_rgba(236,72,153,0.3)] hover:-translate-y-2 animate-float-3 flex flex-col items-start">
                       <div class="flex items-center gap-3 mb-3 w-full">
                         <div class="w-10 h-10 rounded-full bg-gradient-to-r from-purple-500 to-pink-500 flex items-center justify-center shadow-lg">
                           <span class="text-white font-bold text-lg">AI</span>

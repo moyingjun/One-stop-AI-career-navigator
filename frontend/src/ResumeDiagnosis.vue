@@ -3,45 +3,13 @@ import { ref, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { FileText, ArrowLeft, Paperclip, Sparkles, Bot, Loader2 } from 'lucide-vue-next'
 import { marked } from 'marked'
-import * as pdfjsLib from 'pdfjs-dist/build/pdf.mjs'
-import pdfjsWorker from 'pdfjs-dist/build/pdf.worker.mjs?url'
-import mammoth from 'mammoth/mammoth.browser.js'
-
-pdfjsLib.GlobalWorkerOptions.workerSrc = pdfjsWorker
+import { parseFile } from '@/utils/ocrHelper.js'
 
 const API_BASE_URL = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
   ? 'http://156.229.28.139/api'
   : '/api'
 
 const router = useRouter()
-
-const parseTxtFile = (file) => {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader()
-    reader.onload = (e) => resolve(e.target.result || '')
-    reader.onerror = () => reject(new Error('TXT 文件读取失败'))
-    reader.readAsText(file)
-  })
-}
-
-const parseDocxFile = async (file) => {
-  const arrayBuffer = await file.arrayBuffer()
-  const result = await mammoth.extractRawText({ arrayBuffer })
-  return result.value || ''
-}
-
-const parsePdfFile = async (file) => {
-  const arrayBuffer = await file.arrayBuffer()
-  const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise
-  const pages = []
-  for (let i = 1; i <= pdf.numPages; i++) {
-    const page = await pdf.getPage(i)
-    const textContent = await page.getTextContent()
-    const pageText = textContent.items.map(item => item.str).join(' ')
-    pages.push(pageText)
-  }
-  return pages.join('\n')
-}
 
 const resumeText = ref('')
 const jdText = ref('')
@@ -54,6 +22,8 @@ const error = ref('')
 const uploadedFileName = ref('')
 const isDragging = ref(false)
 const dropZoneActive = ref(false)
+const isParsing = ref(false)
+const isScanPdfDetected = ref(false)
 
 let typewriterTimer = null
 let typewriterIndex = 0
@@ -72,29 +42,30 @@ const handleFileSelect = (event) => {
 
 const processFile = async (file) => {
   uploadedFileName.value = file.name
-  const ext = file.name.split('.').pop().toLowerCase()
+  isParsing.value = true
+  isScanPdfDetected.value = false
+
   try {
-    let text = ''
-    if (ext === 'txt') {
-      text = await parseTxtFile(file)
-    } else if (ext === 'docx') {
-      text = await parseDocxFile(file)
-    } else if (ext === 'pdf') {
-      text = await parsePdfFile(file)
-    } else {
-      error.value = '不支持的文件格式，仅支持 TXT / PDF / DOCX'
-      setTimeout(() => { error.value = '' }, 3000)
-      return
-    }
+    const text = await parseFile(file, {
+      onScanDetected: () => { isScanPdfDetected.value = true }
+    })
+
     if (!text.trim()) {
-      error.value = '文件内容为空，请检查后重试'
-      setTimeout(() => { error.value = '' }, 3000)
+      error.value = '文件内容为空或未识别到文字，请检查后重试'
+      setTimeout(() => { error.value = '' }, 4000)
       return
     }
+
     resumeText.value = text
+    if (file.type.startsWith('image/')) {
+      localStorage.setItem('resume_text', text.trim())
+    }
   } catch (e) {
     error.value = e.message || '文件解析失败，请重试'
-    setTimeout(() => { error.value = '' }, 3000)
+    setTimeout(() => { error.value = '' }, 4000)
+  } finally {
+    isParsing.value = false
+    isScanPdfDetected.value = false
   }
 }
 
@@ -228,9 +199,9 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="min-h-screen bg-[#0a0a0f] relative flex">
+  <div class="min-h-screen bg-[#0a0a0f] relative flex flex-col lg:flex-row overflow-x-hidden">
     <!-- 左侧侧边栏（与 Dashboard 风格一致） -->
-    <div class="w-64 fixed h-full z-20">
+    <div class="hidden lg:flex w-64 fixed h-full z-20">
       <div class="bg-white/5 backdrop-blur-xl border-r border-white/10 rounded-3xl m-4 h-[calc(100vh-2rem)] shadow-xl shadow-purple-500/5 flex flex-col">
         <!-- Logo -->
         <div class="p-3 border-b border-white/10 pl-4 cursor-pointer" @click="router.push('/')">
@@ -270,19 +241,19 @@ onUnmounted(() => {
     </div>
 
     <!-- 右侧主工作区 -->
-    <div class="ml-64 flex-1 flex flex-col h-screen">
+    <div class="ml-0 lg:ml-64 flex-1 flex flex-col h-[100dvh]">
       <div class="bg-white/5 backdrop-blur-xl border border-white/10 rounded-3xl m-4 flex-1 shadow-xl shadow-purple-500/5 overflow-hidden flex flex-col">
         <!-- 顶栏 -->
         <div class="top-bar p-4 border-b border-white/10 flex items-center justify-between">
-          <div class="flex items-center gap-3">
+          <div class="flex items-center gap-2 md:gap-3 flex-shrink-0 cursor-pointer hover:opacity-80 transition-opacity duration-200 active:scale-95" @click="router.push('/')">
             <div class="w-8 h-8 rounded-full bg-gradient-to-r from-purple-500 to-indigo-600 flex items-center justify-center">
               <Sparkles class="w-4 h-4 text-white" />
             </div>
-            <h1 class="text-lg font-bold text-white">AI 简历诊断</h1>
+            <h1 class="text-lg md:text-2xl font-bold text-white whitespace-nowrap">AI 简历诊断</h1>
           </div>
-          <div class="flex items-center gap-2 text-xs text-gray-500">
+          <div class="flex items-center gap-2 text-xs text-gray-500 flex-shrink-0">
             <div class="w-2 h-2 bg-green-500 rounded-full animate-pulse shadow-[0_0_8px_rgba(34,197,94,0.8)]"></div>
-            <span class="text-green-400 font-mono">DeepSeek-V3 Active</span>
+            <span class="text-xs md:text-sm text-green-400 font-mono hidden sm:inline-block">DeepSeek-V3 Active</span>
           </div>
         </div>
 
@@ -292,13 +263,13 @@ onUnmounted(() => {
           <div class="absolute top-0 left-10 w-[500px] h-[500px] bg-purple-600/10 rounded-full blur-[120px] pointer-events-none z-0"></div>
           <div class="absolute bottom-20 right-10 w-[600px] h-[600px] bg-cyan-600/10 rounded-full blur-[150px] pointer-events-none z-0"></div>
 
-          <div class="max-w-6xl mx-auto w-full flex-1 flex flex-col justify-center pb-24 relative z-10 px-8">
-            <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
+          <div class="max-w-6xl mx-auto w-full flex-1 flex flex-col justify-center pb-24 relative z-10 px-4 md:px-8">
+            <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 md:gap-8">
               <!-- 左侧：输入区 -->
               <div class="space-y-6">
                 <!-- 文件上传区（照抄 Dashboard 风格） -->
                 <div
-                  class="upload-zone relative bg-white/5 backdrop-blur-xl border border-white/10 rounded-2xl p-6 cursor-pointer transition-all duration-300"
+                  class="upload-zone relative bg-white/5 backdrop-blur-xl border border-white/10 rounded-2xl p-4 md:p-6 cursor-pointer transition-all duration-300"
                   :class="{ 'border-purple-500/50 bg-purple-500/5': dropZoneActive }"
                   @dragover.prevent="dropZoneActive = true; isDragging = true"
                   @dragleave.prevent="dropZoneActive = false; isDragging = false"
@@ -308,7 +279,7 @@ onUnmounted(() => {
                     type="file"
                     ref="fileInput"
                     class="hidden"
-                    accept=".txt,.pdf,.docx"
+                    accept=".txt,.pdf,.docx,image/*"
                     @change="handleFileSelect"
                   />
                   <div class="flex items-center gap-4">
@@ -323,17 +294,26 @@ onUnmounted(() => {
                         <span class="text-purple-400 cursor-pointer font-medium" @click="$refs.fileInput.click()">点击上传</span>
                         <span class="text-gray-500"> 或拖拽文件到此处</span>
                       </p>
-                      <p class="text-xs text-gray-600 mt-1">支持 TXT, PDF, DOCX 格式</p>
+                      <p class="text-xs text-gray-600 mt-1">支持 TXT, PDF, DOCX 或图片格式</p>
                     </div>
                   </div>
-                  <p v-if="uploadedFileName" class="mt-3 text-xs text-purple-400 flex items-center gap-1">
+                  <p v-if="uploadedFileName && !isParsing" class="mt-3 text-xs text-purple-400 flex items-center gap-1">
                     <FileText class="w-3 h-3" />
                     已加载：{{ uploadedFileName }}
                   </p>
+                  <!-- 解析进度 -->
+                  <div v-if="isParsing" class="mt-4">
+                    <div class="flex items-center gap-3">
+                      <Loader2 class="w-4 h-4 text-purple-400 animate-spin" />
+                      <span class="text-xs text-purple-300">
+                        {{ isScanPdfDetected ? '检测到扫描版文档，已启动深度视觉扫描...' : '正在解析文件，请稍候...' }}
+                      </span>
+                    </div>
+                  </div>
                 </div>
 
                 <!-- 简历内容输入 -->
-                <div class="bg-white/5 backdrop-blur-xl border border-white/10 rounded-2xl p-6">
+                <div class="bg-white/5 backdrop-blur-xl border border-white/10 rounded-2xl p-4 md:p-6">
                   <label class="text-sm font-semibold text-gray-400 uppercase tracking-wider mb-3 block">
                     简历内容
                   </label>
@@ -341,12 +321,11 @@ onUnmounted(() => {
                     v-model="resumeText"
                     rows="8"
                     placeholder="在此粘贴你的简历内容..."
-                    class="w-full bg-[#151520]/60 border border-white/10 rounded-xl p-4 text-sm text-gray-200 placeholder-gray-600 resize-none focus:outline-none focus:border-purple-500/50 focus:ring-2 focus:ring-purple-500/20 transition-all duration-300"
+                    class="w-full bg-[#151520]/60 border border-white/10 rounded-xl p-4 text-base text-gray-200 placeholder-gray-600 resize-none focus:outline-none focus:border-purple-500/50 focus:ring-2 focus:ring-purple-500/20 transition-all duration-300"
                   ></textarea>
                 </div>
 
-                <!-- JD 输入 -->
-                <div class="bg-white/5 backdrop-blur-xl border border-white/10 rounded-2xl p-6">
+                <div class="bg-white/5 backdrop-blur-xl border border-white/10 rounded-2xl p-4 md:p-6">
                   <label class="text-sm font-semibold text-gray-400 uppercase tracking-wider mb-3 block">
                     目标岗位
                   </label>
@@ -354,11 +333,11 @@ onUnmounted(() => {
                     v-model="targetRole"
                     type="text"
                     placeholder="如：Java后端开发工程师"
-                    class="w-full bg-[#151520]/60 border border-white/10 rounded-xl p-4 text-sm text-gray-200 placeholder-gray-600 focus:outline-none focus:border-purple-500/50 focus:ring-2 focus:ring-purple-500/20 transition-all duration-300"
+                    class="w-full bg-[#151520]/60 border border-white/10 rounded-xl p-4 text-base text-gray-200 placeholder-gray-600 focus:outline-none focus:border-purple-500/50 focus:ring-2 focus:ring-purple-500/20 transition-all duration-300"
                   />
                 </div>
 
-                <div class="bg-white/5 backdrop-blur-xl border border-white/10 rounded-2xl p-6">
+                <div class="bg-white/5 backdrop-blur-xl border border-white/10 rounded-2xl p-4 md:p-6">
                   <label class="text-sm font-semibold text-gray-400 uppercase tracking-wider mb-3 block">
                     岗位描述 (可选)
                   </label>
@@ -366,7 +345,7 @@ onUnmounted(() => {
                     v-model="jdText"
                     rows="5"
                     placeholder="粘贴目标岗位的 JD..."
-                    class="w-full bg-[#151520]/60 border border-white/10 rounded-xl p-4 text-sm text-gray-200 placeholder-gray-600 resize-none focus:outline-none focus:border-purple-500/50 focus:ring-2 focus:ring-purple-500/20 transition-all duration-300"
+                    class="w-full bg-[#151520]/60 border border-white/10 rounded-xl p-4 text-base text-gray-200 placeholder-gray-600 resize-none focus:outline-none focus:border-purple-500/50 focus:ring-2 focus:ring-purple-500/20 transition-all duration-300"
                   ></textarea>
                 </div>
 
@@ -388,9 +367,9 @@ onUnmounted(() => {
               </div>
 
               <!-- 右侧：结果展示区 -->
-              <div class="bg-[#151520]/60 backdrop-blur-2xl border border-white/5 rounded-3xl overflow-hidden flex flex-col min-h-[500px]">
+              <div class="bg-[#151520]/60 backdrop-blur-2xl border border-white/5 rounded-3xl overflow-hidden flex flex-col min-h-[300px] md:min-h-[500px]">
                 <!-- 标题栏 -->
-                <div class="px-6 py-4 border-b border-white/10 flex items-center justify-between">
+                <div class="px-4 py-3 md:px-6 md:py-4 border-b border-white/10 flex items-center justify-between">
                   <div class="flex items-center gap-3">
                     <Bot class="w-5 h-5 text-purple-400" />
                     <h2 class="text-sm font-semibold text-gray-300">诊断报告</h2>
@@ -406,7 +385,7 @@ onUnmounted(() => {
                 </div>
 
                 <!-- 内容区 -->
-                <div class="flex-1 p-6 overflow-y-auto relative">
+                <div class="flex-1 p-4 md:p-6 overflow-y-auto relative">
                   <div v-if="displayedResult">
                     <div v-html="marked.parse(displayedResult)" class="markdown-body"></div>
                     <span v-if="!isComplete" class="inline-block w-2 h-4 bg-purple-500 animate-pulse ml-1"></span>
@@ -430,7 +409,7 @@ onUnmounted(() => {
                 </div>
 
                 <!-- 底部：模拟面试入口 -->
-                <div v-if="isComplete" class="px-6 py-4 border-t border-white/10 bg-gradient-to-r from-pink-600/10 to-rose-600/10">
+                <div v-if="isComplete" class="px-4 py-3 md:px-6 md:py-4 border-t border-white/10 bg-gradient-to-r from-pink-600/10 to-rose-600/10">
                   <button
                     @click="goToMockInterview"
                     class="w-full bg-gradient-to-r from-pink-500 to-rose-500 text-white py-3 rounded-xl font-semibold text-sm hover:shadow-lg hover:shadow-pink-500/30 transition-all duration-300 hover:-translate-y-0.5 flex items-center justify-center gap-2 group"

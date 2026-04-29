@@ -2,11 +2,7 @@
 import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { Terminal, User, FileText, ArrowRight, Upload, Sparkles, Loader2, FileUp, ClipboardPaste } from 'lucide-vue-next'
-import * as pdfjsLib from 'pdfjs-dist/build/pdf.mjs'
-import pdfjsWorker from 'pdfjs-dist/build/pdf.worker.mjs?url'
-import mammoth from 'mammoth/mammoth.browser.js'
-
-pdfjsLib.GlobalWorkerOptions.workerSrc = pdfjsWorker
+import { parseFile } from '@/utils/ocrHelper.js'
 
 const router = useRouter()
 
@@ -20,53 +16,14 @@ const dropZoneActive = ref(false)
 const error = ref('')
 const parseSuccess = ref(false)
 
-const parseTxtFile = (file) => {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader()
-    reader.onload = (e) => resolve(e.target.result || '')
-    reader.onerror = () => reject(new Error('TXT 文件读取失败'))
-    reader.readAsText(file)
-  })
-}
-
-const parseDocxFile = async (file) => {
-  const arrayBuffer = await file.arrayBuffer()
-  const result = await mammoth.extractRawText({ arrayBuffer })
-  return result.value || ''
-}
-
-const parsePdfFile = async (file) => {
-  const arrayBuffer = await file.arrayBuffer()
-  const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise
-  const pages = []
-  for (let i = 1; i <= pdf.numPages; i++) {
-    const page = await pdf.getPage(i)
-    const textContent = await page.getTextContent()
-    const pageText = textContent.items.map(item => item.str).join(' ')
-    pages.push(pageText)
-  }
-  return pages.join('\n')
-}
-
 const processFile = async (file) => {
   isParsing.value = true
   error.value = ''
   parseSuccess.value = false
   uploadedFileName.value = file.name
 
-  const ext = file.name.split('.').pop().toLowerCase()
-
   try {
-    let text = ''
-    if (ext === 'txt') {
-      text = await parseTxtFile(file)
-    } else if (ext === 'docx') {
-      text = await parseDocxFile(file)
-    } else if (ext === 'pdf') {
-      text = await parsePdfFile(file)
-    } else {
-      throw new Error('不支持的文件格式，仅支持 TXT / DOCX / PDF')
-    }
+    const text = await parseFile(file)
 
     if (!text.trim()) {
       throw new Error('文件内容为空，请检查后重试')
@@ -150,18 +107,18 @@ onMounted(() => {
     <!-- 主表单容器 -->
     <div class="relative z-10 w-full max-w-3xl mx-4 transition-all duration-700" :class="isLoaded ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-8'">
       <!-- 标题区 -->
-      <div class="text-center mb-10">
+      <div class="text-center mb-6 md:mb-10">
         <div class="inline-flex items-center gap-2 px-4 py-1.5 rounded-full border border-purple-500/20 bg-purple-500/5 mb-4">
           <Terminal class="w-4 h-4 text-purple-400" />
           <span class="text-xs text-purple-400/80 font-mono tracking-wider">AI CAREER NAVIGATOR</span>
         </div>
-        <h1 class="text-4xl font-bold bg-gradient-to-r from-purple-400 via-fuchsia-400 to-pink-400 bg-clip-text text-transparent mb-3">开启你的职业导航</h1>
+        <h1 class="text-2xl md:text-4xl font-bold bg-gradient-to-r from-purple-400 via-fuchsia-400 to-pink-400 bg-clip-text text-transparent mb-3">开启你的职业导航</h1>
         <p class="text-sm text-gray-500">输入姓名，上传或粘贴简历，AI 将为你深度解析</p>
       </div>
 
       <!-- 表单卡片 -->
-      <div class="backdrop-blur-xl bg-white/[0.02] border border-white/10 rounded-2xl p-8 shadow-2xl">
-        <div class="space-y-6">
+      <div class="backdrop-blur-xl bg-white/[0.02] border border-white/10 rounded-2xl p-4 md:p-8 shadow-2xl">
+        <div class="space-y-4 md:space-y-6">
           <!-- 姓名输入 -->
           <div class="space-y-2">
             <label class="flex items-center gap-2 text-sm font-medium text-gray-300">
@@ -210,7 +167,7 @@ onMounted(() => {
                 />
 
                 <!-- 拖拽区内容 -->
-                <div class="flex items-center gap-4 px-6 py-5">
+                <div class="flex items-center gap-4 px-4 py-4 md:px-6 md:py-5">
                   <div class="w-12 h-12 rounded-xl flex items-center justify-center transition-all duration-300"
                     :class="parseSuccess ? 'bg-green-500/20' : dropZoneActive ? 'bg-purple-500/20 scale-110' : 'bg-white/5 group-hover:bg-purple-500/10'"
                   >
@@ -245,7 +202,7 @@ onMounted(() => {
               </div>
 
               <!-- 分隔线装饰 -->
-              <div class="flex items-center gap-3 px-6 py-2 bg-black/20">
+              <div class="flex items-center gap-3 px-4 py-2 md:px-6 bg-black/20">
                 <div class="h-px flex-1 bg-gradient-to-r from-purple-500/20 to-transparent"></div>
                 <ClipboardPaste class="w-3.5 h-3.5 text-gray-500" />
                 <span class="text-[10px] text-gray-500 font-mono tracking-wider">TEXT INPUT</span>
@@ -259,7 +216,7 @@ onMounted(() => {
                   rows="8"
                   @keydown="handleKeyDown"
                   placeholder="或者直接在此处粘贴您的简历纯文本..."
-                  class="w-full px-4 py-3 rounded-xl border-2 bg-black/40 text-gray-100 placeholder-gray-600 resize-none focus:outline-none transition-all duration-300 focus:border-purple-500/50 focus:ring-2 focus:ring-fuchsia-500/20 focus:shadow-[0_0_20px_rgba(236,72,153,0.1)] text-sm leading-relaxed"
+                  class="w-full px-4 py-3 rounded-xl border-2 bg-black/40 text-gray-100 placeholder-gray-600 resize-none focus:outline-none transition-all duration-300 focus:border-purple-500/50 focus:ring-2 focus:ring-fuchsia-500/20 focus:shadow-[0_0_20px_rgba(236,72,153,0.1)] text-base leading-relaxed"
                   :class="resumeText.trim().length >= 20 ? 'border-fuchsia-500/20' : resumeText.trim() ? 'border-red-500/20' : 'border-purple-500/10'"
                 ></textarea>
 
@@ -285,7 +242,7 @@ onMounted(() => {
         <button
           @click="handleSave"
           :disabled="!candidate_name.trim() || resumeText.trim().length < 20 || isSaving"
-          class="shimmer-btn w-full mt-8 py-4 rounded-xl font-semibold text-sm transition-all duration-300 hover:scale-[1.02] disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:scale-100 flex items-center justify-center gap-2.5 overflow-hidden relative bg-gradient-to-r from-purple-500 to-pink-500 text-white shadow-lg shadow-purple-500/30 hover:shadow-xl hover:shadow-purple-500/50"
+          class="shimmer-btn w-full mt-4 md:mt-8 py-4 rounded-xl font-semibold text-sm transition-all duration-300 hover:scale-[1.02] disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:scale-100 flex items-center justify-center gap-2.5 overflow-hidden relative bg-gradient-to-r from-purple-500 to-pink-500 text-white shadow-lg shadow-purple-500/30 hover:shadow-xl hover:shadow-purple-500/50"
         >
           <span class="absolute inset-0 shimmer-effect pointer-events-none"></span>
           <Loader2 v-if="isSaving" class="w-4 h-4 animate-spin relative z-10" />
@@ -304,7 +261,7 @@ onMounted(() => {
       </transition>
 
       <!-- 底部装饰 -->
-      <div class="flex items-center justify-center gap-4 mt-8">
+      <div class="flex items-center justify-center gap-4 mt-4 md:mt-8">
         <div class="h-px flex-1 bg-gradient-to-r from-transparent to-purple-500/20"></div>
         <div class="w-1.5 h-1.5 rounded-full bg-purple-500/30"></div>
         <div class="h-px flex-1 bg-gradient-to-l from-transparent to-pink-500/20"></div>

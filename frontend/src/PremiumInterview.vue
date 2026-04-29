@@ -223,7 +223,7 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="min-h-screen relative flex overflow-hidden bg-[#050505]">
+  <div class="min-h-[100dvh] relative flex flex-col lg:flex-row overflow-hidden bg-[#050505]">
     <!-- 极光流体背景 -->
     <div class="absolute inset-0 pointer-events-none overflow-hidden">
       <div class="aurora-blob aurora-blob-1"></div>
@@ -241,9 +241,9 @@ onMounted(() => {
     <div class="crt-overlay absolute inset-0 pointer-events-none z-50"></div>
 
     <!-- 主内容 -->
-    <div class="relative z-10 flex w-full h-screen">
+    <div class="relative z-10 flex w-full h-[100dvh]">
       <!-- 左侧面板 -->
-      <div class="left-panel w-[30%] flex flex-col border-r border-white/10 bg-white/[0.02] backdrop-blur-3xl shadow-[inset_0_1px_1px_rgba(255,255,255,0.1)]">
+      <div class="left-panel hidden lg:flex w-[30%] flex-col border-r border-white/10 bg-white/[0.02] backdrop-blur-3xl shadow-[inset_0_1px_1px_rgba(255,255,255,0.1)]">
         <!-- 返回按钮 -->
         <div class="p-4 border-b border-white/10">
           <button
@@ -352,26 +352,26 @@ onMounted(() => {
       </div>
 
       <!-- 右侧主对话控制台 -->
-      <div class="flex-1 flex flex-col">
+      <div class="flex-1 flex flex-col relative z-[60] pointer-events-auto pb-[env(safe-area-inset-bottom)]">
         <!-- Header -->
-        <div class="flex items-center justify-between px-6 py-4 border-b border-fuchsia-500/20 bg-white/[0.03] backdrop-blur-3xl shadow-[inset_0_1px_1px_rgba(255,255,255,0.1)]">
-          <div class="flex items-center gap-3">
+        <div class="flex items-center justify-between px-4 py-3 md:px-6 md:py-4 border-b border-fuchsia-500/20 bg-white/[0.03] backdrop-blur-3xl shadow-[inset_0_1px_1px_rgba(255,255,255,0.1)]">
+          <div class="flex items-center gap-2 md:gap-3 flex-shrink-0 cursor-pointer hover:opacity-80 transition-opacity duration-200 active:scale-95" @click="router.push('/')">
             <div class="w-10 h-10 rounded-full bg-gradient-to-br from-fuchsia-500 to-pink-500 flex items-center justify-center shadow-lg shadow-fuchsia-500/30">
               <Cpu class="w-5 h-5 text-white" />
             </div>
             <div>
-              <h1 class="text-lg font-bold text-fuchsia-400">👑 P8 级 AI 面试官系统</h1>
+              <h1 class="text-lg md:text-2xl font-bold text-fuchsia-400 whitespace-nowrap">👑 P8 级 AI 面试官系统</h1>
               <p class="text-xs text-pink-400/50">沉浸式面试模式 · 准备就绪</p>
             </div>
           </div>
-          <div class="flex items-center gap-2">
+          <div class="flex items-center gap-2 flex-shrink-0">
             <div class="w-2 h-2 bg-green-500 rounded-full animate-pulse shadow-[0_0_8px_rgba(34,197,94,0.8)]"></div>
-            <span class="text-xs text-green-400 font-mono">System Online</span>
+            <span class="text-xs md:text-sm text-green-400 font-mono hidden sm:inline-block">System Online</span>
           </div>
         </div>
 
         <!-- 消息流区 -->
-        <div ref="messagesContainer" class="flex-1 overflow-y-auto p-6 space-y-4">
+        <div ref="messagesContainer" class="flex-1 overflow-y-auto p-3 md:p-6 space-y-4 pb-24 md:pb-32">
           <div
             v-for="(msg, index) in messages"
             :key="index"
@@ -391,7 +391,7 @@ onMounted(() => {
 
             <!-- 消息气泡 -->
             <div
-              class="max-w-[70%] rounded-2xl px-4 py-3 relative overflow-hidden transition-all duration-300"
+              class="max-w-[90%] md:max-w-[70%] rounded-2xl px-4 py-3 relative overflow-hidden transition-all duration-300"
               :class="msg.role === 'user'
                 ? 'bg-white/10 border border-white/20 text-gray-200 shadow-[inset_0_1px_1px_rgba(255,255,255,0.1)]'
                 : 'bg-white/[0.03] border border-fuchsia-500/10 text-fuchsia-400 shadow-[inset_0_1px_1px_rgba(255,255,255,0.1)]'">
@@ -429,12 +429,12 @@ onMounted(() => {
               placeholder="输入你的回答..."
               rows="2"
               :disabled="isLoading"
-              class="flex-1 rounded-xl px-4 py-3 text-sm resize-none focus:outline-none backdrop-blur-xl shadow-[inset_0_1px_1px_rgba(255,255,255,0.1)] transition-all duration-300 bg-black/60 border border-fuchsia-500/20 text-fuchsia-100 placeholder-pink-400/30 focus:border-fuchsia-500/50 focus:ring-2 focus:ring-fuchsia-500/20 disabled:opacity-50 disabled:cursor-not-allowed"
+              class="flex-1 rounded-xl px-4 py-3 text-base resize-none focus:outline-none backdrop-blur-xl shadow-[inset_0_1px_1px_rgba(255,255,255,0.1)] transition-all duration-300 bg-black/60 border border-fuchsia-500/20 text-fuchsia-100 placeholder-pink-400/30 focus:border-fuchsia-500/50 focus:ring-2 focus:ring-fuchsia-500/20 disabled:opacity-50 disabled:cursor-not-allowed"
             ></textarea>
             <button
               @click="sendMessage"
               :disabled="isLoading || !userInput.trim()"
-              class="send-btn px-6 py-3 rounded-xl font-semibold text-sm shadow-lg transition-all duration-300 hover:scale-[1.02] disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100 flex items-center gap-2 overflow-hidden relative bg-gradient-to-r from-fuchsia-500 to-pink-500 text-white shadow-fuchsia-500/30 hover:shadow-xl hover:shadow-fuchsia-500/50">
+              class="send-btn px-4 py-2.5 md:px-6 md:py-3 rounded-xl font-semibold text-sm shadow-lg transition-all duration-300 hover:scale-[1.02] disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100 flex items-center gap-2 overflow-hidden relative bg-gradient-to-r from-fuchsia-500 to-pink-500 text-white shadow-fuchsia-500/30 hover:shadow-xl hover:shadow-fuchsia-500/50">
               <span class="send-btn-shimmer"></span>
               <Send class="w-4 h-4 relative z-10" />
               <span class="relative z-10">发送回答</span>
@@ -453,7 +453,7 @@ onMounted(() => {
               <button
                 v-if="isEvaluationDone"
                 @click="router.push('/career-planning')"
-                class="career-nav-btn px-6 py-3 rounded-xl text-sm font-semibold transition-all duration-300 flex items-center gap-2.5 overflow-hidden relative bg-gradient-to-r from-cyan-500 to-blue-500 text-white shadow-lg shadow-cyan-500/30 hover:shadow-xl hover:shadow-cyan-500/50 hover:scale-[1.02]">
+                class="career-nav-btn px-4 py-2.5 md:px-6 md:py-3 rounded-xl text-sm font-semibold transition-all duration-300 flex items-center gap-2.5 overflow-hidden relative bg-gradient-to-r from-cyan-500 to-blue-500 text-white shadow-lg shadow-cyan-500/30 hover:shadow-xl hover:shadow-cyan-500/50 hover:scale-[1.02]">
                 <span class="career-nav-shimmer"></span>
                 <svg class="w-4 h-4 relative z-10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                   <circle cx="12" cy="12" r="10" />

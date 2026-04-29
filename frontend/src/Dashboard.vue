@@ -4,45 +4,13 @@ import { llmService } from '@/services/llm_service.js'
 import { useRouter } from 'vue-router'
 import { vAutoAnimate } from '@formkit/auto-animate/vue'
 import QrcodeVue from 'qrcode.vue'
-import * as pdfjsLib from 'pdfjs-dist/build/pdf.mjs'
-import pdfjsWorker from 'pdfjs-dist/build/pdf.worker.mjs?url'
-import mammoth from 'mammoth/mammoth.browser.js'
-
-pdfjsLib.GlobalWorkerOptions.workerSrc = pdfjsWorker
+import { parseFile } from '@/utils/ocrHelper.js'
 
 // Lucide 图标
 import { Bot, FileText, MessageSquare, Folder, Settings, Clock, Puzzle, Plus, Search, Paperclip, MoreHorizontal, ChevronDown, ChevronRight, Upload, CheckCircle, X, Loader2 }
   from 'lucide-vue-next'
 
 const router = useRouter()
-
-const parseTxtFile = (file) => {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader()
-    reader.onload = (e) => resolve(e.target.result || '')
-    reader.onerror = () => reject(new Error('TXT 文件读取失败'))
-    reader.readAsText(file)
-  })
-}
-
-const parseDocxFile = async (file) => {
-  const arrayBuffer = await file.arrayBuffer()
-  const result = await mammoth.extractRawText({ arrayBuffer })
-  return result.value || ''
-}
-
-const parsePdfFile = async (file) => {
-  const arrayBuffer = await file.arrayBuffer()
-  const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise
-  const pages = []
-  for (let i = 1; i <= pdf.numPages; i++) {
-    const page = await pdf.getPage(i)
-    const textContent = await page.getTextContent()
-    const pageText = textContent.items.map(item => item.str).join(' ')
-    pages.push(pageText)
-  }
-  return pages.join('\n')
-}
 
 // 本地存储用户名
 const userName = ref(localStorage.getItem('candidate_name') || '')
@@ -149,19 +117,8 @@ const handleGlobalFileSelect = (event) => {
 }
 
 const processGlobalResume = async (file) => {
-  const ext = file.name.split('.').pop().toLowerCase()
   try {
-    let text = ''
-    if (ext === 'txt') {
-      text = await parseTxtFile(file)
-    } else if (ext === 'docx') {
-      text = await parseDocxFile(file)
-    } else if (ext === 'pdf') {
-      text = await parsePdfFile(file)
-    } else {
-      alert('不支持的文件格式，仅支持 TXT / PDF / DOCX')
-      return
-    }
+    const text = await parseFile(file)
     if (!text.trim()) {
       alert('文件内容为空，请检查后重试')
       return
@@ -415,9 +372,9 @@ onUnmounted(() => {
       <div class="absolute bottom-0 right-0 w-[50vw] h-[50vh] bg-gradient-to-tl from-cyan-500/10 via-blue-500/5 to-transparent blur-3xl animate-pulse-slower"></div>
     </div>
 
-    <div class="relative z-10 flex h-screen w-full">
+    <div class="relative z-10 flex flex-col md:flex-row h-[100dvh] w-full overflow-x-hidden">
       <!-- 左侧侧边栏 -->
-      <div class="left-sidebar w-64 fixed h-full z-20">
+      <div class="left-sidebar hidden md:flex w-64 fixed h-full z-20">
         <div class="bg-white/5 backdrop-blur-xl border-r border-white/10 rounded-3xl m-4 h-[calc(100vh-2rem)] shadow-xl shadow-purple-500/5 flex flex-col overflow-y-auto">
           <div class="logo p-3 border-b border-white/10 pl-4 cursor-pointer" @click="router.push('/')">
             <div class="flex items-center gap-3 text-left">
@@ -534,7 +491,7 @@ onUnmounted(() => {
       </div>
 
       <!-- 右侧主工作区 -->
-      <div class="right-workspace ml-64 flex-1 flex flex-col relative h-screen">
+      <div class="right-workspace ml-0 md:ml-64 flex-1 flex flex-col relative h-[100dvh]">
         <div class="bg-white/5 backdrop-blur-xl border border-white/10 rounded-3xl m-4 flex-1 shadow-xl shadow-purple-500/5 overflow-hidden flex flex-col relative">
           <div class="top-bar p-4 border-b border-white/10 flex items-center justify-between animate-[fadeIn_0.3s_ease-out]">
             <div class="search-container flex items-center gap-2">
@@ -542,7 +499,7 @@ onUnmounted(() => {
                 <input
                   type="text"
                   placeholder="搜索..."
-                  class="bg-white/10 border border-white/10 rounded-lg py-2 px-4 pl-10 text-sm w-64 focus:outline-none focus:border-purple-500/50 focus:ring-2 focus:ring-purple-500/20 transition-all duration-300"
+                  class="bg-white/10 border border-white/10 rounded-lg py-2 px-4 pl-10 text-base w-full md:w-64 focus:outline-none focus:border-purple-500/50 focus:ring-2 focus:ring-purple-500/20 transition-all duration-300"
                 />
                 <Search class="absolute left-3 top-2.5 text-gray-500 w-4 h-4" />
               </div>
@@ -568,8 +525,8 @@ onUnmounted(() => {
             
             <div class="max-w-5xl mx-auto w-full flex-1 flex flex-col justify-center pb-24 relative z-10">
               <div class="welcome-section mb-6 text-left animate-fade-in-up animation-delay-0">
-                <h1 class="text-5xl md:text-6xl lg:text-7xl font-bold text-gray-200 mb-1 tracking-tighter">{{ greeting }}，{{ userName || '新' }}同学</h1>
-                <p class="text-xl md:text-2xl text-purple-200/60 mt-2">今天想探索些什么？</p>
+                <h1 class="text-3xl md:text-5xl lg:text-6xl xl:text-7xl font-bold text-gray-200 mb-1 tracking-tighter">{{ greeting }}，{{ userName || '新' }}同学</h1>
+                <p class="text-lg md:text-2xl text-purple-200/60 mt-2">今天想探索些什么？</p>
               </div>
 
               <div class="workspaces mb-8 text-left animate-fade-in-up animation-delay-100">
@@ -603,32 +560,32 @@ onUnmounted(() => {
                   </div>
                 </div>
 
-                <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
-                  <div class="card relative overflow-hidden bg-[#151520]/60 backdrop-blur-2xl border border-white/5 rounded-3xl p-6 cursor-pointer transition-all duration-500 group hover:-translate-y-2 hover:border-purple-500/50 hover:shadow-[0_0_40px_rgba(168,85,247,0.15)] text-left flex flex-col items-start animate-fade-in-up animation-delay-300"
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-4 md:gap-6">
+                  <div class="card relative overflow-hidden bg-[#151520]/60 backdrop-blur-2xl border border-white/5 rounded-3xl p-4 md:p-6 cursor-pointer transition-all duration-500 group hover:-translate-y-2 hover:border-purple-500/50 hover:shadow-[0_0_40px_rgba(168,85,247,0.15)] text-left flex flex-col items-start animate-fade-in-up animation-delay-300"
                     @click="router.push('/resume-diagnosis')">
                     <div class="w-14 h-14 flex items-center justify-center bg-purple-500/10 rounded-xl mb-4">
                       <FileText class="w-7 h-7 text-purple-400" />
                     </div>
-                    <h3 class="text-2xl font-black tracking-tight mb-2 text-left">简历诊断</h3>
+                    <h3 class="text-xl md:text-2xl font-black tracking-tight mb-2 text-left">简历诊断</h3>
                     <p class="text-base text-gray-400 text-left leading-relaxed">分析简历优缺点，提供优化建议</p>
                   </div>
 
-                  <div class="card relative overflow-hidden bg-[#151520]/60 backdrop-blur-2xl border border-white/5 rounded-3xl p-6 cursor-pointer transition-all duration-500 group hover:-translate-y-2 hover:border-pink-500/50 hover:shadow-[0_0_40px_rgba(236,72,153,0.15)] hover:scale-[1.02] text-left flex flex-col items-start animate-fade-in-up animation-delay-400"
+                  <div class="card relative overflow-hidden bg-[#151520]/60 backdrop-blur-2xl border border-white/5 rounded-3xl p-4 md:p-6 cursor-pointer transition-all duration-500 group hover:-translate-y-2 hover:border-pink-500/50 hover:shadow-[0_0_40px_rgba(236,72,153,0.15)] hover:scale-[1.02] text-left flex flex-col items-start animate-fade-in-up animation-delay-400"
                     @click="openInterviewModal">
                     <div class="w-14 h-14 flex items-center justify-center bg-pink-500/10 rounded-xl mb-4">
                       <Bot class="w-7 h-7 text-pink-400" />
                     </div>
-                    <h3 class="text-2xl font-black tracking-tight mb-2 text-left">模拟面试</h3>
+                    <h3 class="text-xl md:text-2xl font-black tracking-tight mb-2 text-left">模拟面试</h3>
                     <p class="text-base text-gray-400 text-left leading-relaxed">AI 模拟面试，提供反馈和建议</p>
                   </div>
 
                   <div 
                     @click="router.push('/career-planning')" 
-                    class="card relative overflow-hidden bg-[#151520]/60 backdrop-blur-2xl border border-white/5 rounded-3xl p-6 cursor-pointer transition-all duration-500 group hover:-translate-y-2 hover:border-cyan-500/50 hover:shadow-[0_0_40px_rgba(6,182,212,0.15)] text-left flex flex-col items-start animate-fade-in-up animation-delay-500">
+                    class="card relative overflow-hidden bg-[#151520]/60 backdrop-blur-2xl border border-white/5 rounded-3xl p-4 md:p-6 cursor-pointer transition-all duration-500 group hover:-translate-y-2 hover:border-cyan-500/50 hover:shadow-[0_0_40px_rgba(6,182,212,0.15)] text-left flex flex-col items-start animate-fade-in-up animation-delay-500">
                     <div class="w-14 h-14 flex items-center justify-center bg-cyan-500/10 rounded-xl mb-4">
                       <MessageSquare class="w-7 h-7 text-cyan-400" />
                     </div>
-                    <h3 class="text-2xl font-black tracking-tight mb-2 text-left">职业规划</h3>
+                    <h3 class="text-xl md:text-2xl font-black tracking-tight mb-2 text-left">职业规划</h3>
                     <p class="text-base text-gray-400 text-left leading-relaxed">基于你的背景，制定职业发展路径</p>
                   </div>
                 </div></div>
@@ -661,7 +618,7 @@ onUnmounted(() => {
           </div>
 
           <!-- 底部 Dock 输入框 -->
-          <div class="input-container absolute bottom-8 left-0 w-full flex justify-center z-50 pointer-events-none animate-[fadeInUp_0.5s_ease-out_0.5s_both]">
+          <div class="input-container absolute bottom-8 left-0 w-full flex justify-center z-[60] pointer-events-none animate-[fadeInUp_0.5s_ease-out_0.5s_both] pb-[env(safe-area-inset-bottom)]">
             <div
               ref="dropZoneRef"
               class="input-wrapper relative pointer-events-auto w-full max-w-4xl bg-white/5 backdrop-blur-xl rounded-xl border border-white/10 p-4 transition-all duration-300"
