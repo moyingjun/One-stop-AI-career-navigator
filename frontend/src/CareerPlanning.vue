@@ -1,14 +1,16 @@
 <script setup>
-import { ref, computed, onMounted, onUnmounted } from 'vue'
-import { useRouter } from 'vue-router'
+import { ref, computed, nextTick, onMounted, onUnmounted } from 'vue'
+import { useRouter, useRoute } from 'vue-router'
 import { ArrowLeft, Compass, Map, Target, Loader2, FileText, Copy, Download } from 'lucide-vue-next'
 import { marked } from 'marked'
 
-const API_BASE_URL = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
-  ? 'http://156.229.28.139/api'
-  : '/api'
+const isLocalDev = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
+const API_BASE_URL = isLocalDev ? 'http://127.0.0.1:8000/api' : '/api'
 
 const router = useRouter()
+const route = useRoute()
+
+const isRestoring = ref(false)
 
 const resumeText = ref('')
 const userConfusion = ref('')
@@ -19,8 +21,15 @@ const isComplete = ref(false)
 const error = ref('')
 const copySuccess = ref(false)
 
-let typewriterTimer = null
-let typewriterIndex = 0
+const resultContainer = ref(null)
+
+const scrollToBottom = () => {
+  nextTick(() => {
+    if (resultContainer.value) {
+      resultContainer.value.scrollTop = resultContainer.value.scrollHeight
+    }
+  })
+}
 
 const isResumeValid = ref(false)
 
@@ -93,23 +102,6 @@ const exportTxt = () => {
   URL.revokeObjectURL(url)
 }
 
-const startTypewriter = () => {
-  const fullText = reportResult.value
-  typewriterIndex = 0
-  displayedResult.value = ''
-
-  const typeNext = () => {
-    if (typewriterIndex < fullText.length) {
-      displayedResult.value += fullText[typewriterIndex]
-      typewriterIndex++
-      typewriterTimer = setTimeout(typeNext, 15 + Math.random() * 20)
-    } else {
-      isComplete.value = true
-    }
-  }
-  typeNext()
-}
-
 const generatePlan = async () => {
   if (!userConfusion.value.trim()) {
     error.value = '请输入您的职业困惑或未来期望'
@@ -141,6 +133,7 @@ const generatePlan = async () => {
     const reader = response.body.getReader()
     const decoder = new TextDecoder()
     let buffer = ''
+    let currentEvent = ''
 
     while (true) {
       const { done, value } = await reader.read()
@@ -151,49 +144,66 @@ const generatePlan = async () => {
       buffer = lines.pop() || ''
 
       for (const line of lines) {
-        if (line.startsWith('data:')) {
-          const data = line.substring(5).trim()
-          if (data) {
+        if (line.startsWith('event:')) {
+          currentEvent = line.substring(6).trim()
+        } else if (line.startsWith('data:')) {
+          const dataStr = line.substring(5).trim()
+          if (!dataStr) continue
+
+          if (currentEvent === 'reply') {
             try {
-              const parsed = JSON.parse(data)
-              if (parsed.type === 'error') {
-                error.value = '腾讯云 API 报错：请求参数错误'
-                console.error('腾讯云 API 错误:', parsed)
-                isGenerating.value = false
-                return
+              const parsed = JSON.parse(dataStr)
+              const content = parsed?.payload?.content || ''
+              if (content) {
+                displayedResult.value += content
+                reportResult.value += content
+                scrollToBottom()
               }
-              if (parsed.type === 'reply' && parsed.payload) {
-                const content = parsed.payload.content || ''
-                if (content) reportResult.value += content
-              } else {
-                const content = parsed.content || parsed.answer || parsed.text || parsed.message || parsed.delta || ''
-                if (content) reportResult.value += content
-              }
-            } catch {
-              if (data) reportResult.value += data
-            }
+            } catch {}
           }
-        } else if (line.trim() && !line.startsWith('event:') && !line.startsWith('id:')) {
-          reportResult.value += line
         }
       }
     }
 
-    if (reportResult.value) startTypewriter()
+    if (displayedResult.value) isComplete.value = true
   } catch (err) {
     console.error('职业规划请求失败:', err)
-    if (err.message.includes('Failed to fetch')) {
-      error.value = '无法连接到后端 ，请确认 FastAPI 服务已启动'
-    } else {
-      error.value = `生成失败: ${err.message}`
-    }
+    error.value = err.message.includes('Failed to fetch')
+      ? '😵 导师正在开小差，请检查网络后重试哦~'
+      : `⚠️ ${err.message}`
     setTimeout(() => { error.value = '' }, 8000)
   } finally {
     isGenerating.value = false
   }
 }
 
-onMounted(() => {
+onMounted(async () => {
+  const recordId = route.query.id
+  if (recordId) {
+    isRestoring.value = true
+    try {
+      const res = await fetch(`${API_BASE_URL.replace('/api', '')}/api/history/${recordId}`)
+      if (res.ok) {
+        const data = await res.json()
+        if (data.success && data.data) {
+          const record = data.data
+          reportResult.value = record.ai_result || ''
+          displayedResult.value = record.ai_result || ''
+          if (record.user_input) {
+            const match = record.user_input.match(/困惑: (.+)/)
+            if (match) userConfusion.value = match[1]
+          }
+          isComplete.value = true
+          return
+        }
+      }
+    } catch (err) {
+      console.error('恢复历史记录失败:', err)
+    } finally {
+      isRestoring.value = false
+    }
+  }
+
   const globalResume = localStorage.getItem('resume_text')
   if (globalResume) {
     resumeText.value = globalResume
@@ -202,9 +212,7 @@ onMounted(() => {
   }
 })
 
-onUnmounted(() => {
-  if (typewriterTimer) clearTimeout(typewriterTimer)
-})
+onUnmounted(() => {})
 </script>
 
 <template>
@@ -227,8 +235,8 @@ onUnmounted(() => {
 
     <!-- 主内容 -->
     <div class="relative z-10 flex w-full flex-col lg:flex-row min-h-[100dvh] overflow-y-auto">
-      <!-- 左侧控制台 -->
-      <div class="left-panel w-full lg:w-[350px] xl:w-[400px] flex flex-col border-r border-cyan-500/10 bg-white/[0.02] backdrop-blur-3xl shadow-[inset_0_1px_1px_rgba(255,255,255,0.1)]">
+      <!-- 左侧控制台 40% -->
+      <div class="left-panel w-full lg:w-[40%] xl:w-[38%] flex flex-col border-r border-cyan-500/10 bg-white/[0.02] backdrop-blur-3xl shadow-[inset_0_1px_1px_rgba(255,255,255,0.1)]">
         <!-- 返回按钮 -->
         <div class="p-4 border-b border-cyan-500/10">
           <button
@@ -313,21 +321,20 @@ onUnmounted(() => {
         </div>
       </div>
 
-      <!-- 右侧主报告区 -->
-      <div class="flex-1 w-full mt-6 lg:mt-0 flex flex-col relative z-[60] pointer-events-auto pb-[env(safe-area-inset-bottom)]">
+      <!-- 右侧主报告区 60% -->
+      <div class="flex-1 w-full lg:w-[60%] flex flex-col relative z-[60] pointer-events-auto pb-[env(safe-area-inset-bottom)]">
         <!-- Header -->
-        <div class="flex items-center justify-between px-4 py-3 md:px-6 md:py-4 border-b border-cyan-500/20 bg-white/[0.03] backdrop-blur-3xl shadow-[inset_0_1px_1px_rgba(255,255,255,0.1)]">
+        <div class="flex items-center justify-between px-3 py-3 md:px-6 md:py-4 border-b border-cyan-500/20 bg-white/[0.03] backdrop-blur-3xl shadow-[inset_0_1px_1px_rgba(255,255,255,0.1)]">
           <div class="flex items-center gap-2 md:gap-3 flex-shrink-0 cursor-pointer hover:opacity-80 transition-opacity duration-200 active:scale-95" @click="router.push('/')">
             <div class="w-10 h-10 rounded-full bg-gradient-to-br from-cyan-500 to-blue-600 flex items-center justify-center shadow-lg shadow-cyan-500/30">
               <Compass class="w-5 h-5 text-white" />
             </div>
             <div>
               <h1 class="text-lg md:text-2xl font-bold text-cyan-400 whitespace-nowrap">🧭 AI 职业领航导师</h1>
-              <p class="text-xs text-cyan-400/50">深度规划 · 精准导航</p>
+              <p class="text-xs text-cyan-400/50">{{ isGenerating ? '导师正在查阅你的职业档案...' : '深度规划 · 精准导航' }}</p>
             </div>
           </div>
           <div class="flex items-center gap-3">
-            <!-- 复制/导出按钮 -->
             <transition name="fade">
               <div v-if="isComplete" class="flex items-center gap-2">
                 <button
@@ -352,22 +359,25 @@ onUnmounted(() => {
         </div>
 
         <!-- 报告展示区 -->
-        <div class="flex-1 overflow-y-auto p-4 md:p-6 pb-24 md:pb-32">
-          <div v-if="displayedResult" class="report-card rounded-2xl border border-cyan-500/20 bg-blue-950/30 backdrop-blur-xl p-4 md:p-6 shadow-[inset_0_1px_1px_rgba(255,255,255,0.1)]">
-            <div v-html="parsedReport" class="markdown-body"></div>
-            <span v-if="!isComplete" class="inline-block w-2 h-4 bg-cyan-500 animate-pulse ml-1"></span>
+        <div ref="resultContainer" class="flex-1 overflow-y-auto p-4 md:p-8">
+          <div v-if="displayedResult" class="markdown-body max-w-full">
+            <div v-html="parsedReport"></div>
+            <span v-if="!isComplete" class="inline-block w-2 h-[1.2em] bg-cyan-500 animate-pulse rounded-sm ml-0.5 align-middle"></span>
           </div>
 
           <div v-else-if="isGenerating" class="flex flex-col items-center justify-center h-full text-center">
-            <div class="w-20 h-20 rounded-full bg-cyan-500/10 flex items-center justify-center mb-6 animate-pulse">
-              <Loader2 class="w-10 h-10 text-cyan-400 animate-spin" />
+            <div class="relative mb-6">
+              <div class="w-20 h-20 rounded-2xl bg-cyan-500/[0.04] border border-cyan-500/[0.08] flex items-center justify-center">
+                <Loader2 class="w-8 h-8 text-cyan-400 animate-spin" />
+              </div>
+              <div class="absolute -inset-2 rounded-2xl bg-cyan-500/[0.02] blur-xl animate-pulse"></div>
             </div>
-            <p class="text-cyan-400 text-sm font-medium">AI 正在为您绘制职业蓝图</p>
-            <p class="text-gray-600 text-xs mt-2">分析简历与困惑，生成专属规划...</p>
+            <p class="text-cyan-300/80 text-sm font-medium">导师正在查阅你的职业档案...</p>
+            <p class="text-gray-600 text-xs mt-2 max-w-[240px]">正在深度分析简历与职业困惑，为你绘制专属职业蓝图</p>
           </div>
 
           <div v-else class="flex flex-col items-center justify-center h-full text-center">
-            <div class="w-20 h-20 rounded-full bg-white/5 flex items-center justify-center mb-6">
+            <div class="w-20 h-20 rounded-2xl bg-white/[0.02] border border-white/[0.04] flex items-center justify-center mb-6">
               <Map class="w-10 h-10 text-gray-600" />
             </div>
             <p class="text-gray-500 text-sm">输入您的职业困惑，点击生成专属蓝图</p>
@@ -534,153 +544,128 @@ textarea::-webkit-scrollbar-thumb:hover {
 }
 
 .markdown-body :deep(h1) {
-  font-size: 1.6em;
+  font-size: 1.5em;
   font-weight: 800;
-  margin: 1.2em 0 0.6em;
-  padding-bottom: 0.3em;
+  margin: 0 0 0.5em;
+  padding-bottom: 0.25em;
   background: linear-gradient(135deg, #22d3ee, #3b82f6);
   -webkit-background-clip: text;
   background-clip: text;
   -webkit-text-fill-color: transparent;
-  border-bottom: 1px solid rgba(6, 182, 212, 0.15);
-  text-shadow: 0 0 30px rgba(6, 182, 212, 0.3);
+  border-bottom: 1px solid rgba(6, 182, 212, 0.12);
 }
 
 .markdown-body :deep(h2) {
-  font-size: 1.35em;
+  font-size: 1.25em;
   font-weight: 700;
-  margin: 1em 0 0.5em;
-  padding-bottom: 0.25em;
+  margin: 1em 0 0.4em;
   background: linear-gradient(135deg, #06b6d4, #2563eb);
   -webkit-background-clip: text;
   background-clip: text;
   -webkit-text-fill-color: transparent;
-  border-bottom: 1px solid rgba(6, 182, 212, 0.1);
 }
 
 .markdown-body :deep(h3) {
-  font-size: 1.15em;
+  font-size: 1.08em;
   font-weight: 600;
-  margin: 0.8em 0 0.4em;
+  margin: 0.7em 0 0.3em;
   background: linear-gradient(135deg, #22d3ee, #60a5fa);
   -webkit-background-clip: text;
   background-clip: text;
   -webkit-text-fill-color: transparent;
 }
 
-.markdown-body :deep(strong),
-.markdown-body :deep(b) {
+.markdown-body :deep(strong), .markdown-body :deep(b) {
   color: #22d3ee;
   font-weight: 700;
 }
 
 .markdown-body :deep(p) {
-  margin: 0.6em 0;
+  margin: 0.5em 0;
   color: rgba(207, 250, 254, 0.85);
 }
 
-.markdown-body :deep(ul),
-.markdown-body :deep(ol) {
+.markdown-body :deep(ul), .markdown-body :deep(ol) {
   padding-left: 1.5em;
   margin: 0.5em 0;
 }
 
 .markdown-body :deep(li) {
-  margin: 0.3em 0;
-  position: relative;
+  margin: 0.25em 0;
   color: rgba(207, 250, 254, 0.8);
 }
 
 .markdown-body :deep(li)::marker {
   color: #22d3ee;
-  text-shadow: 0 0 6px rgba(34, 211, 238, 0.6);
 }
 
 .markdown-body :deep(table) {
   width: 100%;
   border-collapse: separate;
   border-spacing: 0;
-  margin: 1em 0;
-  border: 1px solid rgba(6, 182, 212, 0.2);
-  border-radius: 10px;
+  margin: 0.8em 0;
+  border: 1px solid rgba(6, 182, 212, 0.15);
+  border-radius: 8px;
   overflow: hidden;
   background: rgba(0, 0, 0, 0.2);
 }
 
-.markdown-body :deep(thead) {
-  background: rgba(6, 182, 212, 0.1);
-}
+.markdown-body :deep(thead) { background: rgba(6, 182, 212, 0.08); }
 
 .markdown-body :deep(th) {
-  padding: 10px 14px;
-  text-align: left;
+  padding: 8px 12px;
   font-weight: 600;
   color: #22d3ee;
-  font-size: 13px;
-  border-bottom: 1px solid rgba(6, 182, 212, 0.25);
+  font-size: 12px;
+  border-bottom: 1px solid rgba(6, 182, 212, 0.2);
 }
 
 .markdown-body :deep(td) {
-  padding: 9px 14px;
-  font-size: 13px;
+  padding: 7px 12px;
+  font-size: 12px;
   color: rgba(207, 250, 254, 0.8);
-  border-bottom: 1px solid rgba(6, 182, 212, 0.08);
+  border-bottom: 1px solid rgba(6, 182, 212, 0.06);
 }
 
-.markdown-body :deep(tr:hover td) {
-  background: rgba(6, 182, 212, 0.06);
-}
+.markdown-body :deep(tr:hover td) { background: rgba(6, 182, 212, 0.04); }
 
 .markdown-body :deep(blockquote) {
-  border-left: 3px solid rgba(6, 182, 212, 0.4);
-  padding: 0.5em 1em;
-  margin: 0.8em 0;
-  background: rgba(6, 182, 212, 0.05);
-  border-radius: 0 8px 8px 0;
+  border-left: 2px solid rgba(6, 182, 212, 0.3);
+  padding: 0.3em 0.8em;
+  margin: 0.6em 0;
+  background: rgba(6, 182, 212, 0.04);
+  border-radius: 0 6px 6px 0;
   color: rgba(207, 250, 254, 0.7);
 }
 
 .markdown-body :deep(code) {
-  background: rgba(6, 182, 212, 0.1);
-  padding: 0.15em 0.4em;
-  border-radius: 4px;
+  background: rgba(6, 182, 212, 0.08);
+  padding: 0.1em 0.4em;
+  border-radius: 3px;
   font-size: 0.9em;
   color: #67e8f9;
   font-family: 'JetBrains Mono', 'Fira Code', monospace;
 }
 
 .markdown-body :deep(pre) {
-  background: rgba(0, 0, 0, 0.4);
-  border: 1px solid rgba(6, 182, 212, 0.15);
-  border-radius: 10px;
-  padding: 1em;
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid rgba(6, 182, 212, 0.1);
+  border-radius: 8px;
+  padding: 0.8em;
   overflow-x: auto;
-  margin: 0.8em 0;
+  margin: 0.6em 0;
 }
 
 .markdown-body :deep(pre code) {
   background: none;
   padding: 0;
-  border-radius: 0;
   color: rgba(207, 250, 254, 0.85);
 }
 
 .markdown-body :deep(hr) {
   border: none;
   height: 1px;
-  background: linear-gradient(90deg, transparent, rgba(6, 182, 212, 0.3), transparent);
-  margin: 1.5em 0;
-}
-
-.markdown-body :deep(a) {
-  color: #22d3ee;
-  text-decoration: none;
-  border-bottom: 1px solid rgba(34, 211, 238, 0.3);
-  transition: all 0.2s;
-}
-
-.markdown-body :deep(a:hover) {
-  color: #67e8f9;
-  border-bottom-color: rgba(103, 232, 249, 0.5);
+  background: linear-gradient(90deg, transparent, rgba(6, 182, 212, 0.2), transparent);
+  margin: 1.2em 0;
 }
 </style>

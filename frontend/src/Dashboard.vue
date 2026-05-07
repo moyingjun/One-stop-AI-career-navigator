@@ -1,16 +1,80 @@
 <script setup>
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
 import { llmService } from '@/services/llm_service.js'
 import { useRouter } from 'vue-router'
 import { vAutoAnimate } from '@formkit/auto-animate/vue'
 import QrcodeVue from 'qrcode.vue'
 import { parseFile } from '@/utils/ocrHelper.js'
+import { marked } from 'marked'
 
-// Lucide 图标
-import { Bot, FileText, MessageSquare, Folder, Settings, Clock, Puzzle, Plus, Search, Paperclip, MoreHorizontal, ChevronDown, ChevronRight, Upload, CheckCircle, X, Loader2 }
+import { Bot, FileText, MessageSquare, Folder, Settings, Clock, Puzzle, Plus, Search, Paperclip, MoreHorizontal, ChevronDown, ChevronRight, Upload, CheckCircle, X, Loader2, History, Send, Sparkles, Mic }
   from 'lucide-vue-next'
 
 const router = useRouter()
+
+const isLocalDev = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
+const API_BASE_URL = isLocalDev ? 'http://127.0.0.1:8000/api' : '/api'
+
+const historyRecords = ref([])
+
+const loadHistory = async () => {
+  try {
+    const res = await fetch(`${API_BASE_URL.replace('/api', '')}/api/history?limit=2`)
+    if (res.ok) {
+      const data = await res.json()
+      historyRecords.value = data.records || []
+    }
+  } catch {}
+}
+
+const getCategoryLabel = (cat) => {
+  if (cat === 'resume_diagnosis') return '简历诊断'
+  if (cat === 'interview_beginner') return '温和面试'
+  if (cat === 'interview_standard') return '标准面试'
+  if (cat === 'interview_p8') return 'P8压力面'
+  if (cat.startsWith('interview')) return '面试评估'
+  if (cat === 'career_planning') return '职业规划'
+  if (cat === 'general_chat') return '职业助手'
+  return cat
+}
+
+const getCategoryColor = (cat) => {
+  if (cat === 'resume_diagnosis') return 'text-purple-400 border-purple-500/30 bg-purple-500/5'
+  if (cat === 'interview_beginner') return 'text-emerald-400 border-emerald-500/30 bg-emerald-500/5'
+  if (cat === 'interview_standard') return 'text-blue-400 border-blue-500/30 bg-blue-500/5'
+  if (cat === 'interview_p8') return 'text-pink-400 border-pink-500/30 bg-pink-500/5'
+  if (cat.startsWith('interview')) return 'text-pink-400 border-pink-500/30 bg-pink-500/5'
+  if (cat === 'career_planning') return 'text-cyan-400 border-cyan-500/30 bg-cyan-500/5'
+  if (cat === 'general_chat') return 'text-cyan-400 border-cyan-500/30 bg-cyan-500/5'
+  return 'text-gray-400 border-gray-500/30 bg-gray-500/5'
+}
+
+const getDifficultyBadge = (record) => {
+  if (!record.extra_data) return null
+  try {
+    const extra = typeof record.extra_data === 'string' ? JSON.parse(record.extra_data) : record.extra_data
+    return extra.difficulty || null
+  } catch {
+    return null
+  }
+}
+
+const getDifficultyBadgeConfig = (difficulty) => {
+  if (difficulty === 'beginner') {
+    return { label: '🌱 温和鼓励', class: 'text-emerald-400 border-emerald-500/30 bg-emerald-500/10' }
+  } else if (difficulty === 'standard') {
+    return { label: '💼 标准专业', class: 'text-blue-400 border-blue-500/30 bg-blue-500/10' }
+  } else if (difficulty === 'p8') {
+    return { label: '🔥 P8 压力面', class: 'text-pink-400 border-pink-500/30 bg-pink-500/10' }
+  }
+  return null
+}
+
+const goToHistory = (record) => {
+  if (record.category === 'resume_diagnosis') router.push(`/resume-diagnosis?id=${record.id}`)
+  else if (record.category === 'interview_evaluate') router.push(`/interview?id=${record.id}`)
+  else if (record.category === 'career_planning') router.push(`/career-planning?id=${record.id}`)
+}
 
 // 本地存储用户名
 const userName = ref(localStorage.getItem('candidate_name') || '')
@@ -33,15 +97,7 @@ const mockPayUrl = ref("【内测福利】检测到您为特邀体验官，恭�
 
 // 响应式数据
 const userId = ref('user_001')
-const selectedFile = ref(null)
-const isUploading = ref(false)
-const chatMessages = ref([])
-const dropZoneActive = ref(false)
-const userInput = ref('')
 const activeWorkspace = ref('机构')
-const dropZoneRef = ref(null)
-const fileInput = ref(null)
-const isDragging = ref(false)
 const activeMenu = ref('功能模板')
 const placeholderText = ref('')
 
@@ -57,9 +113,9 @@ const greeting = computed(() => {
 
 // 打字机占位符效果
 const placeholders = [
-  '想了解互联网大厂的面试套路吗？|',
-  '帮我诊断一下这份简历的通过率 |',
-  '输入你的问题...'
+  '想了解互联网大厂的最新面试套路吗？|',
+  '输入你想查询的行业薪资情况 |',
+  '向 AI 职场领航员提问...'
 ]
 let placeholderIndex = 0
 let charIndex = 0
@@ -183,103 +239,14 @@ const unlockInterview = () => {
   router.push('/interview')
 }
 
-// 处理文件选择
-const handleFileChange = (event) => {
-  selectedFile.value = event.target.files[0]
-}
-
-// 触发文件输入框
-const triggerFileInput = () => {
-  fileInput.value?.click()
-}
-
-// 取消选择文件
-const cancelFileSelection = () => {
-  selectedFile.value = null
-}
-
-// 处理拖拽开始
-const handleDragStart = (event) => {
-  event.preventDefault()
-}
-
-// 处理拖拽进入
-const handleDragEnter = (event) => {
-  event.preventDefault()
-  dropZoneActive.value = true
-  isDragging.value = true
-}
-
-// 处理拖拽离开
-const handleDragLeave = (event) => {
-  event.preventDefault()
-  dropZoneActive.value = false
-  isDragging.value = false
-}
-
-// 处理拖拽释放
-const handleDrop = (event) => {
-  event.preventDefault()
-  dropZoneActive.value = false
-  isDragging.value = false
-  selectedFile.value = event.dataTransfer.files[0]
-  console.log('File dropped:', selectedFile.value)
-}
-
-// 新增拖拽处理函数
-const onDragOver = (event) => {
-  event.preventDefault()
-  isDragging.value = true
-}
-
-const onDragLeave = (event) => {
-  event.preventDefault()
-  isDragging.value = false
-}
-
-const onDrop = (event) => {
-  event.preventDefault()
-  isDragging.value = false
-  dropZoneActive.value = false
-  const files = event.dataTransfer.files
-  if (files.length > 0) {
-    selectedFile.value = files[0]
-    console.log('File uploaded:', selectedFile.value)
-  }
-}
-
-// 处理发送
-const handleSend = async () => {
-  if (!selectedFile.value) {
-    alert('请先选择一个文件')
-    return
-  }
-
-  isUploading.value = true
-
-  try {
-    const result = await llmService.diagnoseResume(selectedFile.value, userId.value)
-    chatMessages.value.push({
-      type: 'ai',
-      content: JSON.stringify(result, null, 2)
-    })
-    userInput.value = ''
-    selectedFile.value = null
-  } catch (error) {
-    alert('网络错误，请稍后重试：' + error.message)
-  } finally {
-    isUploading.value = false
-  }
-}
-
 // 快捷操作
 const quickActions = [
-  '简历诊断',
-  '模拟面试',
-  '职业规划',
-  '技能评估',
-  '求职建议',
-  '简历优化'
+  'Java后端前景如何？',
+  '如何写好自我介绍？',
+  '简历怎么突出亮点？',
+  '前端面试常考什么？',
+  '转行IT来得及吗？',
+  '大厂面试流程是怎样的？'
 ]
 
 // 工作区选项
@@ -325,6 +292,97 @@ const iconMap = {
   'bot': Bot
 }
 
+const chatMessages = ref([])
+const userChatInput = ref('')
+const isChatLoading = ref(false)
+const uploadedGlobalResume = ref('')
+const chatContainerRef = ref(null)
+
+const scrollChatToBottom = () => {
+  nextTick(() => {
+    if (chatContainerRef.value) {
+      chatContainerRef.value.scrollTop = chatContainerRef.value.scrollHeight
+    }
+  })
+}
+
+const sendGeneralChatMessage = async () => {
+  if (!userChatInput.value.trim() || isChatLoading.value) return
+
+  const userMessage = userChatInput.value.trim()
+  chatMessages.value.push({
+    role: 'user',
+    content: userMessage,
+    timestamp: new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
+  })
+  userChatInput.value = ''
+  isChatLoading.value = true
+  scrollChatToBottom()
+
+  try {
+    const response = await fetch(`${API_BASE_URL}/chat/general`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        user_query: userMessage,
+        resume_text: uploadedGlobalResume.value || localStorage.getItem('resume_text') || ''
+      })
+    })
+
+    if (!response.ok) throw new Error(`HTTP ${response.status}`)
+
+    const data = await response.json()
+    chatMessages.value.push({
+      role: 'ai',
+      content: data.reply || '抱歉，我没理解你的问题',
+      timestamp: new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }),
+      isNew: true
+    })
+  } catch (error) {
+    console.error('发送聊天消息失败:', error)
+    chatMessages.value.push({
+      role: 'ai',
+      content: '😵 职业助手正在开小差，请重新提问哦~',
+      timestamp: new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
+    })
+  } finally {
+    isChatLoading.value = false
+    scrollChatToBottom()
+  }
+}
+
+const handleChatFileUpload = async (event) => {
+  const files = event.target.files
+  if (files.length > 0) {
+    try {
+      const text = await parseFile(files[0])
+      if (text.trim()) {
+        uploadedGlobalResume.value = text
+      }
+    } catch (e) {
+      alert(e.message || '文件解析失败')
+    } finally {
+      event.target.value = ''
+    }
+  }
+}
+
+const removeUploadedResume = () => {
+  uploadedGlobalResume.value = ''
+}
+
+const handleChatEnter = (event) => {
+  if (event.key === 'Enter' && !event.shiftKey) {
+    event.preventDefault()
+    sendGeneralChatMessage()
+  }
+}
+
+const chatPlaceholder = computed(() => {
+  if (uploadedGlobalResume.value) return '请输入关于此文件的问题...'
+  return placeholderText.value || '向 AI 职场领航员提问...'
+})
+
 // 系统初始化控制台动画
 const playConsoleAnimation = async () => {
   if (window.__EGG_LOGGED__) return
@@ -351,6 +409,7 @@ onMounted(() => {
   window.addEventListener('mousemove', handleMouseMove)
   window.addEventListener('storage', handleStorageChange)
   playConsoleAnimation()
+  loadHistory()
 })
 
 onUnmounted(() => {
@@ -365,7 +424,7 @@ onUnmounted(() => {
 <template>
   <div class="app-container relative min-h-screen w-full text-gray-300 overflow-hidden">
     <!-- 背景光影效果 -->
-    <div class="absolute top-0 left-0 w-full h-full bg-[#050505] z-0">
+    <div class="absolute top-0 left-0 w-full h-full bg-[#050505] z-0 pointer-events-none">
       <!-- 左上角紫色光晕 -->
       <div class="absolute top-0 left-0 w-[50vw] h-[50vh] bg-gradient-to-br from-purple-600/10 via-pink-500/5 to-transparent blur-3xl animate-pulse-slow"></div>
       <!-- 右下角蓝色光晕 -->
@@ -406,7 +465,7 @@ onUnmounted(() => {
                   :key="index"
                   class="menu-item flex items-center gap-3 py-1.5 px-2 rounded-lg hover:bg-white/10 hover:bg-gradient-to-r hover:from-purple-500/10 hover:to-transparent transition-all duration-300 cursor-pointer hover:translate-x-2 hover:text-white group"
                   :class="{ 'bg-white/10 text-white': item.label === activeMenu }"
-                  @click="activeMenu = item.label"
+                  @click="item.label === '历史记录' ? router.push('/history-archive') : (activeMenu = item.label)"
                 >
                   <component :is="iconMap[item.icon]" class="w-5 h-5 text-gray-400 group-hover:text-purple-400 transition-colors duration-300" />
                   <span class="text-sm">{{ item.label }}</span>
@@ -515,7 +574,7 @@ onUnmounted(() => {
             </div>
           </div>
 
-          <div class="main-content flex-1 overflow-y-auto relative flex flex-col">
+          <div class="main-content flex-1 overflow-y-auto relative flex flex-col pb-40">
             <!-- 鼠标跟随环境光 -->
             <div 
               class="absolute w-[600px] h-[600px] bg-purple-600/15 rounded-full blur-[150px] pointer-events-none z-0 transition-all duration-700 ease-out"
@@ -573,7 +632,7 @@ onUnmounted(() => {
                   <div class="card relative overflow-hidden bg-[#151520]/60 backdrop-blur-2xl border border-white/5 rounded-3xl p-4 md:p-6 cursor-pointer transition-all duration-500 group hover:-translate-y-2 hover:border-pink-500/50 hover:shadow-[0_0_40px_rgba(236,72,153,0.15)] hover:scale-[1.02] text-left flex flex-col items-start animate-fade-in-up animation-delay-400"
                     @click="openInterviewModal">
                     <div class="w-14 h-14 flex items-center justify-center bg-pink-500/10 rounded-xl mb-4">
-                      <Bot class="w-7 h-7 text-pink-400" />
+                      <Mic class="w-7 h-7 text-pink-400" />
                     </div>
                     <h3 class="text-xl md:text-2xl font-black tracking-tight mb-2 text-left">模拟面试</h3>
                     <p class="text-base text-gray-400 text-left leading-relaxed">AI 模拟面试，提供反馈和建议</p>
@@ -590,16 +649,69 @@ onUnmounted(() => {
                   </div>
                 </div></div>
 
+              <!-- 历史记录区域 -->
+              <div v-if="historyRecords.length > 0" class="mb-8 animate-fade-in-up animation-delay-500">
+                <div class="mb-4 flex items-center justify-between">
+                  <h2 class="text-lg font-semibold text-gray-200 text-left flex items-center gap-2">
+                    <History class="w-5 h-5 text-purple-400" />
+                    历史记录
+                  </h2>
+                  <button
+                    @click="router.push('/history-archive')"
+                    class="text-xs text-purple-400 hover:text-purple-300 transition-colors duration-300 flex items-center gap-1"
+                  >
+                    查看全部
+                    <ChevronRight class="w-4 h-4" />
+                  </button>
+                </div>
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  <div
+                    v-for="record in historyRecords"
+                    :key="record.id"
+                    class="relative overflow-hidden bg-[#151520]/60 backdrop-blur-2xl border border-white/5 rounded-2xl p-4 cursor-pointer transition-all duration-300 group hover:-translate-y-1 hover:border-purple-500/30 hover:shadow-[0_0_20px_rgba(168,85,247,0.1)] text-left"
+                    @click="goToHistory(record)"
+                  >
+                    <div class="flex items-center justify-between mb-2">
+                      <div class="flex items-center gap-2">
+                        <span class="text-xs px-2 py-0.5 rounded-full border" :class="getCategoryColor(record.category)">{{ getCategoryLabel(record.category) }}</span>
+                        <span v-if="getDifficultyBadge(record) && getDifficultyBadgeConfig(getDifficultyBadge(record))" class="text-[10px] px-1.5 py-0.5 rounded-full border" :class="getDifficultyBadgeConfig(getDifficultyBadge(record)).class">{{ getDifficultyBadgeConfig(getDifficultyBadge(record)).label }}</span>
+                      </div>
+                      <span class="text-[10px] text-gray-600">{{ record.created_at }}</span>
+                    </div>
+                    <p class="text-xs text-gray-400 truncate">{{ record.user_input }}</p>
+                    <p v-if="record.ai_result" class="text-[11px] text-gray-600 truncate mt-1">{{ record.ai_result.substring(0, 60) }}...</p>
+                  </div>
+                </div>
+              </div>
+
               <div class="chat-messages mb-6 space-y-4 animate-[fadeInUp_0.5s_ease-out_0.3s_both]" v-if="chatMessages.length > 0" v-auto-animate>
                 <div v-for="(message, index) in chatMessages" :key="index" class="chat-message">
-                  <div class="ai-message relative overflow-hidden bg-white/5 backdrop-blur-xl p-4 rounded-lg border border-white/10 hover:border-purple-500/30 hover:shadow-[0_0_15px_rgba(168,85,247,0.15)] transition-all duration-300">
-                    <div class="flex items-start gap-3">
-                      <div class="ai-avatar w-8 h-8 rounded-full bg-gradient-to-r from-purple-500 to-indigo-600 flex items-center justify-center flex-shrink-0 ring-2 ring-purple-500/30 ring-offset-2 ring-offset-[#050505]">
-                        <Bot class="w-4 h-4 text-white" />
-                      </div>
-                      <div class="flex-1">
-                        <pre class="text-sm whitespace-pre-wrap text-purple-100">{{ message.content }}</pre>
-                      </div>
+                  <div v-if="message.role === 'user'" class="flex justify-end">
+                    <div class="max-w-[80%] bg-gradient-to-r from-fuchsia-500/20 to-purple-500/20 border border-fuchsia-500/30 rounded-xl p-3 text-right">
+                      <p class="text-sm text-gray-200">{{ message.content }}</p>
+                      <p class="text-xs text-gray-500 mt-1">{{ message.timestamp }}</p>
+                    </div>
+                  </div>
+                  <div v-else class="flex gap-3">
+                    <div class="w-8 h-8 rounded-full bg-gradient-to-r from-cyan-500/20 to-blue-500/20 border border-cyan-500/30 flex items-center justify-center flex-shrink-0">
+                      <Bot class="w-4 h-4 text-cyan-400" />
+                    </div>
+                    <div class="max-w-[80%] bg-gradient-to-r from-gray-800/50 to-gray-900/50 border border-white/10 rounded-xl p-3">
+                      <div class="text-sm text-gray-200 dashboard-markdown" v-html="marked.parse(message.content)"></div>
+                      <p class="text-xs text-gray-500 mt-1">{{ message.timestamp }}</p>
+                    </div>
+                  </div>
+                </div>
+
+                <div v-if="isChatLoading" class="flex gap-3">
+                  <div class="w-8 h-8 rounded-full bg-gradient-to-r from-cyan-500/20 to-blue-500/20 border border-cyan-500/30 flex items-center justify-center flex-shrink-0">
+                    <Loader2 class="w-4 h-4 animate-spin text-cyan-400" />
+                  </div>
+                  <div class="bg-gradient-to-r from-gray-800/50 to-gray-900/50 border border-white/10 rounded-xl px-4 py-3">
+                    <div class="flex items-center gap-1.5">
+                      <div class="w-2 h-2 rounded-full bg-cyan-500 animate-bounce" style="animation-delay: 0s;"></div>
+                      <div class="w-2 h-2 rounded-full bg-cyan-500 animate-bounce" style="animation-delay: 0.2s;"></div>
+                      <div class="w-2 h-2 rounded-full bg-cyan-500 animate-bounce" style="animation-delay: 0.4s;"></div>
                     </div>
                   </div>
                 </div>
@@ -609,6 +721,7 @@ onUnmounted(() => {
                 <button
                   v-for="action in quickActions"
                   :key="action"
+                  @click="userChatInput = action"
                   class="quick-action px-3 py-1 rounded-full bg-white/10 hover:bg-white/15 hover:scale-105 text-xs text-gray-300 transition-all duration-200 hover:shadow-lg hover:shadow-purple-500/20"
                 >
                   {{ action }}
@@ -617,75 +730,52 @@ onUnmounted(() => {
             </div>
           </div>
 
-          <!-- 底部 Dock 输入框 -->
+          <!-- 底部 Dock 输入框 - 通用职业助手 -->
           <div class="input-container absolute bottom-8 left-0 w-full flex justify-center z-[60] pointer-events-none animate-[fadeInUp_0.5s_ease-out_0.5s_both] pb-[env(safe-area-inset-bottom)]">
             <div
-              ref="dropZoneRef"
-              class="input-wrapper relative pointer-events-auto w-full max-w-4xl bg-white/5 backdrop-blur-xl rounded-xl border border-white/10 p-4 transition-all duration-300"
-              :class="{ 'border-2 border-dashed border-purple-500 bg-purple-500/10 scale-[1.02] shadow-[0_0_30px_rgba(168,85,247,0.3)]': isDragging || dropZoneActive }"
-              @dragover.prevent="onDragOver"
-              @dragleave.prevent="onDragLeave"
-              @drop.prevent="onDrop"
-              @dragenter="handleDragEnter"
+              class="input-wrapper relative pointer-events-auto w-full max-w-4xl bg-black/50 backdrop-blur-md rounded-xl border border-white/10 p-4 transition-all duration-300"
+              :class="{ 'border-cyan-500/50 shadow-[0_0_30px_rgba(6,182,212,0.2)]': isChatLoading }"
             >
-              <!-- 隐藏的文件输入框 -->
-              <input
-                ref="fileInput"
-                type="file"
-                class="hidden"
-                @change="handleFileChange"
-                accept=".pdf,.doc,.docx"
-              />
-
-              <!-- 磁吸式拖拽提示层 -->
-              <div v-if="dropZoneActive && !selectedFile" class="absolute inset-0 z-20 flex items-center justify-center bg-white/5 backdrop-blur-md rounded-xl">
-                <div class="text-center">
-                  <span class="text-2xl mb-2 inline-block animate-pulse">✨</span>
-                  <p class="text-purple-400 font-semibold animate-pulse">释放文件，立即开始 AI 解析...</p>
-                </div>
-              </div>
-
-              <!-- 已选择文件的精致标签 -->
-              <div v-if="selectedFile" class="mb-3 flex items-center gap-2">
-                <div class="bg-purple-500/20 border border-purple-500/30 rounded-full px-3 py-1 flex items-center gap-2">
-                  <FileText class="w-3.5 h-3.5 text-purple-400" />
-                  <span class="text-xs text-purple-200 truncate max-w-[200px]">{{ selectedFile.name }}</span>
-                  <button 
-                    @click="cancelFileSelection"
+              <!-- 已上传附件提示 -->
+              <div v-if="uploadedGlobalResume" class="mb-3 flex items-center gap-2">
+                <div class="bg-cyan-500/20 border border-cyan-500/30 rounded-full px-3 py-1 flex items-center gap-2">
+                  <CheckCircle class="w-3.5 h-3.5 text-cyan-400" />
+                  <span class="text-xs text-cyan-200 truncate max-w-[200px]">已附加文件（仅本轮对话）</span>
+                  <button
+                    @click="removeUploadedResume"
                     class="text-gray-400 hover:text-white transition-colors"
                   >
-                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
-                    </svg>
+                    <X class="w-3.5 h-3.5" />
                   </button>
                 </div>
               </div>
 
-              <div class="flex items-center gap-3">
-                <div 
-                  class="attachment-icon text-gray-400 hover:text-purple-400 cursor-pointer transition-colors duration-300 hover:scale-110"
-                  @click="triggerFileInput"
-                >
-                  <Paperclip class="w-5 h-5" />
-                </div>
+              <div class="flex items-end gap-3">
+                <label class="relative flex-shrink-0 mb-0.5">
+                  <input type="file" class="absolute inset-0 w-full h-full opacity-0 cursor-pointer" @change="handleChatFileUpload" accept=".pdf,.doc,.docx,.txt,.jpg,.png" />
+                  <Paperclip class="w-5 h-5 text-gray-400 hover:text-cyan-400 transition-colors cursor-pointer" />
+                </label>
 
-                <div class="flex-1">
-                  <input
-                    type="text"
-                    v-model="userInput"
-                    @keyup.enter="handleSend"
-                    class="w-full bg-transparent border-none outline-none text-gray-300 placeholder-gray-500"
-                    :placeholder="selectedFile ? '输入你的问题...' : placeholderText"
-                  />
-                </div>
+                <textarea
+                  v-model="userChatInput"
+                  @keydown="handleChatEnter"
+                  :placeholder="chatPlaceholder"
+                  rows="1"
+                  class="flex-1 bg-transparent border-none outline-none text-gray-300 placeholder-gray-500 resize-none text-sm leading-relaxed focus:ring-0"
+                ></textarea>
 
                 <button
-                  class="send-button bg-gradient-to-r from-purple-500 to-indigo-600 text-white px-5 py-2 rounded-full hover:shadow-lg hover:shadow-purple-500/50 transition-all duration-300 hover:-translate-y-0.5 hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:translate-y-0 disabled:hover:scale-100"
-                  @click="handleSend"
-                  :disabled="isUploading || (!selectedFile && !userInput)"
+                  @click="sendGeneralChatMessage"
+                  :disabled="isChatLoading || !userChatInput.trim()"
+                  class="flex-shrink-0 px-4 py-2.5 rounded-xl font-semibold text-sm shadow-lg transition-all duration-300 hover:scale-[1.02] disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 overflow-hidden relative bg-gradient-to-r from-cyan-500 to-blue-500 text-white shadow-cyan-500/30 hover:shadow-xl hover:shadow-cyan-500/50 mb-0.5"
                 >
-                  {{ isUploading ? '分析中...' : '发送' }}
+                  <Send class="w-4 h-4" />
                 </button>
+              </div>
+
+              <div class="flex items-center gap-2 mt-2">
+                <Sparkles class="w-3 h-3 text-cyan-500/50" />
+                <span class="text-[10px] text-gray-600">AI 职场领航员 · 附件仅作本轮对话上下文</span>
               </div>
             </div>
           </div>
@@ -991,4 +1081,17 @@ button.bg-gradient-to-r.from-purple-500.to-indigo-600 {
     transform: scale(1) translateY(0);
   }
 }
+
+.dashboard-markdown :deep(h1) { font-size: 1.2em; font-weight: 700; margin: 0.5em 0 0.3em; color: #67e8f9; }
+.dashboard-markdown :deep(h2) { font-size: 1.1em; font-weight: 600; margin: 0.4em 0 0.2em; color: #22d3ee; }
+.dashboard-markdown :deep(h3) { font-size: 1.05em; font-weight: 600; margin: 0.3em 0 0.15em; color: #06b6d4; }
+.dashboard-markdown :deep(strong), .dashboard-markdown :deep(b) { color: #67e8f9; font-weight: 700; }
+.dashboard-markdown :deep(p) { margin: 0.2em 0; color: rgba(229, 231, 235, 0.9); }
+.dashboard-markdown :deep(ul), .dashboard-markdown :deep(ol) { padding-left: 1.2em; margin: 0.2em 0; }
+.dashboard-markdown :deep(li) { margin: 0.1em 0; color: rgba(229, 231, 235, 0.85); }
+.dashboard-markdown :deep(li)::marker { color: #06b6d4; }
+.dashboard-markdown :deep(blockquote) { border-left: 3px solid rgba(6, 182, 212, 0.35); padding: 0.2em 0.6em; margin: 0.3em 0; background: rgba(6, 182, 212, 0.04); border-radius: 0 6px 6px 0; color: rgba(229, 231, 235, 0.7); }
+.dashboard-markdown :deep(code) { background: rgba(6, 182, 212, 0.1); padding: 0.1em 0.3em; border-radius: 3px; font-size: 0.88em; color: #67e8f9; font-family: 'JetBrains Mono', 'Fira Code', monospace; }
+.dashboard-markdown :deep(pre) { background: rgba(0, 0, 0, 0.35); border: 1px solid rgba(6, 182, 212, 0.12); border-radius: 8px; padding: 0.6em; overflow-x: auto; margin: 0.3em 0; }
+.dashboard-markdown :deep(pre code) { background: none; padding: 0; border-radius: 0; color: rgba(229, 231, 235, 0.85); }
 </style>

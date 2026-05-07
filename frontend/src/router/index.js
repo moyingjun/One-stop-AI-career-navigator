@@ -5,6 +5,7 @@ import ResumeDiagnosis from '@/ResumeDiagnosis.vue'
 import PremiumInterview from '@/PremiumInterview.vue'
 import GlobalSetup from '@/GlobalSetup.vue'
 import CareerPlanning from '@/CareerPlanning.vue'
+import HistoryArchive from '@/HistoryArchive.vue'
 
 const routes = [
   {
@@ -45,6 +46,11 @@ const routes = [
     path: '/career-planning',
     name: 'CareerPlanning',
     component: CareerPlanning
+  },
+  {
+    path: '/history-archive',
+    name: 'HistoryArchive',
+    component: HistoryArchive
   }
 ]
 
@@ -53,20 +59,19 @@ const router = createRouter({
   routes
 })
 
-router.beforeEach((to, from, next) => {
+router.beforeEach((to, from) => {
   if (to.meta.requiresSetup) {
     const candidateName = localStorage.getItem('candidate_name')
-    // 🚨 这里的 targetRole 获取已经被我彻底删除了！
     const resumeText = localStorage.getItem('resume_text')
 
-    // 🚨 这里现在只查姓名和简历两样东西！
+    // 拦截：如果没有姓名或简历，强制打回 setup
     if (!candidateName || !resumeText) {
-      next('/setup')
-      return
+      return '/setup' 
     }
   }
 
-  next()
+  // 放行：条件都满足，或者是不需要校验的页面，直接 return true
+  return true 
 })
 
 export default router

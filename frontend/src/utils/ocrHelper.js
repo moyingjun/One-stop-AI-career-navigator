@@ -5,8 +5,8 @@ import mammoth from 'mammoth/mammoth.browser.js'
 pdfjsLib.GlobalWorkerOptions.workerSrc = pdfjsWorker
 
 const API_BASE_URL = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
-  ? 'http://127.0.0.1:8000/api'
-  : '/api'
+  ? 'http://127.0.0.1:8000/api'  // 👉 只要是本地运行，就强制找本地的 8000 端口（uvicorn）
+  : '/api'                       // 👉 等你打包放到云服务器上，它会自动变成云端的相对路径
 
 const cleanText = (raw) => {
   return raw

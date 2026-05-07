@@ -1,46 +1,95 @@
-// src/services/llm_service.js
-import axios from 'axios'
+const isLocalDev = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
+const API_BASE_URL = isLocalDev ? 'http://127.0.0.1:8000/api' : '/api'
 
-// 1. 智能环境适配：本地开发指向云服务器，云端部署使用相对路径
-const API_BASE_URL = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
-  ? 'http://156.229.28.139/api'
-  : '/api'
+async function ensureUUID() {
+  try {
+    if (crypto.randomUUID) return crypto.randomUUID()
+  } catch {}
+  const crypto = await import('crypto').catch(() => null)
+  if (crypto?.randomUUID) return crypto.randomUUID()
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
+    const r = (Date.now() + Math.random() * 16) % 16 | 0
+    return (c === 'x' ? r : (r & 0x3 | 0x8)).toString(16)
+  })
+}
 
-// 2. 创建专属的 axios 实例
-const apiClient = axios.create({
-  baseURL: API_BASE_URL,
-  timeout: 120000, // AI 大模型解析通常很慢，务必设置至少 120s 超时防断连
-})
+async function callAgent(endpoint, userMessage, history = [], extraParams = {}) {
+  const requestBody = {
+    user_query: userMessage,
+    history: history,
+    ...extraParams
+  }
 
-/**
- * 核心技术栈要求：高扩展性的接口解耦设计（适配器模式）
- * 统一抽象大模型服务，实现业务逻辑与具体 API 隔离
- */
-class LLMService {
-  /**
-   * AI 简历诊断分析
-   * @param {File} file - 简历文件
-   * @param {String} userId - 用户标识
-   * @returns {Promise<Object>} 诊断结果
-   */
-  async diagnoseResume(file, userId) {
-    const formData = new FormData()
-    formData.append('userId', userId)
-    // 严格按照师兄后端的字段名拼写（区分大小写）
-    formData.append('ResumeFile', file) 
+  const response = await fetch(`${API_BASE_URL}${endpoint}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(requestBody)
+  })
 
-    try {
-      const response = await apiClient.post('/jobResume/uploadJobResume', formData, {
-        headers: {
-          'Content-Type': 'multipart/form-data'
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}))
+    const errorMsg = errorData.detail || errorData.message || `请求失败 (HTTP ${response.status})`
+    throw new Error(errorMsg)
+  }
+
+  return response
+}
+
+async function callAgentAsync(endpoint, userMessage, history = [], onChunk, extraParams = {}) {
+  try {
+    const response = await callAgent(endpoint, userMessage, history, extraParams)
+
+    const reader = response.body.getReader()
+    const decoder = new TextDecoder()
+    let buffer = ''
+    let currentEvent = ''
+
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+
+      buffer += decoder.decode(value, { stream: true })
+      const lines = buffer.split('\n')
+      buffer = lines.pop() || ''
+
+      for (const line of lines) {
+        if (line.startsWith('event:')) {
+          currentEvent = line.substring(6).trim()
+        } else if (line.startsWith('data:')) {
+          const dataStr = line.substring(5).trim()
+          if (!dataStr) continue
+
+          if (currentEvent === 'reply') {
+            try {
+              const parsed = JSON.parse(dataStr)
+              const content = parsed?.payload?.content || ''
+              if (content && onChunk) onChunk(content)
+            } catch {}
+          }
         }
-      })
-      return response.data
-    } catch (error) {
-      console.error('LLM Engine API Error:', error)
-      throw error
+      }
     }
+  } catch (err) {
+    console.error('流式调用失败:', err)
+    throw err
   }
 }
 
-export const llmService = new LLMService()
+const llmService = {
+  async diagnoseResume(file, userId) {
+    const formData = new FormData()
+    formData.append('file', file)
+    formData.append('user_id', userId || 'anonymous')
+    const resp = await fetch(`${API_BASE_URL}/resume/diagnose-upload`, {
+      method: 'POST',
+      body: formData
+    })
+    if (!resp.ok) {
+      const errData = await resp.json().catch(() => ({}))
+      throw new Error(errData.detail || '诊断请求失败')
+    }
+    return resp.json()
+  }
+}
+
+export { API_BASE_URL, ensureUUID, callAgent, callAgentAsync, llmService }
