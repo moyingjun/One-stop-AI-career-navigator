@@ -126,6 +126,51 @@ const radarPoints = computed(() => {
   }).join(' ')
 })
 
+const TECH_KEYWORDS = [
+  'Java', 'SQL', 'Spring', 'SpringBoot', 'SpringMVC', 'MyBatis', 'MyBatisPlus',
+  'Linux', 'Markdown', 'Python', 'JavaScript', 'TypeScript', 'React', 'Vue', 'Vue3',
+  'Node\\.js', 'Nodejs', 'Docker', 'Kubernetes', 'K8s', 'MySQL', 'Redis', 'MongoDB',
+  'Git', 'HTML', 'CSS', 'C\\+\\+', 'C#', 'Go', 'Golang', 'Rust', 'Swift', 'Kotlin',
+  'PHP', 'Ruby', 'AWS', 'Azure', 'GCP', 'Nginx', 'Tomcat', 'Maven', 'Gradle',
+  'Jenkins', 'GitLab', 'GitHub', 'RabbitMQ', 'Kafka', 'Zookeeper', 'Elasticsearch',
+  'ES', 'Hadoop', 'Spark', 'Flink', 'Hive', 'HBase', 'ClickHouse', 'PostgreSQL',
+  'Oracle', 'SQLite', 'Neo4j', 'GraphQL', 'RESTful', 'WebSocket', 'gRPC',
+  'Microservices', 'DDD', 'TDD', 'BDD', 'CI\\/CD', 'DevOps', 'Agile', 'Scrum',
+  'JPA', 'Hibernate', 'Shiro', 'SpringSecurity', 'OAuth', 'JWT', 'SaaS', 'PaaS',
+  'IaaS', 'LaTeX', 'Matlab', 'R语言', 'Tableau', 'PowerBI', 'Excel', 'VBA',
+  'Android', 'iOS', 'Flutter', 'ReactNative', 'UniApp', 'WeChat', '小程序',
+  'Webpack', 'Vite', 'Babel', 'ESLint', 'Prettier', 'Tailwind', 'ElementUI',
+  'AntDesign', 'Bootstrap', 'jQuery', 'Axios', 'Vuex', 'Pinia', 'Redux',
+  'Sass', 'Less', 'Stylus', 'Shell', 'Bash', 'PowerShell', 'Ansible',
+  'Terraform', 'Prometheus', 'Grafana', 'SkyWalking', 'CAT', 'Arthas',
+  'Netty', 'MINA', 'Tio', 'XXL-Job', 'EasyExcel', 'Hutool', 'Lombok',
+  'Swagger', 'Postman', 'JMeter', 'Selenium', 'Appium', 'Charles', 'Fiddler'
+]
+
+const formattedResumeHtml = computed(() => {
+  if (!resumeText.value || !resumeText.value.trim()) return ''
+  const escaped = resumeText.value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+  const lines = escaped.split('\n')
+  const techRegex = new RegExp('\\b(' + TECH_KEYWORDS.join('|') + ')\\b', 'gi')
+  return lines.map(line => {
+    const labelMatch = line.match(/^([^：:]{1,20})([：:])/)
+    let processed = ''
+    if (labelMatch) {
+      const label = labelMatch[1]
+      const colon = labelMatch[2]
+      const rest = line.substring(label.length + colon.length)
+      const highlightedRest = rest.replace(techRegex, '<span class="px-1.5 py-0.5 bg-white/10 text-cyan-300 rounded text-xs font-mono border border-white/5">$1</span>')
+      processed = `<span class="text-white font-semibold tracking-wide">${label}${colon}</span>${highlightedRest}`
+    } else {
+      processed = line.replace(techRegex, '<span class="px-1.5 py-0.5 bg-white/10 text-cyan-300 rounded text-xs font-mono border border-white/5">$1</span>')
+    }
+    return processed
+  }).join('<br/>')
+})
+
 const isResumeValid = computed(() => {
   return resumeText.value && resumeText.value.trim().length >= 20
 })
@@ -651,9 +696,9 @@ onUnmounted(() => {
             <component :is="themeIcon" class="w-5 h-5" :class="themeConfig.text" />
             <h2 class="text-sm font-bold" :class="themeConfig.text">候选人档案</h2>
           </div>
-          <div class="rounded-xl border p-4 max-h-[calc(100vh-500px)] overflow-y-auto backdrop-blur-xl shadow-[inset_0_1px_1px_rgba(255,255,255,0.1)] transition-all duration-300" :class="isResumeValid ? ['bg-white/[0.02]', themeConfig.borderLight] : 'bg-amber-500/5 border-amber-500/20'">
+          <div class="animate-scan rounded-xl border p-4 max-h-[calc(100vh-500px)] overflow-y-auto backdrop-blur-xl shadow-[inset_0_1px_1px_rgba(255,255,255,0.1)] transition-all duration-500 hover:border-current hover:shadow-[0_0_30px_currentColor]" :class="isResumeValid ? ['bg-white/[0.02]', themeConfig.borderLight] : 'bg-amber-500/5 border-amber-500/20'">
             <template v-if="isResumeValid">
-              <p class="text-xs leading-relaxed whitespace-pre-wrap" :class="themeConfig.text + '/70'">{{ resumeText }}</p>
+              <div class="text-gray-300 text-sm leading-relaxed whitespace-pre-wrap" v-html="formattedResumeHtml"></div>
             </template>
             <template v-else>
               <div class="flex items-start gap-2">
@@ -709,8 +754,8 @@ onUnmounted(() => {
             </div>
           </div>
           <div class="flex items-center gap-2 flex-shrink-0">
-            <div class="w-2 h-2 rounded-full animate-pulse" :class="[isAiSpeaking ? themeConfig.bg : 'bg-green-500', isAiSpeaking ? themeConfig.shadow : 'shadow-[0_0_8px_rgba(34,197,94,0.8)]']"></div>
-            <span class="text-xs md:text-sm font-mono hidden sm:inline-block" :class="isAiSpeaking ? themeConfig.text : 'text-green-400'">{{ isAiSpeaking ? 'Thinking...' : 'System Online' }}</span>
+            <div class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse shadow-[0_0_8px_rgba(16,185,129,0.8)]"></div>
+            <span class="text-xs md:text-sm font-mono hidden sm:inline-block font-semibold tracking-wider drop-shadow-[0_0_5px_rgba(52,211,153,0.4)]" :class="isAiSpeaking ? themeConfig.text : 'text-emerald-400'">{{ isAiSpeaking ? 'Thinking...' : 'DeepSeek V4 Online' }}</span>
           </div>
         </div>
 
@@ -1120,4 +1165,23 @@ onUnmounted(() => {
 .result-pop-leave-active { animation: resultPopOut 0.3s ease-in; }
 @keyframes resultPopIn { from { opacity: 0; transform: scale(0.9); } to { opacity: 1; transform: scale(1); } }
 @keyframes resultPopOut { from { opacity: 1; transform: scale(1); } to { opacity: 0; transform: scale(0.9); } }
+
+/* 赛博扫描线动画 */
+@keyframes scanline {
+  0% { transform: translateY(-100%); opacity: 0; }
+  50% { opacity: 0.5; }
+  100% { transform: translateY(100%); opacity: 0; }
+}
+.animate-scan {
+  position: relative;
+  overflow: hidden;
+}
+.animate-scan::after {
+  content: '';
+  position: absolute;
+  top: 0; left: 0; right: 0; height: 2px;
+  background: linear-gradient(to right, transparent, currentColor, transparent);
+  animation: scanline 3s linear infinite;
+  pointer-events: none;
+}
 </style>

@@ -6,13 +6,18 @@ import httpx
 import os
 import json
 import re
+from dotenv import load_dotenv
 from database import insert_record
+
+load_dotenv()
 
 router = APIRouter(tags=["resumeDiagnosis"], prefix="/api")
 
 DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "")
-DEEPSEEK_BASE_URL = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com/v1/chat/completions")
-DEEPSEEK_MODEL_NAME = os.getenv("DEEPSEEK_MODEL_NAME", "deepseek-chat")
+DEEPSEEK_BASE_URL = os.getenv("DEEPSEEK_BASE_URL", "https://tokenrai.com/v1/chat/completions")
+DEEPSEEK_MODEL_NAME = os.getenv("DEEPSEEK_MODEL_NAME", "deepseek-v4-flash")
+if not DEEPSEEK_BASE_URL.endswith("chat/completions"):
+    DEEPSEEK_BASE_URL = f"{DEEPSEEK_BASE_URL.rstrip('/')}/chat/completions"
 
 
 class ResumeDiagnoseRequest(BaseModel):

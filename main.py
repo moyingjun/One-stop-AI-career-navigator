@@ -1,13 +1,16 @@
-from fastapi import FastAPI
 from dotenv import load_dotenv
+
+load_dotenv()
+
+from Router import agent_dispatcher
+from Service import rag_service
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from Router import jobResume, resumeDiagnosis, interview, careerPlan, ocr
+from Router import jobResume, resumeDiagnosis, interview, careerPlan, ocr, history_router
 from Router import careerPlan
 from database import init_db
 from pydantic import BaseModel
 from typing import Optional
-
-load_dotenv()
 
 app = FastAPI(title="一站式AI职业生涯导航员")
 
@@ -24,11 +27,14 @@ app.include_router(resumeDiagnosis.router)
 app.include_router(interview.router)
 app.include_router(careerPlan.router)
 app.include_router(ocr.router, prefix="/api/ocr", tags=["OCR"])
-
+app.include_router(agent_dispatcher.router)
+app.include_router(rag_service.router)
+app.include_router(history_router.router)
 
 @app.on_event("startup")
 async def startup():
     init_db()
+    rag_service.init_system_knowledge()
 
 
 class GeneralChatRequest(BaseModel):
@@ -63,20 +69,3 @@ async def general_chat(request: GeneralChatRequest):
         return {"reply": reply}
 
     return {"reply": "抱歉，我暂时无法回答这个问题，请稍后重试。"}
-
-
-@app.get("/api/history")
-async def get_history(limit: int = 10):
-    from database import get_recent_records
-    records = get_recent_records(limit)
-    return {"records": records}
-
-
-@app.get("/api/history/{record_id}")
-async def get_history_by_id(record_id: int):
-    from database import get_record_by_id
-    record = get_record_by_id(record_id)
-    if record:
-        return {"success": True, "data": record}
-    return {"success": False, "msg": "记录不存在"}
-

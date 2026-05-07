@@ -7,7 +7,7 @@ import QrcodeVue from 'qrcode.vue'
 import { parseFile } from '@/utils/ocrHelper.js'
 import { marked } from 'marked'
 
-import { Bot, FileText, MessageSquare, Folder, Settings, Clock, Puzzle, Plus, Search, Paperclip, MoreHorizontal, ChevronDown, ChevronRight, Upload, CheckCircle, X, Loader2, History, Send, Sparkles, Mic }
+import { Bot, Bookmark, FileText, MessageSquare, Folder, Settings, Clock, Puzzle, Plus, Search, Paperclip, MoreHorizontal, ChevronDown, ChevronLeft, ChevronRight, Upload, CheckCircle, X, Loader2, History, Send, Sparkles, Mic, GraduationCap, Star, Trash2 }
   from 'lucide-vue-next'
 
 const router = useRouter()
@@ -85,6 +85,9 @@ const showResumeDialog = ref(false)
 const pendingResumeText = ref('')
 const pendingFileName = ref('')
 const isGlobalDragging = ref(false)
+const knowledgeId = ref(localStorage.getItem('dashboard_knowledge_id') || '')
+const knowledgeFileName = ref(localStorage.getItem('dashboard_knowledge_file_name') || '')
+const isKnowledgeUploading = ref(false)
 
 // 面试舱门模态框
 const showInterviewModal = ref(false)
@@ -100,6 +103,18 @@ const userId = ref('user_001')
 const activeWorkspace = ref('机构')
 const activeMenu = ref('功能模板')
 const placeholderText = ref('')
+const toastMessage = ref('')
+const showToast = ref(false)
+let toastTimer = null
+
+const showComingSoonToast = () => {
+  toastMessage.value = '工程师正在玩命开发中，敬请期待！🚀'
+  showToast.value = true
+  if (toastTimer) clearTimeout(toastTimer)
+  toastTimer = setTimeout(() => {
+    showToast.value = false
+  }, 2400)
+}
 
 // 动态时间问候语
 const greeting = computed(() => {
@@ -159,17 +174,70 @@ const handleMouseMove = (e) => {
   mouseY.value = y
 }
 
+const uploadKnowledgeFile = async (file) => {
+  if (!file || isKnowledgeUploading.value) return
+
+  const ext = file.name.split('.').pop()?.toLowerCase()
+  if (!['pdf', 'txt'].includes(ext)) {
+    alert('当前知识库仅支持 PDF / TXT 文件')
+    return
+  }
+
+  isKnowledgeUploading.value = true
+  try {
+    const formData = new FormData()
+    formData.append('file', file)
+
+    const response = await fetch(`${API_BASE_URL}/knowledge/upload`, {
+      method: 'POST',
+      body: formData
+    })
+
+    if (!response.ok) {
+      let message = `HTTP ${response.status}`
+      try {
+        const errorData = await response.json()
+        message = errorData.detail || message
+      } catch {}
+      throw new Error(message)
+    }
+
+    const data = await response.json()
+    if (!data.success || !data.knowledge_id) {
+      throw new Error(data.message || '知识库挂载失败')
+    }
+
+    knowledgeId.value = data.knowledge_id
+    knowledgeFileName.value = data.filename || file.name
+    localStorage.setItem('dashboard_knowledge_id', knowledgeId.value)
+    localStorage.setItem('dashboard_knowledge_file_name', knowledgeFileName.value)
+  } catch (error) {
+    console.error('知识库上传失败', error)
+    alert(error.message || '知识库上传失败，请稍后重试')
+  } finally {
+    isKnowledgeUploading.value = false
+  }
+}
+
+const clearKnowledge = () => {
+  knowledgeId.value = ''
+  knowledgeFileName.value = ''
+  localStorage.removeItem('dashboard_knowledge_id')
+  localStorage.removeItem('dashboard_knowledge_file_name')
+}
+
 // 全局简历拖拽处理
 const handleGlobalFileDrop = (event) => {
   event.preventDefault()
   isGlobalDragging.value = false
   const files = event.dataTransfer.files
-  if (files.length > 0) processGlobalResume(files[0])
+  if (files.length > 0) uploadKnowledgeFile(files[0])
 }
 
 const handleGlobalFileSelect = (event) => {
   const files = event.target.files
-  if (files.length > 0) processGlobalResume(files[0])
+  if (files.length > 0) uploadKnowledgeFile(files[0])
+  event.target.value = ''
 }
 
 const processGlobalResume = async (file) => {
@@ -239,6 +307,181 @@ const unlockInterview = () => {
   router.push('/interview')
 }
 
+
+const chatInputRef = ref(null)
+
+const askEducationPlanning = async () => {
+  userChatInput.value = '你好，我是大专生，我想咨询升学避坑与路线规划。'
+  await nextTick()
+  chatInputRef.value?.focus()
+}
+
+const features = [
+  {
+    id: 'resume',
+    title: '简历诊断',
+    desc: '分析简历优缺点，提供优化建议',
+    icon: FileText,
+    actionType: 'route',
+    path: '/resume-diagnosis',
+    iconWrapClass: 'bg-purple-500/10',
+    iconClass: 'text-purple-400',
+    themeClass: 'border-purple-500/50 shadow-[0_0_30px_rgba(168,85,247,0.3)]',
+    themeIconGlow: 'drop-shadow-[0_0_12px_rgba(168,85,247,0.5)]',
+    dotColor: 'bg-purple-300 shadow-[0_0_10px_rgba(168,85,247,0.65)]'
+  },
+  {
+    id: 'interview',
+    title: '模拟面试',
+    desc: 'AI 模拟面试，提供反馈和建议',
+    icon: Mic,
+    actionType: 'route',
+    path: '/interview',
+    iconWrapClass: 'bg-pink-500/10',
+    iconClass: 'text-pink-400',
+    themeClass: 'border-pink-500/50 shadow-[0_0_30px_rgba(236,72,153,0.3)]',
+    themeIconGlow: 'drop-shadow-[0_0_12px_rgba(236,72,153,0.5)]',
+    dotColor: 'bg-pink-300 shadow-[0_0_10px_rgba(236,72,153,0.65)]'
+  },
+  {
+    id: 'career',
+    title: '职业规划',
+    desc: '基于你的背景，制定职业发展路径',
+    icon: MessageSquare,
+    actionType: 'route',
+    path: '/career-planning',
+    iconWrapClass: 'bg-blue-500/10',
+    iconClass: 'text-blue-400',
+    themeClass: 'border-blue-500/50 shadow-[0_0_30px_rgba(59,130,246,0.3)]',
+    themeIconGlow: 'drop-shadow-[0_0_12px_rgba(59,130,246,0.5)]',
+    dotColor: 'bg-blue-300 shadow-[0_0_10px_rgba(59,130,246,0.65)]'
+  },
+  {
+    id: 'education',
+    title: '升学与避坑',
+    desc: '专插本/考研等真实数据',
+    icon: GraduationCap,
+    actionType: 'function',
+    action: askEducationPlanning,
+    iconWrapClass: 'bg-emerald-500/10',
+    iconClass: 'text-emerald-400',
+    themeClass: 'border-emerald-500/50 shadow-[0_0_30px_rgba(16,185,129,0.3)]',
+    themeIconGlow: 'drop-shadow-[0_0_12px_rgba(16,185,129,0.5)]',
+    dotColor: 'bg-emerald-300 shadow-[0_0_10px_rgba(16,185,129,0.65)]'
+  }
+]
+
+const FEATURE_COUNT = features.length
+const TRANSITION_DURATION = 700
+
+const extendedFeatures = computed(() => {
+  const triple = [...features, ...features, ...features]
+  return triple.map((f, i) => ({
+    ...f,
+    _extIndex: i,
+    _realIndex: i % FEATURE_COUNT
+  }))
+})
+
+const virtualIndex = ref(FEATURE_COUNT)
+const isTransitioning = ref(true)
+
+const realIndex = computed(() => virtualIndex.value % FEATURE_COUNT)
+
+const featureTrackStyle = computed(() => ({
+  transform: `translateX(calc(-${virtualIndex.value} * var(--feature-card-width)))`,
+  transitionDuration: isTransitioning.value ? `${TRANSITION_DURATION}ms` : '0ms',
+  transitionTimingFunction: 'ease-in-out',
+  transitionProperty: 'transform'
+}))
+
+const slideFeature = (direction) => {
+  if (!isTransitioning.value) return
+
+  virtualIndex.value += direction
+
+  setTimeout(() => {
+    const len = FEATURE_COUNT
+    let needsJump = false
+
+    if (virtualIndex.value >= len * 2) {
+      virtualIndex.value = len
+      needsJump = true
+    } else if (virtualIndex.value <= len - 1) {
+      virtualIndex.value = len * 2 - 1
+      needsJump = true
+    }
+
+    if (needsJump) {
+      isTransitioning.value = false
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          isTransitioning.value = true
+        })
+      })
+    }
+  }, TRANSITION_DURATION + 50)
+}
+
+const setActiveFeature = (index) => {
+  virtualIndex.value = FEATURE_COUNT + index
+}
+
+let autoPlayTimer = null
+
+const startAutoPlay = () => {
+  if (autoPlayTimer) clearInterval(autoPlayTimer)
+  autoPlayTimer = setInterval(() => {
+    slideFeature(1)
+  }, 3000)
+}
+
+const stopAutoPlay = () => {
+  if (autoPlayTimer) {
+    clearInterval(autoPlayTimer)
+    autoPlayTimer = null
+  }
+}
+
+const onCardClick = (index, feature) => {
+  if (index === virtualIndex.value) {
+    handleFeatureAction(feature)
+  } else {
+    if (!isTransitioning.value) return
+    virtualIndex.value = index
+    setTimeout(() => {
+      const len = FEATURE_COUNT
+      let needsJump = false
+      if (virtualIndex.value >= len * 2) {
+        virtualIndex.value = len + feature._realIndex
+        needsJump = true
+      } else if (virtualIndex.value <= len - 1) {
+        virtualIndex.value = len + feature._realIndex
+        needsJump = true
+      }
+      if (needsJump) {
+        isTransitioning.value = false
+        requestAnimationFrame(() => {
+          requestAnimationFrame(() => {
+            isTransitioning.value = true
+          })
+        })
+      }
+    }, TRANSITION_DURATION + 50)
+  }
+}
+
+const handleFeatureAction = (feature) => {
+  if (feature.actionType === 'function' && typeof feature.action === 'function') {
+    feature.action()
+    return
+  }
+
+  if (feature.path) {
+    router.push(feature.path)
+  }
+}
+
 // 快捷操作
 const quickActions = [
   'Java后端前景如何？',
@@ -281,6 +524,59 @@ const menuItems = [
   }
 ]
 
+const handleSidebarItemClick = (item, menu) => {
+  activeMenu.value = item.label
+
+  if (item.label === '历史记录') {
+    router.push('/history-archive')
+    return
+  }
+
+  if (item.label === '保存的对话') {
+    router.push('/saved-chats')
+    return
+  }
+
+  if (item.label === '文件管理') {
+    router.push('/files')
+    return
+  }
+
+  if (item.label === '功能模板' || item.label === '插件集成' || item.label === '系统设置' || menu.category === '我的项目') {
+    showComingSoonToast()
+    return
+  }
+
+  showComingSoonToast()
+}
+
+const toggleSaveRecord = async (record) => {
+  const nextSaved = !record.is_saved
+  try {
+    const response = await fetch(API_BASE_URL + '/history/' + record.id + '/save', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ is_saved: nextSaved })
+    })
+    if (!response.ok) throw new Error('HTTP ' + response.status)
+    historyRecords.value = historyRecords.value.map((item) =>
+      item.id === record.id ? { ...item, is_saved: nextSaved } : item
+    )
+  } catch (error) {
+    console.error('保存状态切换失败', error)
+  }
+}
+
+const deleteHistoryRecord = async (record) => {
+  try {
+    const response = await fetch(API_BASE_URL + '/history/' + record.id, { method: 'DELETE' })
+    if (!response.ok) throw new Error('HTTP ' + response.status)
+    historyRecords.value = historyRecords.value.filter((item) => item.id !== record.id)
+  } catch (error) {
+    console.error('删除历史记录失败', error)
+  }
+}
+
 // 图标映射
 const iconMap = {
   'file-text': FileText,
@@ -297,6 +593,8 @@ const userChatInput = ref('')
 const isChatLoading = ref(false)
 const uploadedGlobalResume = ref('')
 const chatContainerRef = ref(null)
+const currentRecordId = ref(null)
+const showNewChatModal = ref(false)
 
 const scrollChatToBottom = () => {
   nextTick(() => {
@@ -310,65 +608,172 @@ const sendGeneralChatMessage = async () => {
   if (!userChatInput.value.trim() || isChatLoading.value) return
 
   const userMessage = userChatInput.value.trim()
+  const aiMessage = {
+    role: 'ai',
+    content: '',
+    timestamp: new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }),
+    isNew: true,
+    agentLabel: ''
+  }
+
   chatMessages.value.push({
     role: 'user',
     content: userMessage,
     timestamp: new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
   })
+  chatMessages.value.push(aiMessage)
   userChatInput.value = ''
   isChatLoading.value = true
   scrollChatToBottom()
 
   try {
-    const response = await fetch(`${API_BASE_URL}/chat/general`, {
+    const payload = {
+      user_input: userMessage,
+      history: chatMessages.value
+        .slice(-10, -1)
+        .map((message) => ({
+          role: message.role === 'user' ? 'user' : 'assistant',
+          content: message.content || ''
+        }))
+    }
+
+    if (knowledgeId.value) payload.knowledge_id = knowledgeId.value
+
+    const savedResume = uploadedGlobalResume.value || localStorage.getItem('resume_text') || ''
+    if (savedResume) payload.resume_text = savedResume
+
+    const savedJd = localStorage.getItem('current_interview_jd') || ''
+    if (savedJd) payload.jd_text = savedJd
+
+    const response = await fetch(API_BASE_URL + '/agent/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        user_query: userMessage,
-        resume_text: uploadedGlobalResume.value || localStorage.getItem('resume_text') || ''
-      })
+      body: JSON.stringify(payload)
     })
 
-    if (!response.ok) throw new Error(`HTTP ${response.status}`)
+    if (!response.ok) throw new Error('HTTP ' + response.status)
+    if (!response.body) throw new Error('浏览器未返回可读取的数据流')
 
-    const data = await response.json()
-    chatMessages.value.push({
-      role: 'ai',
-      content: data.reply || '抱歉，我没理解你的问题',
-      timestamp: new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }),
-      isNew: true
-    })
+    const reader = response.body.getReader()
+    const decoder = new TextDecoder('utf-8')
+    let buffer = ''
+
+    const handleSseBlock = (block) => {
+      const lines = block.split('\n')
+      const eventLine = lines.find((line) => line.startsWith('event:'))
+      const dataLines = lines.filter((line) => line.startsWith('data:'))
+      const eventName = eventLine ? eventLine.replace('event:', '').trim() : 'reply'
+
+      if (!dataLines.length) return
+
+      try {
+        const rawData = dataLines.map((line) => line.replace('data:', '').trim()).join('\n')
+        const data = JSON.parse(rawData)
+        const content = data.payload?.content || ''
+
+        if (eventName === 'meta' && data.payload?.agent_label) {
+          aiMessage.agentLabel = data.payload.agent_label
+          return
+        }
+
+        if (eventName === 'reply' && content) {
+          aiMessage.content += content
+          scrollChatToBottom()
+          return
+        }
+
+        if ((eventName === 'warning' || eventName === 'error') && content) {
+          aiMessage.content += '\n\n' + content
+          scrollChatToBottom()
+          return
+        }
+
+        if (eventName === 'done') {
+          currentRecordId.value = data.payload?.record_id || currentRecordId.value
+        }
+      } catch (parseError) {
+        console.warn('SSE 数据解析失败', parseError, block)
+      }
+    }
+
+    while (true) {
+      const { value, done } = await reader.read()
+      if (done) break
+
+      buffer += decoder.decode(value, { stream: true })
+      const blocks = buffer.split('\n\n')
+      buffer = blocks.pop() || ''
+      blocks.forEach(handleSseBlock)
+    }
+
+    if (buffer.trim()) handleSseBlock(buffer)
+
+    if (!aiMessage.content.trim()) {
+      aiMessage.content = '模型没有返回有效内容，请稍后再试。'
+    }
   } catch (error) {
-    console.error('发送聊天消息失败:', error)
-    chatMessages.value.push({
-      role: 'ai',
-      content: '😵 职业助手正在开小差，请重新提问哦~',
-      timestamp: new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
-    })
+    console.error('发送 Agent 聊天消息失败', error)
+    aiMessage.content = error.message || 'Agent 暂时无法连接，请稍后重试。'
   } finally {
     isChatLoading.value = false
     scrollChatToBottom()
   }
 }
 
+const forceStartNew = () => {
+  chatMessages.value = []
+  userChatInput.value = ''
+  isChatLoading.value = false
+  currentRecordId.value = null
+  showNewChatModal.value = false
+  router.push('/')
+}
+
+const handleNewChat = () => {
+  const hasConversation = chatMessages.value.some((message) => String(message.content || '').trim())
+  if (!hasConversation) {
+    forceStartNew()
+    return
+  }
+
+  showNewChatModal.value = true
+}
+
+const saveAndStartNew = async () => {
+  if (!currentRecordId.value) {
+    // TODO: 如果后端没有在最终 done SSE 中返回 record_id，这里无法调用收藏接口。
+    // 当前后端已按方案 A 返回 payload.record_id；保留兜底，避免旧服务版本下阻塞新建对话。
+    console.warn('当前对话尚未拿到 record_id，无法执行保存收藏')
+    forceStartNew()
+    return
+  }
+
+  try {
+    const response = await fetch(API_BASE_URL + '/history/' + currentRecordId.value + '/save', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ is_saved: true })
+    })
+    if (!response.ok) throw new Error('HTTP ' + response.status)
+    await loadHistory()
+  } catch (error) {
+    console.error('保存当前对话失败', error)
+  } finally {
+    forceStartNew()
+  }
+}
+
 const handleChatFileUpload = async (event) => {
   const files = event.target.files
   if (files.length > 0) {
-    try {
-      const text = await parseFile(files[0])
-      if (text.trim()) {
-        uploadedGlobalResume.value = text
-      }
-    } catch (e) {
-      alert(e.message || '文件解析失败')
-    } finally {
-      event.target.value = ''
-    }
+    await uploadKnowledgeFile(files[0])
+    event.target.value = ''
   }
 }
 
 const removeUploadedResume = () => {
   uploadedGlobalResume.value = ''
+  clearKnowledge()
 }
 
 const handleChatEnter = (event) => {
@@ -379,9 +784,33 @@ const handleChatEnter = (event) => {
 }
 
 const chatPlaceholder = computed(() => {
+  if (knowledgeId.value) return '基于你上传的文件提问...'
   if (uploadedGlobalResume.value) return '请输入关于此文件的问题...'
-  return placeholderText.value || '向 AI 职场领航员提问...'
+  return placeholderText.value || '系统预设已就绪，问专业、志愿、就业都可以...'
 })
+
+const systemCarouselTexts = [
+  '[系统预设：张雪峰灵魂已注入]',
+  '[系统预设：广东专插本避坑指南已就绪]',
+  '[系统预设：考研/公考大专限制库已加载]',
+  '[系统预设：全量职场与升学数据已联网]'
+]
+const carouselIndex = ref(0)
+const carouselFade = ref(true)
+let carouselTimer = null
+
+const startCarousel = () => {
+  if (carouselTimer) clearInterval(carouselTimer)
+  carouselTimer = setInterval(() => {
+    carouselFade.value = false
+    setTimeout(() => {
+      carouselIndex.value = (carouselIndex.value + 1) % systemCarouselTexts.length
+      carouselFade.value = true
+    }, 300)
+  }, 4000)
+}
+
+const currentCarouselText = computed(() => systemCarouselTexts[carouselIndex.value])
 
 // 系统初始化控制台动画
 const playConsoleAnimation = async () => {
@@ -406,6 +835,8 @@ const playConsoleAnimation = async () => {
 // 生命周期
 onMounted(() => {
   typeWriter()
+  startCarousel()
+  startAutoPlay()
   window.addEventListener('mousemove', handleMouseMove)
   window.addEventListener('storage', handleStorageChange)
   playConsoleAnimation()
@@ -416,6 +847,13 @@ onUnmounted(() => {
   if (placeholderTimer) {
     clearTimeout(placeholderTimer)
   }
+  if (carouselTimer) {
+    clearInterval(carouselTimer)
+  }
+  if (toastTimer) {
+    clearTimeout(toastTimer)
+  }
+  stopAutoPlay()
   window.removeEventListener('mousemove', handleMouseMove)
   window.removeEventListener('storage', handleStorageChange)
 })
@@ -423,6 +861,60 @@ onUnmounted(() => {
 
 <template>
   <div class="app-container relative min-h-screen w-full text-gray-300 overflow-hidden">
+    <transition name="toast-slide">
+      <div
+        v-if="showToast"
+        class="fixed top-5 left-1/2 -translate-x-1/2 z-[120] px-4 py-2.5 rounded-full border border-cyan-400/30 bg-[#0b1020]/85 backdrop-blur-2xl text-sm text-cyan-100 shadow-[0_0_28px_rgba(6,182,212,0.18)] flex items-center gap-2"
+      >
+        <Sparkles class="w-4 h-4 text-cyan-300" />
+        <span>{{ toastMessage }}</span>
+      </div>
+    </transition>
+
+    <Teleport to="body">
+      <transition name="modal-fade">
+        <div
+          v-if="showNewChatModal"
+          class="fixed inset-0 z-[130] flex items-center justify-center px-4 bg-black/60 backdrop-blur-sm"
+          @click.self="showNewChatModal = false"
+        >
+          <div class="w-full max-w-md rounded-xl border border-cyan-500/30 bg-gray-900/95 p-6 shadow-[0_0_30px_rgba(34,211,238,0.15)]">
+            <div class="mb-5">
+              <div class="mb-4 w-12 h-12 rounded-xl border border-cyan-400/30 bg-cyan-500/10 flex items-center justify-center shadow-[0_0_20px_rgba(34,211,238,0.12)]">
+                <Bookmark class="w-6 h-6 text-cyan-300" />
+              </div>
+              <h3 class="text-lg font-bold text-white">开启新对话前，要保存当前内容吗？</h3>
+              <p class="mt-2 text-sm text-gray-400 leading-relaxed">
+                当前对话已经产生内容。你可以先收藏这次对话，或直接清空后进入新的会话。
+              </p>
+            </div>
+
+            <div class="flex flex-col gap-3">
+              <button
+                @click="saveAndStartNew"
+                class="w-full px-4 py-3 rounded-xl border border-cyan-500/50 bg-cyan-500/20 text-cyan-300 hover:bg-cyan-500/30 hover:shadow-[0_0_22px_rgba(34,211,238,0.18)] transition-all duration-300 flex items-center justify-center gap-2"
+              >
+                <Bookmark class="w-4 h-4" />
+                保存并开启新对话
+              </button>
+              <button
+                @click="forceStartNew"
+                class="w-full px-4 py-3 rounded-xl border border-red-500/30 bg-red-500/10 text-red-400 hover:bg-red-500/20 hover:shadow-[0_0_22px_rgba(248,113,113,0.14)] transition-all duration-300 flex items-center justify-center gap-2"
+              >
+                <Trash2 class="w-4 h-4" />
+                直接清空，不保存
+              </button>
+              <button
+                @click="showNewChatModal = false"
+                class="w-full px-4 py-3 rounded-xl text-gray-400 hover:text-white hover:bg-white/5 transition-all duration-300"
+              >
+                取消
+              </button>
+            </div>
+          </div>
+        </div>
+      </transition>
+    </Teleport>
     <!-- 背景光影效果 -->
     <div class="absolute top-0 left-0 w-full h-full bg-[#050505] z-0 pointer-events-none">
       <!-- 左上角紫色光晕 -->
@@ -448,7 +940,10 @@ onUnmounted(() => {
           </div>
 
           <div class="new-chat p-4">
-            <button class="w-full bg-white/10 hover:bg-white/15 hover:shadow-lg hover:shadow-purple-500/20 text-white py-2 px-4 rounded-full transition-all duration-300 flex items-center gap-2 border border-white/10 hover:border-purple-500/50 hover:-translate-y-0.5 group">
+            <button
+              @click="handleNewChat"
+              class="w-full bg-white/10 hover:bg-white/15 hover:shadow-lg hover:shadow-purple-500/20 text-white py-2 px-4 rounded-full transition-all duration-300 flex items-center gap-2 border border-white/10 hover:border-purple-500/50 hover:-translate-y-0.5 group"
+            >
               <Plus class="w-5 h-5 group-hover:rotate-180 transition-transform duration-500" />
               <span>新建对话</span>
             </button>
@@ -465,7 +960,7 @@ onUnmounted(() => {
                   :key="index"
                   class="menu-item flex items-center gap-3 py-1.5 px-2 rounded-lg hover:bg-white/10 hover:bg-gradient-to-r hover:from-purple-500/10 hover:to-transparent transition-all duration-300 cursor-pointer hover:translate-x-2 hover:text-white group"
                   :class="{ 'bg-white/10 text-white': item.label === activeMenu }"
-                  @click="item.label === '历史记录' ? router.push('/history-archive') : (activeMenu = item.label)"
+                  @click="handleSidebarItemClick(item, menu)"
                 >
                   <component :is="iconMap[item.icon]" class="w-5 h-5 text-gray-400 group-hover:text-purple-400 transition-colors duration-300" />
                   <span class="text-sm">{{ item.label }}</span>
@@ -525,12 +1020,42 @@ onUnmounted(() => {
                 </p>
               </div>
 
+
+              <div
+                v-if="knowledgeId"
+                class="mt-2 px-2.5 py-1.5 rounded-lg border border-gray-500/20 bg-white/5 flex items-center gap-2"
+              >
+                <FileText class="w-3.5 h-3.5 text-gray-300 flex-shrink-0" />
+                <span class="text-[10px] text-gray-300 truncate flex-1">
+                  [个人文件] {{ knowledgeFileName }}
+                </span>
+                <button
+                  @click.stop="clearKnowledge"
+                  class="w-4 h-4 rounded-full border border-gray-500/20 text-gray-400 hover:text-white hover:border-gray-400/50 hover:bg-white/10 transition-all duration-200 flex items-center justify-center"
+                  title="清空文件挂载"
+                >
+                  <X class="w-2.5 h-2.5" />
+                </button>
+              </div>
+              <div
+                v-else
+                class="mt-2 px-2.5 py-1.5 rounded-lg system-knowledge-tag-sidebar flex items-center gap-2"
+              >
+                <Sparkles class="w-3.5 h-3.5 text-emerald-300 flex-shrink-0" />
+                <span class="text-[10px] text-emerald-200 truncate flex-1 system-carousel-text" :class="{ 'carousel-fade-out': !carouselFade, 'carousel-fade-in': carouselFade }">{{ currentCarouselText }}</span>
+              </div>
+
+              <div v-if="isKnowledgeUploading" class="mt-2 px-2.5 py-1.5 rounded-lg border border-cyan-400/20 bg-cyan-500/10 flex items-center gap-2">
+                <Loader2 class="w-3.5 h-3.5 animate-spin text-cyan-300" />
+                <span class="text-[10px] text-cyan-200">Knowledge indexing...</span>
+              </div>
+
               <!-- 隐藏的全局文件输入 -->
               <input
                 ref="globalFileInput"
                 type="file"
                 class="hidden"
-                accept=".txt,.pdf,.docx"
+                accept=".txt,.pdf"
                 @change="handleGlobalFileSelect"
               />
             </div>
@@ -565,8 +1090,8 @@ onUnmounted(() => {
             </div>
             <div class="flex items-center gap-3">
               <div class="bg-white/5 backdrop-blur-xl border border-white/10 rounded-full px-3 py-1.5 flex items-center gap-2">
-                <div class="w-2 h-2 bg-green-500 rounded-full animate-pulse shadow-[0_0_8px_rgba(34,197,94,0.8)]"></div>
-                <span class="text-xs text-green-400 font-mono">DeepSeek-V3 Active</span>
+                <div class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse shadow-[0_0_8px_rgba(16,185,129,0.8)]"></div>
+                <span class="text-xs text-emerald-400 font-mono font-semibold tracking-wider drop-shadow-[0_0_5px_rgba(52,211,153,0.4)]">DeepSeek V4 Online</span>
               </div>
               <button class="bg-white/10 border border-white/10 rounded-lg py-2 px-4 text-sm hover:bg-white/15 hover:border-purple-500/50 transition-all duration-300 hover:-translate-y-0.5 hover:shadow-lg hover:shadow-purple-500/20">
                 邀请
@@ -609,45 +1134,81 @@ onUnmounted(() => {
               <div class="templates-section mb-8 animate-fade-in-up animation-delay-200">
                 <div class="mb-4 flex items-center justify-between">
                   <h2 class="text-lg font-semibold text-gray-200 text-left">核心功能</h2>
-                  <div class="flex items-center gap-2">
-                    <button class="text-gray-400 hover:text-white hover:scale-110 transition-all duration-300">
-                      <Plus class="w-4 h-4" />
-                    </button>
-                    <button class="text-gray-400 hover:text-white hover:scale-110 transition-all duration-300">
-                      <MoreHorizontal class="w-4 h-4" />
-                    </button>
+                  <div class="flex items-center gap-1.5">
+                    <button
+                      v-for="(feature, index) in features"
+                      :key="feature.id + '-dot'"
+                      @click="setActiveFeature(index)"
+                      class="h-1.5 rounded-full transition-all duration-300"
+                      :class="index === realIndex ? ['w-6', feature.dotColor] : 'w-1.5 bg-white/20 hover:bg-white/40'"
+                      :aria-label="'切换到' + feature.title"
+                    ></button>
                   </div>
                 </div>
 
-                <div class="grid grid-cols-1 md:grid-cols-3 gap-4 md:gap-6">
-                  <div class="card relative overflow-hidden bg-[#151520]/60 backdrop-blur-2xl border border-white/5 rounded-3xl p-4 md:p-6 cursor-pointer transition-all duration-500 group hover:-translate-y-2 hover:border-purple-500/50 hover:shadow-[0_0_40px_rgba(168,85,247,0.15)] text-left flex flex-col items-start animate-fade-in-up animation-delay-300"
-                    @click="router.push('/resume-diagnosis')">
-                    <div class="w-14 h-14 flex items-center justify-center bg-purple-500/10 rounded-xl mb-4">
-                      <FileText class="w-7 h-7 text-purple-400" />
+                <div
+                  class="feature-slider-wrapper relative w-full overflow-hidden h-[240px]"
+                  @mouseenter="stopAutoPlay"
+                  @mouseleave="startAutoPlay"
+                >
+                  <button
+                    @click.stop="slideFeature(-1)"
+                    class="pointer-events-auto absolute left-2 top-1/2 -translate-y-1/2 z-30 w-10 h-10 rounded-full bg-black/50 backdrop-blur border border-white/10 text-gray-300 hover:text-white hover:border-cyan-300/50 hover:bg-cyan-500/20 hover:shadow-[0_0_22px_rgba(34,211,238,0.28)] transition-all duration-300 flex items-center justify-center"
+                    aria-label="上一张"
+                  >
+                    <ChevronLeft class="w-5 h-5" />
+                  </button>
+
+                  <div
+                    class="feature-slider-track flex flex-nowrap items-center h-full"
+                    :style="featureTrackStyle"
+                  >
+                    <div class="feature-spacer flex-shrink-0 w-0 sm:w-1/4 md:w-1/3 px-2 pointer-events-none" aria-hidden="true"></div>
+                    <div
+                      v-for="(feature, index) in extendedFeatures"
+                      :key="feature.id + '-' + index"
+                      class="feature-slide flex-shrink-0 w-full sm:w-1/2 md:w-1/3 px-2 transition-all duration-700"
+                      :class="index === virtualIndex ? 'scale-105 opacity-100 z-10' : 'scale-90 opacity-40 blur-[1px] z-0'"
+                    >
+                      <div
+                        class="feature-card h-[210px] relative overflow-hidden bg-[#151520]/60 backdrop-blur-2xl border rounded-3xl p-4 md:p-6 cursor-pointer text-left flex flex-col items-start transition-all duration-700 hover:-translate-y-1"
+                        :class="index === virtualIndex
+                          ? feature.themeClass
+                          : 'border-white/5 shadow-none'"
+                        @click="onCardClick(index, feature)"
+                      >
+                        <div class="absolute inset-0 opacity-0 transition-opacity duration-700 pointer-events-none"
+                          :class="index === virtualIndex ? 'opacity-100 bg-gradient-to-br from-white/[0.04] via-transparent to-transparent' : ''"
+                        ></div>
+                        <div
+                          class="w-14 h-14 flex items-center justify-center rounded-xl mb-4 transition-all duration-700"
+                          :class="[feature.iconWrapClass, index === virtualIndex ? ['scale-110', feature.themeIconGlow] : '']"
+                        >
+                          <component
+                            :is="feature.icon"
+                            class="w-7 h-7 transition-all duration-700"
+                            :class="[feature.iconClass, index === virtualIndex ? 'brightness-125' : '']"
+                          />
+                        </div>
+                        <h3
+                          class="text-xl md:text-2xl font-black tracking-tight mb-2 text-left transition-colors duration-700"
+                          :class="index === virtualIndex ? 'text-white' : 'text-gray-100'"
+                        >{{ feature.title }}</h3>
+                        <p class="text-base text-gray-400 text-left leading-relaxed">{{ feature.desc }}</p>
+                      </div>
                     </div>
-                    <h3 class="text-xl md:text-2xl font-black tracking-tight mb-2 text-left">简历诊断</h3>
-                    <p class="text-base text-gray-400 text-left leading-relaxed">分析简历优缺点，提供优化建议</p>
+                    <div class="feature-spacer flex-shrink-0 w-0 sm:w-1/4 md:w-1/3 px-2 pointer-events-none" aria-hidden="true"></div>
                   </div>
 
-                  <div class="card relative overflow-hidden bg-[#151520]/60 backdrop-blur-2xl border border-white/5 rounded-3xl p-4 md:p-6 cursor-pointer transition-all duration-500 group hover:-translate-y-2 hover:border-pink-500/50 hover:shadow-[0_0_40px_rgba(236,72,153,0.15)] hover:scale-[1.02] text-left flex flex-col items-start animate-fade-in-up animation-delay-400"
-                    @click="openInterviewModal">
-                    <div class="w-14 h-14 flex items-center justify-center bg-pink-500/10 rounded-xl mb-4">
-                      <Mic class="w-7 h-7 text-pink-400" />
-                    </div>
-                    <h3 class="text-xl md:text-2xl font-black tracking-tight mb-2 text-left">模拟面试</h3>
-                    <p class="text-base text-gray-400 text-left leading-relaxed">AI 模拟面试，提供反馈和建议</p>
-                  </div>
-
-                  <div 
-                    @click="router.push('/career-planning')" 
-                    class="card relative overflow-hidden bg-[#151520]/60 backdrop-blur-2xl border border-white/5 rounded-3xl p-4 md:p-6 cursor-pointer transition-all duration-500 group hover:-translate-y-2 hover:border-cyan-500/50 hover:shadow-[0_0_40px_rgba(6,182,212,0.15)] text-left flex flex-col items-start animate-fade-in-up animation-delay-500">
-                    <div class="w-14 h-14 flex items-center justify-center bg-cyan-500/10 rounded-xl mb-4">
-                      <MessageSquare class="w-7 h-7 text-cyan-400" />
-                    </div>
-                    <h3 class="text-xl md:text-2xl font-black tracking-tight mb-2 text-left">职业规划</h3>
-                    <p class="text-base text-gray-400 text-left leading-relaxed">基于你的背景，制定职业发展路径</p>
-                  </div>
-                </div></div>
+                  <button
+                    @click.stop="slideFeature(1)"
+                    class="pointer-events-auto absolute right-2 top-1/2 -translate-y-1/2 z-30 w-10 h-10 rounded-full bg-black/50 backdrop-blur border border-white/10 text-gray-300 hover:text-white hover:border-cyan-300/50 hover:bg-cyan-500/20 hover:shadow-[0_0_22px_rgba(34,211,238,0.28)] transition-all duration-300 flex items-center justify-center"
+                    aria-label="下一张"
+                  >
+                    <ChevronRight class="w-5 h-5" />
+                  </button>
+                </div>
+              </div>
 
               <!-- 历史记录区域 -->
               <div v-if="historyRecords.length > 0" class="mb-8 animate-fade-in-up animation-delay-500">
@@ -668,7 +1229,7 @@ onUnmounted(() => {
                   <div
                     v-for="record in historyRecords"
                     :key="record.id"
-                    class="relative overflow-hidden bg-[#151520]/60 backdrop-blur-2xl border border-white/5 rounded-2xl p-4 cursor-pointer transition-all duration-300 group hover:-translate-y-1 hover:border-purple-500/30 hover:shadow-[0_0_20px_rgba(168,85,247,0.1)] text-left"
+                    class="relative overflow-hidden bg-[#151520]/60 backdrop-blur-2xl border border-white/5 rounded-2xl p-4 pb-12 cursor-pointer transition-all duration-300 group hover:-translate-y-1 hover:border-purple-500/30 hover:shadow-[0_0_20px_rgba(168,85,247,0.1)] text-left"
                     @click="goToHistory(record)"
                   >
                     <div class="flex items-center justify-between mb-2">
@@ -680,6 +1241,25 @@ onUnmounted(() => {
                     </div>
                     <p class="text-xs text-gray-400 truncate">{{ record.user_input }}</p>
                     <p v-if="record.ai_result" class="text-[11px] text-gray-600 truncate mt-1">{{ record.ai_result.substring(0, 60) }}...</p>
+                    <div class="absolute right-3 bottom-3 flex items-center gap-2">
+                      <button
+                        @click.stop="toggleSaveRecord(record)"
+                        class="w-8 h-8 rounded-full border backdrop-blur flex items-center justify-center transition-all duration-300"
+                        :class="record.is_saved
+                          ? 'border-amber-300/50 bg-amber-400/10 text-amber-300 shadow-[0_0_14px_rgba(251,191,36,0.2)]'
+                          : 'border-white/10 bg-black/20 text-gray-500 hover:text-amber-300 hover:border-amber-300/40 hover:bg-amber-400/10'"
+                        title="保存/取消保存"
+                      >
+                        <Star class="w-3.5 h-3.5" :fill="record.is_saved ? 'currentColor' : 'none'" />
+                      </button>
+                      <button
+                        @click.stop="deleteHistoryRecord(record)"
+                        class="w-8 h-8 rounded-full border border-white/10 bg-black/20 text-gray-500 backdrop-blur flex items-center justify-center hover:text-red-300 hover:border-red-400/40 hover:bg-red-500/10 transition-all duration-300"
+                        title="删除记录"
+                      >
+                        <Trash2 class="w-3.5 h-3.5" />
+                      </button>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -736,27 +1316,36 @@ onUnmounted(() => {
               class="input-wrapper relative pointer-events-auto w-full max-w-4xl bg-black/50 backdrop-blur-md rounded-xl border border-white/10 p-4 transition-all duration-300"
               :class="{ 'border-cyan-500/50 shadow-[0_0_30px_rgba(6,182,212,0.2)]': isChatLoading }"
             >
-              <!-- 已上传附件提示 -->
-              <div v-if="uploadedGlobalResume" class="mb-3 flex items-center gap-2">
-                <div class="bg-cyan-500/20 border border-cyan-500/30 rounded-full px-3 py-1 flex items-center gap-2">
-                  <CheckCircle class="w-3.5 h-3.5 text-cyan-400" />
-                  <span class="text-xs text-cyan-200 truncate max-w-[200px]">已附加文件（仅本轮对话）</span>
+              <!-- 个人文件挂载状态（白色极简风格） -->
+              <div v-if="knowledgeId" class="mb-3 flex items-center gap-2">
+                <div class="personal-file-tag rounded-full px-3 py-1 flex items-center gap-2">
+                  <FileText class="w-3.5 h-3.5 text-gray-300" />
+                  <span class="text-xs text-gray-200 truncate max-w-[260px]">[个人文件已挂载] {{ knowledgeFileName }}</span>
                   <button
-                    @click="removeUploadedResume"
-                    class="text-gray-400 hover:text-white transition-colors"
+                    @click="clearKnowledge"
+                    class="text-gray-400 hover:text-white transition-colors ml-1"
+                    title="清空文件挂载"
                   >
                     <X class="w-3.5 h-3.5" />
                   </button>
                 </div>
               </div>
+              <!-- 系统预设知识库状态（赛博炫酷风格） -->
+              <div v-else class="mb-3 flex items-center gap-2">
+                <div class="system-knowledge-tag rounded-full px-3 py-1 flex items-center gap-2">
+                  <Sparkles class="w-3.5 h-3.5 text-emerald-300" />
+                  <span class="text-xs text-emerald-100 truncate max-w-[260px] system-carousel-text" :class="{ 'carousel-fade-out': !carouselFade, 'carousel-fade-in': carouselFade }">{{ currentCarouselText }}</span>
+                </div>
+              </div>
 
               <div class="flex items-end gap-3">
                 <label class="relative flex-shrink-0 mb-0.5">
-                  <input type="file" class="absolute inset-0 w-full h-full opacity-0 cursor-pointer" @change="handleChatFileUpload" accept=".pdf,.doc,.docx,.txt,.jpg,.png" />
+                  <input type="file" class="absolute inset-0 w-full h-full opacity-0 cursor-pointer" @change="handleChatFileUpload" accept=".pdf,.txt" />
                   <Paperclip class="w-5 h-5 text-gray-400 hover:text-cyan-400 transition-colors cursor-pointer" />
                 </label>
 
                 <textarea
+                  ref="chatInputRef"
                   v-model="userChatInput"
                   @keydown="handleChatEnter"
                   :placeholder="chatPlaceholder"
@@ -938,6 +1527,56 @@ onUnmounted(() => {
   background: rgba(255, 255, 255, 0.25);
 }
 
+.hide-scrollbar {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.hide-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+.feature-slider-wrapper {
+  --feature-card-width: 100%;
+}
+
+@media (min-width: 640px) {
+  .feature-slider-wrapper {
+    --feature-card-width: 50%;
+  }
+}
+
+@media (min-width: 768px) {
+  .feature-slider-wrapper {
+    --feature-card-width: 33.333333%;
+  }
+}
+
+.feature-slider-track {
+  will-change: transform;
+}
+
+.toast-slide-enter-active,
+.toast-slide-leave-active {
+  transition: opacity 0.25s ease, transform 0.25s ease;
+}
+
+.toast-slide-enter-from,
+.toast-slide-leave-to {
+  opacity: 0;
+  transform: translate(-50%, -12px);
+}
+
+.modal-fade-enter-active,
+.modal-fade-leave-active {
+  transition: opacity 0.22s ease;
+}
+
+.modal-fade-enter-from,
+.modal-fade-leave-to {
+  opacity: 0;
+}
+
 .input-wrapper:focus-within {
   border-color: rgba(168, 85, 247, 0.5) !important;
   box-shadow: 0 0 20px rgba(168, 85, 247, 0.2) !important;
@@ -1094,4 +1733,61 @@ button.bg-gradient-to-r.from-purple-500.to-indigo-600 {
 .dashboard-markdown :deep(code) { background: rgba(6, 182, 212, 0.1); padding: 0.1em 0.3em; border-radius: 3px; font-size: 0.88em; color: #67e8f9; font-family: 'JetBrains Mono', 'Fira Code', monospace; }
 .dashboard-markdown :deep(pre) { background: rgba(0, 0, 0, 0.35); border: 1px solid rgba(6, 182, 212, 0.12); border-radius: 8px; padding: 0.6em; overflow-x: auto; margin: 0.3em 0; }
 .dashboard-markdown :deep(pre code) { background: none; padding: 0; border-radius: 0; color: rgba(229, 231, 235, 0.85); }
+
+.personal-file-tag {
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  background: rgba(255, 255, 255, 0.04);
+  transition: all 0.3s ease;
+}
+.personal-file-tag:hover {
+  border-color: rgba(255, 255, 255, 0.3);
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.system-knowledge-tag {
+  border: 1px solid rgba(16, 185, 129, 0.35);
+  background: rgba(16, 185, 129, 0.08);
+  animation: breatheGlow 3s ease-in-out infinite;
+  box-shadow: 0 0 12px rgba(16, 185, 129, 0.1), inset 0 0 8px rgba(16, 185, 129, 0.05);
+}
+
+.system-knowledge-tag-sidebar {
+  border: 1px solid rgba(16, 185, 129, 0.3);
+  background: rgba(16, 185, 129, 0.06);
+  animation: breatheGlow 3s ease-in-out infinite;
+  box-shadow: 0 0 10px rgba(16, 185, 129, 0.08), inset 0 0 6px rgba(16, 185, 129, 0.04);
+}
+
+@keyframes breatheGlow {
+  0%, 100% {
+    border-color: rgba(16, 185, 129, 0.3);
+    box-shadow: 0 0 8px rgba(16, 185, 129, 0.08), inset 0 0 4px rgba(16, 185, 129, 0.03);
+  }
+  50% {
+    border-color: rgba(6, 182, 212, 0.5);
+    box-shadow: 0 0 18px rgba(6, 182, 212, 0.2), inset 0 0 10px rgba(6, 182, 212, 0.06);
+  }
+}
+
+.carousel-fade-in {
+  opacity: 1;
+  transition: opacity 0.3s ease-in;
+}
+.carousel-fade-out {
+  opacity: 0;
+  transition: opacity 0.3s ease-out;
+}
+
+.feature-card {
+  will-change: transform, opacity, filter;
+}
+.feature-active {
+  filter: blur(0);
+}
+.feature-inactive {
+  filter: blur(1px);
+}
+.feature-inactive:hover {
+  filter: blur(0);
+}
 </style>

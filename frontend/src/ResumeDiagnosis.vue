@@ -325,8 +325,8 @@ onUnmounted(() => {})
             <h1 class="text-lg md:text-2xl font-bold text-white whitespace-nowrap">AI 简历诊断</h1>
           </div>
           <div class="flex items-center gap-2 text-xs text-gray-500 flex-shrink-0">
-            <div class="w-2 h-2 bg-green-500 rounded-full animate-pulse shadow-[0_0_8px_rgba(34,197,94,0.8)]"></div>
-            <span class="text-xs md:text-sm text-green-400 font-mono hidden sm:inline-block">DeepSeek Online</span>
+            <div class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse shadow-[0_0_8px_rgba(16,185,129,0.8)]"></div>
+            <span class="text-xs md:text-sm text-emerald-400 font-mono hidden sm:inline-block font-semibold tracking-wider drop-shadow-[0_0_5px_rgba(52,211,153,0.4)]">DeepSeek V4 Online</span>
           </div>
         </div>
 

@@ -6,6 +6,8 @@ import PremiumInterview from '@/PremiumInterview.vue'
 import GlobalSetup from '@/GlobalSetup.vue'
 import CareerPlanning from '@/CareerPlanning.vue'
 import HistoryArchive from '@/HistoryArchive.vue'
+import SavedChats from '@/SavedChats.vue'
+import FilesPlaceholder from '@/FilesPlaceholder.vue'
 
 const routes = [
   {
@@ -51,6 +53,16 @@ const routes = [
     path: '/history-archive',
     name: 'HistoryArchive',
     component: HistoryArchive
+  },
+  {
+    path: '/saved-chats',
+    name: 'SavedChats',
+    component: SavedChats
+  },
+  {
+    path: '/files',
+    name: 'FilesPlaceholder',
+    component: FilesPlaceholder
   }
 ]
 

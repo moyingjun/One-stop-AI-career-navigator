@@ -1,7 +1,19 @@
 <script setup>
-import { ref, onMounted } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { ArrowLeft, History, FileText, Bot, Compass, Search, Loader2 } from 'lucide-vue-next'
+import {
+  ArrowLeft,
+  Bot,
+  Bookmark,
+  Compass,
+  FileText,
+  History,
+  Loader2,
+  Search,
+  Star,
+  Trash2,
+  X
+} from 'lucide-vue-next'
 
 const router = useRouter()
 
@@ -12,15 +24,17 @@ const historyRecords = ref([])
 const isLoading = ref(true)
 const searchQuery = ref('')
 const filterCategory = ref('all')
+const showClearConfirm = ref(false)
+const isClearing = ref(false)
+const busyRecordIds = ref(new Set())
 
 const loadHistory = async () => {
   isLoading.value = true
   try {
-    const res = await fetch(`${API_BASE_URL.replace('/api', '')}/api/history?limit=100`)
-    if (res.ok) {
-      const data = await res.json()
-      historyRecords.value = data.records || []
-    }
+    const res = await fetch(`${API_BASE_URL}/history?limit=100`)
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    const data = await res.json()
+    historyRecords.value = data.records || []
   } catch (err) {
     console.error('加载历史记录失败:', err)
   } finally {
@@ -28,66 +42,132 @@ const loadHistory = async () => {
   }
 }
 
-const filteredRecords = ref([])
-
-const applyFilter = () => {
+const filteredRecords = computed(() => {
   let records = historyRecords.value
+
   if (filterCategory.value !== 'all') {
-    records = records.filter(r => r.category === filterCategory.value)
+    records = records.filter((record) => record.category === filterCategory.value)
   }
+
   if (searchQuery.value.trim()) {
     const query = searchQuery.value.toLowerCase()
-    records = records.filter(r => 
-      (r.user_input && r.user_input.toLowerCase().includes(query)) ||
-      (r.ai_result && r.ai_result.toLowerCase().includes(query))
+    records = records.filter((record) =>
+      String(record.user_input || '').toLowerCase().includes(query) ||
+      String(record.ai_result || '').toLowerCase().includes(query)
     )
   }
-  filteredRecords.value = records
-}
+
+  return records
+})
 
 const getCategoryLabel = (cat) => {
   if (cat === 'resume_diagnosis') return '简历诊断'
   if (cat === 'interview_evaluate') return '面试评估'
+  if (cat?.startsWith?.('interview')) return '模拟面试'
   if (cat === 'career_planning') return '职业规划'
-  return cat
+  if (cat?.startsWith?.('agent_')) return 'Agent 对话'
+  if (cat === 'general_chat') return '职场助理'
+  return cat || '未知记录'
 }
 
 const getCategoryIcon = (cat) => {
   if (cat === 'resume_diagnosis') return FileText
-  if (cat === 'interview_evaluate') return Bot
+  if (cat?.startsWith?.('interview')) return Bot
   if (cat === 'career_planning') return Compass
+  if (cat?.startsWith?.('agent_')) return Bookmark
   return History
 }
 
 const getCategoryColor = (cat) => {
   if (cat === 'resume_diagnosis') return 'text-purple-400 border-purple-500/30 bg-purple-500/5'
-  if (cat === 'interview_evaluate') return 'text-pink-400 border-pink-500/30 bg-pink-500/5'
+  if (cat?.startsWith?.('interview')) return 'text-pink-400 border-pink-500/30 bg-pink-500/5'
   if (cat === 'career_planning') return 'text-cyan-400 border-cyan-500/30 bg-cyan-500/5'
+  if (cat?.startsWith?.('agent_')) return 'text-emerald-400 border-emerald-500/30 bg-emerald-500/5'
   return 'text-gray-400 border-gray-500/30 bg-gray-500/5'
 }
 
 const goToRecord = (record) => {
   if (record.category === 'resume_diagnosis') router.push(`/resume-diagnosis?id=${record.id}`)
-  else if (record.category === 'interview_evaluate') router.push(`/interview?id=${record.id}`)
+  else if (record.category?.startsWith?.('interview')) router.push(`/interview?id=${record.id}`)
   else if (record.category === 'career_planning') router.push(`/career-planning?id=${record.id}`)
 }
 
-onMounted(async () => {
-  await loadHistory()
-  applyFilter()
-})
+const markBusy = (recordId, busy) => {
+  const next = new Set(busyRecordIds.value)
+  if (busy) next.add(recordId)
+  else next.delete(recordId)
+  busyRecordIds.value = next
+}
+
+const deleteHistoryRecord = async (record) => {
+  markBusy(record.id, true)
+  try {
+    const res = await fetch(`${API_BASE_URL}/history/${record.id}`, { method: 'DELETE' })
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    historyRecords.value = historyRecords.value.filter((item) => item.id !== record.id)
+  } catch (err) {
+    console.error('删除历史记录失败:', err)
+  } finally {
+    markBusy(record.id, false)
+  }
+}
+
+const toggleSaveRecord = async (record) => {
+  const nextSaved = !record.is_saved
+  markBusy(record.id, true)
+  try {
+    const res = await fetch(`${API_BASE_URL}/history/${record.id}/save`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ is_saved: nextSaved })
+    })
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    historyRecords.value = historyRecords.value.map((item) =>
+      item.id === record.id ? { ...item, is_saved: nextSaved } : item
+    )
+  } catch (err) {
+    console.error('保存状态切换失败:', err)
+  } finally {
+    markBusy(record.id, false)
+  }
+}
+
+const clearAllHistory = async () => {
+  isClearing.value = true
+  try {
+    const res = await fetch(`${API_BASE_URL}/history/clear`, { method: 'DELETE' })
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    historyRecords.value = []
+    showClearConfirm.value = false
+  } catch (err) {
+    console.error('清空历史记录失败:', err)
+  } finally {
+    isClearing.value = false
+  }
+}
+
+const parseScores = (scores) => {
+  try {
+    const parsed = typeof scores === 'string' ? JSON.parse(scores) : scores
+    return parsed && typeof parsed === 'object' ? parsed : {}
+  } catch {
+    return {}
+  }
+}
+
+onMounted(loadHistory)
 </script>
 
 <template>
-  <div class="min-h-[100dvh] bg-[#050505] relative overflow-hidden">
-    <div class="absolute top-0 left-0 w-full h-full pointer-events-none z-0">
+  <div class="min-h-[100dvh] bg-[#050505] relative overflow-hidden text-gray-200">
+    <div class="absolute inset-0 pointer-events-none z-0">
       <div class="absolute top-0 left-0 w-[50vw] h-[50vh] bg-gradient-to-br from-purple-600/10 via-pink-500/5 to-transparent blur-3xl animate-pulse-slow"></div>
       <div class="absolute bottom-0 right-0 w-[50vw] h-[50vh] bg-gradient-to-tl from-cyan-500/10 via-blue-500/5 to-transparent blur-3xl animate-pulse-slower"></div>
     </div>
 
     <div class="relative z-10 flex flex-col h-full">
       <div class="bg-white/[0.02] backdrop-blur-xl border-b border-white/[0.05] px-4 py-4">
-        <div class="max-w-6xl mx-auto flex items-center justify-between">
+        <div class="max-w-6xl mx-auto flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div class="flex items-center gap-3">
             <button @click="router.push('/dashboard')" class="p-2 rounded-lg hover:bg-white/5 transition-all duration-300 group">
               <ArrowLeft class="w-5 h-5 text-gray-400 group-hover:text-white transition-colors" />
@@ -97,12 +177,12 @@ onMounted(async () => {
               <h1 class="text-xl font-bold text-white">历史档案</h1>
             </div>
           </div>
-          <div class="flex items-center gap-3">
+
+          <div class="flex flex-wrap items-center gap-3">
             <div class="relative">
               <Search class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-500" />
               <input
                 v-model="searchQuery"
-                @input="applyFilter"
                 type="text"
                 placeholder="搜索记录..."
                 class="bg-white/5 border border-white/10 rounded-lg py-2 pl-9 pr-4 text-sm text-gray-200 placeholder-gray-500 focus:outline-none focus:border-purple-500/50 w-48 md:w-64 transition-all duration-300"
@@ -110,14 +190,22 @@ onMounted(async () => {
             </div>
             <select
               v-model="filterCategory"
-              @change="applyFilter"
               class="bg-white/5 border border-white/10 rounded-lg py-2 px-3 text-sm text-gray-300 focus:outline-none focus:border-purple-500/50 transition-all duration-300"
             >
               <option value="all">全部类型</option>
               <option value="resume_diagnosis">简历诊断</option>
               <option value="interview_evaluate">面试评估</option>
               <option value="career_planning">职业规划</option>
+              <option value="general_chat">职场助理</option>
             </select>
+            <button
+              v-if="historyRecords.length > 0"
+              @click="showClearConfirm = true"
+              class="px-3 py-2 rounded-lg border border-red-500/25 bg-red-500/5 text-sm text-red-300 hover:bg-red-500/15 hover:border-red-400/50 hover:shadow-[0_0_18px_rgba(248,113,113,0.18)] transition-all duration-300 flex items-center gap-2"
+            >
+              <Trash2 class="w-4 h-4" />
+              清空全部
+            </button>
           </div>
         </div>
       </div>
@@ -138,24 +226,71 @@ onMounted(async () => {
               v-for="record in filteredRecords"
               :key="record.id"
               @click="goToRecord(record)"
-              class="group relative overflow-hidden bg-[#151520]/60 backdrop-blur-2xl border border-white/5 rounded-2xl p-5 cursor-pointer transition-all duration-300 hover:-translate-y-1 hover:border-purple-500/30 hover:shadow-[0_0_20px_rgba(168,85,247,0.1)]"
+              class="group relative overflow-hidden bg-[#151520]/60 backdrop-blur-2xl border border-white/5 rounded-2xl p-5 pb-14 cursor-pointer transition-all duration-300 hover:-translate-y-1 hover:border-purple-500/30 hover:shadow-[0_0_20px_rgba(168,85,247,0.1)]"
             >
               <div class="flex items-center justify-between mb-3">
-                <div class="flex items-center gap-2">
-                  <component :is="getCategoryIcon(record.category)" class="w-4 h-4" :class="getCategoryColor(record.category).split(' ')[0]" />
-                  <span class="text-xs px-2 py-0.5 rounded-full border" :class="getCategoryColor(record.category)">{{ getCategoryLabel(record.category) }}</span>
+                <div class="flex items-center gap-2 min-w-0">
+                  <component :is="getCategoryIcon(record.category)" class="w-4 h-4 flex-shrink-0" :class="getCategoryColor(record.category).split(' ')[0]" />
+                  <span class="text-xs px-2 py-0.5 rounded-full border truncate" :class="getCategoryColor(record.category)">{{ getCategoryLabel(record.category) }}</span>
                 </div>
-                <span class="text-[10px] text-gray-600">{{ record.created_at }}</span>
+                <span class="text-[10px] text-gray-600 flex-shrink-0 ml-2">{{ record.created_at }}</span>
               </div>
               <p class="text-sm text-gray-300 line-clamp-2 mb-2">{{ record.user_input || '无输入记录' }}</p>
               <p v-if="record.ai_result" class="text-xs text-gray-500 line-clamp-2">{{ record.ai_result.substring(0, 100) }}...</p>
-              <div v-if="record.scores" class="mt-3 flex flex-wrap gap-1">
-                <span v-for="(value, key) in JSON.parse(record.scores)" :key="key" class="text-[10px] px-1.5 py-0.5 rounded bg-white/5 text-gray-400">
+              <div v-if="Object.keys(parseScores(record.scores)).length" class="mt-3 flex flex-wrap gap-1">
+                <span v-for="(value, key) in parseScores(record.scores)" :key="key" class="text-[10px] px-1.5 py-0.5 rounded bg-white/5 text-gray-400">
                   {{ key }}: {{ value }}
                 </span>
               </div>
+
+              <div class="absolute right-4 bottom-4 flex items-center gap-2">
+                <button
+                  @click.stop="toggleSaveRecord(record)"
+                  :disabled="busyRecordIds.has(record.id)"
+                  class="w-9 h-9 rounded-full border backdrop-blur flex items-center justify-center transition-all duration-300"
+                  :class="record.is_saved
+                    ? 'border-amber-300/50 bg-amber-400/10 text-amber-300 shadow-[0_0_16px_rgba(251,191,36,0.22)]'
+                    : 'border-white/10 bg-black/20 text-gray-500 hover:text-amber-300 hover:border-amber-300/40 hover:bg-amber-400/10'"
+                  title="保存/取消保存"
+                >
+                  <Star class="w-4 h-4" :fill="record.is_saved ? 'currentColor' : 'none'" />
+                </button>
+                <button
+                  @click.stop="deleteHistoryRecord(record)"
+                  :disabled="busyRecordIds.has(record.id)"
+                  class="w-9 h-9 rounded-full border border-white/10 bg-black/20 text-gray-500 backdrop-blur flex items-center justify-center hover:text-red-300 hover:border-red-400/40 hover:bg-red-500/10 hover:shadow-[0_0_16px_rgba(248,113,113,0.18)] transition-all duration-300"
+                  title="删除记录"
+                >
+                  <Trash2 class="w-4 h-4" />
+                </button>
+              </div>
             </div>
           </div>
+        </div>
+      </div>
+    </div>
+
+    <div v-if="showClearConfirm" class="fixed inset-0 z-50 flex items-center justify-center px-4">
+      <div class="absolute inset-0 bg-black/70 backdrop-blur-sm" @click="showClearConfirm = false"></div>
+      <div class="relative w-full max-w-md rounded-2xl border border-red-400/25 bg-[#101018]/90 backdrop-blur-2xl p-6 shadow-[0_0_40px_rgba(248,113,113,0.12)]">
+        <button @click="showClearConfirm = false" class="absolute right-4 top-4 text-gray-500 hover:text-white transition-colors">
+          <X class="w-4 h-4" />
+        </button>
+        <div class="w-12 h-12 rounded-xl bg-red-500/10 border border-red-400/20 flex items-center justify-center mb-4">
+          <Trash2 class="w-6 h-6 text-red-300" />
+        </div>
+        <h2 class="text-lg font-bold text-white mb-2">确定要清空所有历史记录吗？</h2>
+        <p class="text-sm text-gray-400 mb-6">此操作不可恢复。</p>
+        <div class="flex gap-3">
+          <button @click="showClearConfirm = false" class="flex-1 py-2.5 rounded-xl border border-white/10 text-gray-300 hover:bg-white/5 transition-all duration-300">取消</button>
+          <button
+            @click="clearAllHistory"
+            :disabled="isClearing"
+            class="flex-1 py-2.5 rounded-xl bg-red-500/15 border border-red-400/30 text-red-200 hover:bg-red-500/25 hover:shadow-[0_0_18px_rgba(248,113,113,0.2)] transition-all duration-300 flex items-center justify-center gap-2"
+          >
+            <Loader2 v-if="isClearing" class="w-4 h-4 animate-spin" />
+            确认清空
+          </button>
         </div>
       </div>
     </div>

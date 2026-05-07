@@ -8,9 +8,9 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # 2. 从环境变量读取配置
-API_KEY = os.getenv("DEEPSEEK_API_KEY")
-BASE_URL = os.getenv("DEEPSEEK_BASE_URL")
-MODEL_NAME = os.getenv("DEEPSEEK_MODEL_NAME")
+API_KEY = os.getenv("DEEPSEEK_API_KEY", "")
+BASE_URL = os.getenv("DEEPSEEK_BASE_URL", "https://tokenrai.com/v1/chat/completions")
+MODEL_NAME = os.getenv("DEEPSEEK_MODEL_NAME", "deepseek-v4-flash")
 
 async def test_deepseek_ignition():
     print("========== 🚀 DeepSeek 引擎点火测试开始 ==========")

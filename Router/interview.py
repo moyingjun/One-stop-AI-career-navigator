@@ -2,16 +2,21 @@ import os
 import json
 import httpx
 import re
+from dotenv import load_dotenv
 from fastapi import APIRouter
 from pydantic import BaseModel
 from typing import Optional, List
 from database import insert_record
 
+load_dotenv()
+
 router = APIRouter(prefix="/api/interview", tags=["模拟面试"])
 
 DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "")
-DEEPSEEK_BASE_URL = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com/v1/chat/completions")
-DEEPSEEK_MODEL_NAME = os.getenv("DEEPSEEK_MODEL_NAME", "deepseek-chat")
+DEEPSEEK_BASE_URL = os.getenv("DEEPSEEK_BASE_URL", "https://tokenrai.com/v1/chat/completions")
+DEEPSEEK_MODEL_NAME = os.getenv("DEEPSEEK_MODEL_NAME", "deepseek-v4-flash")
+if not DEEPSEEK_BASE_URL.endswith("chat/completions"):
+    DEEPSEEK_BASE_URL = f"{DEEPSEEK_BASE_URL.rstrip('/')}/chat/completions"
 
 
 class ChatRequest(BaseModel):
