@@ -1,11 +1,260 @@
 <script setup>
 import { useRouter } from 'vue-router'
-import { ref, onMounted, onUnmounted } from 'vue'
+import { ref, onMounted, onBeforeUnmount } from 'vue'
+import * as THREE from 'three'
 
 const router = useRouter()
 
+const mouseX = ref(0)
+const mouseY = ref(0)
+const smokeCanvas = ref(null)
+let smokeRenderer = null
+let smokeScene = null
+let smokeCamera = null
+let smokeGeometry = null
+let smokeMaterial = null
+let smokeFrameId = null
+let smokeStartTime = 0
+
+const smokeVertexShader = `
+  varying vec2 vUv;
+
+  void main() {
+    vUv = uv;
+    gl_Position = vec4(position.xy, 0.0, 1.0);
+  }
+`
+
+const smokeFragmentShader = `
+  precision highp float;
+
+  uniform float u_time;
+  uniform vec2 u_resolution;
+  varying vec2 vUv;
+
+  vec3 mod289(vec3 x) {
+    return x - floor(x * (1.0 / 289.0)) * 289.0;
+  }
+
+  vec4 mod289(vec4 x) {
+    return x - floor(x * (1.0 / 289.0)) * 289.0;
+  }
+
+  vec4 permute(vec4 x) {
+    return mod289(((x * 34.0) + 1.0) * x);
+  }
+
+  vec4 taylorInvSqrt(vec4 r) {
+    return 1.79284291400159 - 0.85373472095314 * r;
+  }
+
+  float snoise(vec3 v) {
+    const vec2 C = vec2(1.0 / 6.0, 1.0 / 3.0);
+    const vec4 D = vec4(0.0, 0.5, 1.0, 2.0);
+
+    vec3 i = floor(v + dot(v, C.yyy));
+    vec3 x0 = v - i + dot(i, C.xxx);
+
+    vec3 g = step(x0.yzx, x0.xyz);
+    vec3 l = 1.0 - g;
+    vec3 i1 = min(g.xyz, l.zxy);
+    vec3 i2 = max(g.xyz, l.zxy);
+
+    vec3 x1 = x0 - i1 + C.xxx;
+    vec3 x2 = x0 - i2 + C.yyy;
+    vec3 x3 = x0 - D.yyy;
+
+    i = mod289(i);
+    vec4 p = permute(permute(permute(
+      i.z + vec4(0.0, i1.z, i2.z, 1.0))
+      + i.y + vec4(0.0, i1.y, i2.y, 1.0))
+      + i.x + vec4(0.0, i1.x, i2.x, 1.0));
+
+    float n_ = 0.142857142857;
+    vec3 ns = n_ * D.wyz - D.xzx;
+
+    vec4 j = p - 49.0 * floor(p * ns.z * ns.z);
+
+    vec4 x_ = floor(j * ns.z);
+    vec4 y_ = floor(j - 7.0 * x_);
+
+    vec4 x = x_ * ns.x + ns.yyyy;
+    vec4 y = y_ * ns.x + ns.yyyy;
+    vec4 h = 1.0 - abs(x) - abs(y);
+
+    vec4 b0 = vec4(x.xy, y.xy);
+    vec4 b1 = vec4(x.zw, y.zw);
+
+    vec4 s0 = floor(b0) * 2.0 + 1.0;
+    vec4 s1 = floor(b1) * 2.0 + 1.0;
+    vec4 sh = -step(h, vec4(0.0));
+
+    vec4 a0 = b0.xzyw + s0.xzyw * sh.xxyy;
+    vec4 a1 = b1.xzyw + s1.xzyw * sh.zzww;
+
+    vec3 p0 = vec3(a0.xy, h.x);
+    vec3 p1 = vec3(a0.zw, h.y);
+    vec3 p2 = vec3(a1.xy, h.z);
+    vec3 p3 = vec3(a1.zw, h.w);
+
+    vec4 norm = taylorInvSqrt(vec4(
+      dot(p0, p0),
+      dot(p1, p1),
+      dot(p2, p2),
+      dot(p3, p3)
+    ));
+    p0 *= norm.x;
+    p1 *= norm.y;
+    p2 *= norm.z;
+    p3 *= norm.w;
+
+    vec4 m = max(0.6 - vec4(
+      dot(x0, x0),
+      dot(x1, x1),
+      dot(x2, x2),
+      dot(x3, x3)
+    ), 0.0);
+    m = m * m;
+    return 42.0 * dot(m * m, vec4(
+      dot(p0, x0),
+      dot(p1, x1),
+      dot(p2, x2),
+      dot(p3, x3)
+    ));
+  }
+
+  float fbm(vec3 p) {
+    float value = 0.0;
+    float amplitude = 0.5;
+    float frequency = 1.0;
+
+    for (int i = 0; i < 6; i++) {
+      value += amplitude * snoise(p * frequency);
+      frequency *= 2.02;
+      amplitude *= 0.52;
+      p += vec3(17.0, 11.0, 5.0);
+    }
+
+    return value;
+  }
+
+  void main() {
+    vec2 uv = vUv;
+    vec2 aspect = vec2(u_resolution.x / max(u_resolution.y, 1.0), 1.0);
+    vec2 p = (uv - 0.5) * aspect;
+
+    float t = u_time * 0.035;
+    float drift = fbm(vec3(p * 1.15 + vec2(t * 0.22, -t * 0.15), t));
+    float curl = fbm(vec3(p * 2.1 + drift * 0.35, t * 1.35 + 6.0));
+    float vapor = fbm(vec3(p * 3.0 + curl * 0.22, t * 1.8 + 13.0));
+
+    float cloud = smoothstep(0.04, 0.78, drift * 0.48 + curl * 0.34 + vapor * 0.18 + 0.36);
+    float vignette = smoothstep(0.92, 0.08, length(p * vec2(0.82, 1.08)));
+    float edgeGlow = pow(max(cloud, 0.0), 2.2) * vignette;
+
+    vec3 deepSpace = vec3(0.008, 0.008, 0.020);
+    vec3 ghostPurple = vec3(0.35, 0.25, 0.65);
+    vec3 dimViolet = vec3(0.55, 0.15, 0.75);
+    vec3 cyanTech = vec3(0.05, 0.45, 0.55);
+
+    vec3 color = deepSpace;
+    float baseGlow = smoothstep(0.2, 0.8, vapor * 0.5 + 0.2) * vignette;
+    color += ghostPurple * cloud * 0.45;
+    color += dimViolet * edgeGlow * 0.28;
+    color += cyanTech * baseGlow * 0.25;
+    color += vec3(0.03, 0.05, 0.10) * pow(vignette, 3.0) * 0.05;
+
+    gl_FragColor = vec4(color, 1.0);
+  }
+`
+
+const resizeSmoke = () => {
+  if (!smokeRenderer || !smokeMaterial) return
+
+  const width = window.innerWidth
+  const height = window.innerHeight
+  const pixelRatio = Math.min(window.devicePixelRatio || 1, 2)
+
+  smokeRenderer.setPixelRatio(pixelRatio)
+  smokeRenderer.setSize(width, height, false)
+  smokeMaterial.uniforms.u_resolution.value.set(width * pixelRatio, height * pixelRatio)
+}
+
+const renderSmoke = () => {
+  if (!smokeRenderer || !smokeScene || !smokeCamera || !smokeMaterial) return
+
+  smokeMaterial.uniforms.u_time.value = (performance.now() - smokeStartTime) * 0.001
+  smokeRenderer.render(smokeScene, smokeCamera)
+  smokeFrameId = requestAnimationFrame(renderSmoke)
+}
+
+const initSmoke = () => {
+  if (!smokeCanvas.value || smokeRenderer) return
+
+  smokeRenderer = new THREE.WebGLRenderer({
+    canvas: smokeCanvas.value,
+    antialias: true,
+    alpha: false,
+    powerPreference: 'high-performance'
+  })
+  smokeRenderer.setClearColor(0x020205, 1)
+
+  smokeScene = new THREE.Scene()
+  smokeCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1)
+  smokeGeometry = new THREE.PlaneGeometry(2, 2)
+  smokeMaterial = new THREE.ShaderMaterial({
+    vertexShader: smokeVertexShader,
+    fragmentShader: smokeFragmentShader,
+    depthWrite: false,
+    depthTest: false,
+    uniforms: {
+      u_time: { value: 0 },
+      u_resolution: { value: new THREE.Vector2(window.innerWidth, window.innerHeight) }
+    }
+  })
+
+  smokeScene.add(new THREE.Mesh(smokeGeometry, smokeMaterial))
+  smokeStartTime = performance.now()
+  resizeSmoke()
+  window.addEventListener('resize', resizeSmoke, { passive: true })
+  renderSmoke()
+}
+
+const destroySmoke = () => {
+  if (smokeFrameId) {
+    cancelAnimationFrame(smokeFrameId)
+    smokeFrameId = null
+  }
+
+  window.removeEventListener('resize', resizeSmoke)
+
+  if (smokeGeometry) {
+    smokeGeometry.dispose()
+    smokeGeometry = null
+  }
+
+  if (smokeMaterial) {
+    smokeMaterial.dispose()
+    smokeMaterial = null
+  }
+
+  if (smokeRenderer) {
+    smokeRenderer.dispose()
+    smokeRenderer.forceContextLoss?.()
+    smokeRenderer = null
+  }
+
+  smokeScene = null
+  smokeCamera = null
+}
+
 const goToDashboard = () => {
   router.push('/dashboard')
+}
+
+const handleParallax = (e) => {
+  mouseX.value = (e.clientX / window.innerWidth - 0.5) * 20
+  mouseY.value = (e.clientY / window.innerHeight - 0.5) * 20
 }
 
 // 轮播状态
@@ -68,20 +317,45 @@ const playConsoleAnimation = async () => {
 }
 
 onMounted(() => {
+  window.addEventListener('mousemove', handleParallax, { passive: true })
+  initSmoke()
   startTimer()
   playConsoleAnimation()
 })
 
-onUnmounted(() => {
+onBeforeUnmount(() => {
+  window.removeEventListener('mousemove', handleParallax)
   if (timer) clearTimeout(timer)
+  destroySmoke()
 })
 </script>
 
 <template>
   <!-- 最外层容器 -->
-  <div class="min-h-screen relative z-0 overflow-hidden aurora-bg">
+  <div class="min-h-screen relative z-0 overflow-hidden bg-[#020205]">
     <!-- 科技网格背景 -->
-    <div class="absolute inset-0 bg-grid-pattern opacity-[0.15] z-[-1] pointer-events-none"></div>
+    <canvas ref="smokeCanvas" class="smoke-canvas absolute inset-0 z-[-4] pointer-events-none"></canvas>
+
+    <div
+      class="absolute inset-0 z-[-3] pointer-events-none mix-blend-screen overflow-hidden animate-orb-breathe"
+      :style="{ transform: `translate(${mouseX * -1.5}px, ${mouseY * -1.5}px)` }"
+    >
+      <div class="orb-wrapper-x orb-1-x"><div class="orb-inner-y orb-1-y bg-purple-600/40"></div></div>
+      <div class="orb-wrapper-x orb-2-x"><div class="orb-inner-y orb-2-y bg-cyan-500/30"></div></div>
+      <div class="orb-wrapper-x orb-3-x"><div class="orb-inner-y orb-3-y bg-fuchsia-600/30"></div></div>
+    </div>
+
+    <div
+      class="absolute inset-0 z-[-2] pointer-events-none parallax-stars"
+      :style="{ transform: `translate(${mouseX * -0.5}px, ${mouseY * -0.5}px)` }"
+    >
+      <div class="meteor meteor-1"></div>
+      <div class="meteor meteor-2"></div>
+      <div class="meteor meteor-3"></div>
+      <div class="meteor meteor-4"></div>
+    </div>
+
+    <div class="absolute inset-0 z-[-1] pointer-events-none" style="background: radial-gradient(circle at center, transparent 30%, #020205 120%);"></div>
 
     <!-- 导航栏 -->
     <nav class="relative z-10 flex justify-between items-center py-4 px-4 md:py-6 md:px-8 max-w-7xl mx-auto">
@@ -117,7 +391,7 @@ onUnmounted(() => {
         <!-- 左侧：标题与内容 -->
         <div class="text-left">
           <div class="mb-8">
-            <h1 class="font-black tracking-tight text-3xl md:text-5xl lg:text-6xl leading-tight flex flex-col items-start mb-6">
+            <h1 class="font-black tracking-tight text-3xl md:text-5xl lg:text-6xl leading-tight flex flex-col items-start mb-6 drop-shadow-[0_0_25px_rgba(168,85,247,0.4)]">
               <div class="text-white mb-2 overflow-hidden whitespace-nowrap animate-typewriter-1">重塑你的</div>
               <div class="flex items-center overflow-hidden whitespace-nowrap animate-typewriter-2 opacity-0">
                 <span class="bg-clip-text text-transparent bg-gradient-to-r from-purple-400 to-indigo-400 drop-shadow-lg">
@@ -136,7 +410,7 @@ onUnmounted(() => {
           <div class="flex flex-col md:flex-row gap-4 mb-6 md:mb-12 animate-blur-in-up animation-delay-400">
             <button 
               @click="goToDashboard"
-              class="bg-gradient-to-r from-purple-600 to-indigo-600 text-white px-6 py-3 md:px-10 md:py-4 rounded-xl font-semibold text-base md:text-lg shadow-[0_0_30px_rgba(168,85,247,0.4)] hover:shadow-[0_0_40px_rgba(168,85,247,0.6)] transition-all duration-300 hover:-translate-y-0.5"
+              class="bg-gradient-to-r from-cyan-500 to-purple-600 text-white px-6 py-3 md:px-10 md:py-4 rounded-xl font-semibold text-base md:text-lg border border-white/20 shadow-[0_0_40px_rgba(34,211,238,0.4)] hover:shadow-[0_0_60px_rgba(168,85,247,0.6)] transition-all duration-300 hover:-translate-y-0.5"
             >
               免费开始使用
             </button>
@@ -162,11 +436,20 @@ onUnmounted(() => {
         <div class="relative w-full min-h-[300px] md:min-h-[500px] lg:min-h-[650px] animate-fade-in-right animation-delay-500">
           <!-- 主设备外壳 -->
           <div class="absolute inset-0 z-10 animate-float" style="transform: perspective(1000px) rotateY(-5deg);">
-            <div class="w-full h-full flex flex-col bg-white/5 backdrop-blur-xl rounded-3xl border border-purple-500/30 shadow-[0_0_60px_rgba(139,92,246,0.25)] overflow-hidden">
+            <div class="relative w-full h-full flex flex-col bg-[#0a0f1a]/60 backdrop-blur-2xl rounded-3xl border border-cyan-400/30 shadow-[0_0_80px_rgba(34,211,238,0.15),inset_0_0_30px_rgba(168,85,247,0.25)] overflow-hidden">
+              <div class="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[120%] h-[120%] bg-gradient-to-br from-cyan-500/15 via-purple-500/15 to-transparent blur-[80px] z-[-1] pointer-events-none"></div>
+              <div class="absolute top-0 left-0 w-10 h-10 border-t-2 border-l-2 border-cyan-400 drop-shadow-[0_0_8px_rgba(34,211,238,0.8)] rounded-tl-3xl z-20 pointer-events-none"></div>
+              <div class="absolute top-0 right-0 w-10 h-10 border-t-2 border-r-2 border-cyan-400 drop-shadow-[0_0_8px_rgba(34,211,238,0.8)] rounded-tr-3xl z-20 pointer-events-none"></div>
+              <div class="absolute bottom-0 left-0 w-10 h-10 border-b-2 border-l-2 border-purple-400 drop-shadow-[0_0_8px_rgba(168,85,247,0.8)] rounded-bl-3xl z-20 pointer-events-none"></div>
+              <div class="absolute bottom-0 right-0 w-10 h-10 border-b-2 border-r-2 border-purple-400 drop-shadow-[0_0_8px_rgba(168,85,247,0.8)] rounded-br-3xl z-20 pointer-events-none"></div>
               <!-- 顶部边框（带摄像头和切换按钮） -->
-              <div class="h-10 bg-white/8 border-b border-white/10 flex items-center justify-between px-6">
+              <div class="h-10 bg-white/[0.02] border-b border-white/[0.05] flex items-center justify-between px-6">
                 <div class="flex items-center">
-                  <div class="w-2.5 h-2.5 rounded-full bg-black/80 shadow-inner mr-4"></div>
+                  <div class="flex items-center gap-1 mr-4">
+                    <span class="w-0.5 h-0.5 bg-cyan-400/80 shadow-[0_0_8px_rgba(34,211,238,0.8)] animate-terminal-dot"></span>
+                    <span class="w-0.5 h-0.5 bg-purple-400/80 shadow-[0_0_8px_rgba(192,132,252,0.8)] animate-terminal-dot animation-delay-300"></span>
+                    <span class="w-0.5 h-0.5 bg-cyan-300/70 shadow-[0_0_8px_rgba(103,232,249,0.7)] animate-terminal-dot animation-delay-500"></span>
+                  </div>
                 </div>
                 <!-- 加大的标签指示器 -->
                 <div class="flex items-center gap-3">
@@ -186,6 +469,7 @@ onUnmounted(() => {
               
               <!-- 中间屏幕区（16:9比例） -->
               <div class="flex-1 relative overflow-hidden" style="aspect-ratio: 16/9;">
+                <div class="absolute top-0 left-0 w-full h-[3px] bg-gradient-to-r from-transparent via-cyan-300 to-transparent shadow-[0_0_20px_rgba(34,211,238,1)] z-40 animate-hologram-scan pointer-events-none"></div>
                 <!-- 4图层丝滑轮播 -->
                 <div class="absolute inset-0 w-full h-full">
                   <!-- 图层0：AI 大脑 -->
@@ -232,7 +516,7 @@ onUnmounted(() => {
                     </div>
 
                     <!-- 环绕卫星卡片1：简历评分 -->
-                    <div class="glass-card hidden md:block absolute bottom-6 left-6 z-30 w-44 md:w-60 p-4 rounded-2xl bg-white/5 backdrop-blur-xl border border-purple-500/30 shadow-xl shadow-purple-500/10 transition-all duration-300 hover:shadow-[0_0_40px_rgba(168,85,247,0.3)] hover:-translate-y-2 animate-float-1">
+                    <div class="glass-card hidden md:block absolute bottom-6 left-6 z-30 w-44 md:w-60 p-4 rounded-2xl bg-[#0a0a15]/50 backdrop-blur-xl border border-white/10 shadow-[inset_0_1px_1px_rgba(255,255,255,0.1)] transition-all duration-300 hover:border-purple-400/40 hover:shadow-[inset_0_1px_1px_rgba(255,255,255,0.1),0_0_40px_rgba(168,85,247,0.3)] hover:-translate-y-2 animate-float-1">
                       <div class="flex items-center gap-3 mb-3">
                         <div class="w-10 h-10 rounded-full bg-gradient-to-r from-purple-500 to-indigo-500 flex items-center justify-center shadow-lg">
                           <span class="text-white font-bold text-lg">95</span>
@@ -248,7 +532,7 @@ onUnmounted(() => {
                     </div>
 
                     <!-- 环绕卫星卡片2：面试通过率 -->
-                    <div class="glass-card hidden md:block absolute top-6 right-6 z-30 w-44 md:w-60 p-4 rounded-2xl bg-white/5 backdrop-blur-xl border border-cyan-500/30 shadow-xl shadow-cyan-500/10 transition-all duration-300 hover:shadow-[0_0_40px_rgba(34,211,238,0.3)] hover:-translate-y-2 animate-float-2">
+                    <div class="glass-card hidden md:block absolute top-6 right-6 z-30 w-44 md:w-60 p-4 rounded-2xl bg-[#0a0a15]/50 backdrop-blur-xl border border-white/10 shadow-[inset_0_1px_1px_rgba(255,255,255,0.1)] transition-all duration-300 hover:border-cyan-400/40 hover:shadow-[inset_0_1px_1px_rgba(255,255,255,0.1),0_0_40px_rgba(34,211,238,0.3)] hover:-translate-y-2 animate-float-2">
                       <div class="flex items-center gap-3 mb-2">
                         <span class="text-green-400 font-bold text-xl">+42%</span>
                       </div>
@@ -257,7 +541,7 @@ onUnmounted(() => {
                     </div>
 
                     <!-- 环绕卫星卡片3：AI助手 -->
-                    <div class="glass-card hidden md:block absolute bottom-6 right-6 z-30 w-44 md:w-60 p-4 rounded-2xl bg-white/5 backdrop-blur-xl border border-pink-500/30 shadow-xl shadow-pink-500/10 transition-all duration-300 hover:shadow-[0_0_40px_rgba(236,72,153,0.3)] hover:-translate-y-2 animate-float-3 flex flex-col items-start">
+                    <div class="glass-card hidden md:block absolute bottom-6 right-6 z-30 w-44 md:w-60 p-4 rounded-2xl bg-[#0a0a15]/50 backdrop-blur-xl border border-white/10 shadow-[inset_0_1px_1px_rgba(255,255,255,0.1)] transition-all duration-300 hover:border-pink-400/40 hover:shadow-[inset_0_1px_1px_rgba(255,255,255,0.1),0_0_40px_rgba(236,72,153,0.3)] hover:-translate-y-2 animate-float-3 flex flex-col items-start">
                       <div class="flex items-center gap-3 mb-3 w-full">
                         <div class="w-10 h-10 rounded-full bg-gradient-to-r from-purple-500 to-pink-500 flex items-center justify-center shadow-lg">
                           <span class="text-white font-bold text-lg">AI</span>
@@ -276,9 +560,18 @@ onUnmounted(() => {
               </div>
               
               <!-- 底部边框（带下吧和Home键） -->
-              <div class="h-10 bg-white/8 border-t border-white/10 flex items-center justify-center">
-                <div class="w-16 h-1.5 rounded-full bg-white/30"></div>
+              <div class="h-10 bg-white/[0.02] border-t border-white/[0.05] flex items-center justify-center">
+                <div class="flex items-center gap-1.5 opacity-80">
+                  <span class="h-1 w-8 rounded-full bg-cyan-500/30 shadow-[0_0_8px_rgba(34,211,238,0.25)]"></span>
+                  <span class="h-1 w-3 rounded-full bg-cyan-500/30 shadow-[0_0_8px_rgba(34,211,238,0.25)]"></span>
+                  <span class="h-1 w-6 rounded-full bg-cyan-500/30 shadow-[0_0_8px_rgba(34,211,238,0.25)]"></span>
+                  <span class="h-1 w-2 rounded-full bg-purple-500/30 shadow-[0_0_8px_rgba(168,85,247,0.25)]"></span>
+                </div>
               </div>
+            </div>
+            <div class="absolute -bottom-16 left-1/2 -translate-x-1/2 w-[80%] h-16 flex flex-col items-center pointer-events-none z-0">
+              <div class="w-full h-[2px] bg-cyan-300 shadow-[0_0_30px_rgba(34,211,238,1)] rounded-[100%]"></div>
+              <div class="w-[70%] h-full bg-gradient-to-t from-cyan-400/40 to-transparent blur-xl"></div>
             </div>
           </div>
         </div>
@@ -289,6 +582,8 @@ onUnmounted(() => {
     <footer class="relative z-10 py-8 text-center text-xs text-gray-600">
       © 2026 Designed & Developed by Moyingjun 广东水利电力职业技术学院
     </footer>
+
+    <div class="absolute inset-0 z-[1] pointer-events-none opacity-[0.03] mix-blend-overlay" style="background-image: url('data:image/svg+xml,%3Csvg viewBox=%220 0 200 200%22 xmlns=%22http://www.w3.org/2000/svg%22%3E%3Cfilter id=%22noiseFilter%22%3E%3CfeTurbulence type=%22fractalNoise%22 baseFrequency=%220.65%22 numOctaves=%223%22 stitchTiles=%22stitch%22/%3E%3C/filter%3E%3Crect width=%22100%25%22 height=%22100%25%22 filter=%22url(%23noiseFilter)%22/%3E%3C/svg%3E');"></div>
   </div>
 </template>
 
@@ -297,31 +592,212 @@ onUnmounted(() => {
   transition: all 0.3s ease;
 }
 
-/* 极光流体呼吸背景 */
-.aurora-bg {
-  background-color: #030014;
-  background-image: 
-    radial-gradient(ellipse at 20% 0%, rgba(147, 51, 234, 0.25) 0%, transparent 50%),
-    radial-gradient(ellipse at 80% 80%, rgba(79, 70, 229, 0.25) 0%, transparent 50%),
-    radial-gradient(ellipse at 50% 50%, rgba(255, 255, 255, 0.05) 0%, transparent 60%);
-  background-size: 200% 200%;
-  animation: aurora-breathe 15s ease infinite alternate;
+.smoke-canvas {
+  width: 100%;
+  height: 100%;
+  display: block;
+  background: #020205;
 }
 
-@keyframes aurora-breathe {
-  0% { background-position: 0% 0%; }
-  50% { background-position: 100% 100%; opacity: 0.8; }
-  100% { background-position: 0% 100%; }
+.orb-wrapper-x {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: var(--orb-size);
+  height: var(--orb-size);
+  will-change: transform;
 }
 
-/* 科技感网格背景 */
-.bg-grid-pattern {
-  background-image: linear-gradient(to right, rgba(255,255,255,0.1) 1px, transparent 1px),
-                    linear-gradient(to bottom, rgba(255,255,255,0.1) 1px, transparent 1px);
-  background-size: 40px 40px;
+.orb-inner-y {
+  position: absolute;
+  inset: 0;
+  width: var(--orb-size);
+  height: var(--orb-size);
+  border-radius: 9999px;
+  filter: blur(var(--orb-blur));
+  will-change: transform;
+}
+
+.orb-1-x {
+  --orb-size: 600px;
+  --orb-blur: 120px;
+  animation: dvd-x-1 13s linear infinite alternate;
+}
+
+.orb-1-y {
+  animation: dvd-y-1 17s linear infinite alternate;
+}
+
+.orb-2-x {
+  --orb-size: 500px;
+  --orb-blur: 120px;
+  animation: dvd-x-2 15s linear infinite alternate-reverse;
+}
+
+.orb-2-y {
+  animation: dvd-y-2 19s linear infinite alternate;
+}
+
+.orb-3-x {
+  --orb-size: 700px;
+  --orb-blur: 150px;
+  animation: dvd-x-3 21s linear infinite alternate;
+}
+
+.orb-3-y {
+  animation: dvd-y-3 16s linear infinite alternate-reverse;
+}
+
+.parallax-stars {
+  opacity: 0.4;
+  mix-blend-mode: screen;
+  background-image:
+    radial-gradient(circle, rgba(255, 255, 255, 0.82) 0 1px, transparent 1.4px),
+    radial-gradient(circle, rgba(191, 219, 254, 0.72) 0 1.2px, transparent 1.7px),
+    radial-gradient(circle, rgba(232, 121, 249, 0.62) 0 1.5px, transparent 2px),
+    radial-gradient(circle, rgba(255, 255, 255, 0.55) 0 0.8px, transparent 1.2px);
+  background-position: 18px 22px, 78px 112px, 142px 64px, 210px 178px;
+  background-size: 180px 220px, 260px 300px, 340px 380px, 120px 160px;
+  animation: star-twinkle 6s ease-in-out infinite;
+}
+
+.meteor {
+  position: absolute;
+  width: 240px;
+  height: 1px;
+  border-radius: 9999px;
+  background: linear-gradient(90deg, rgba(255,255,255,0) 0%, rgba(34,211,238,0.2) 60%, rgba(255,255,255,1) 100%);
+  box-shadow: 0 0 14px rgba(125, 211, 252, 0.75), 0 0 32px rgba(168, 85, 247, 0.25);
+  transform: rotate(-28deg) translate3d(0, 0, 0);
+  opacity: 0;
+  will-change: transform, opacity;
+}
+
+.meteor::before {
+  content: '';
+  position: absolute;
+  right: -2px;
+  top: 50%;
+  width: 4px;
+  height: 4px;
+  border-radius: 9999px;
+  background: rgba(255, 255, 255, 0.95);
+  box-shadow: 0 0 15px 3px rgba(34,211,238,0.8);
+  transform: translateY(-50%);
+}
+
+.meteor-1 {
+  top: 14%;
+  left: -18%;
+  animation: meteor-shoot 7.5s ease-in-out infinite;
+}
+
+.meteor-2 {
+  top: 36%;
+  left: -24%;
+  width: 190px;
+  animation: meteor-shoot 10s ease-in-out 2.2s infinite;
+}
+
+.meteor-3 {
+  top: 62%;
+  left: -20%;
+  width: 280px;
+  animation: meteor-shoot 12s ease-in-out 4.8s infinite;
+}
+
+.meteor-4 {
+  top: 24%;
+  left: -26%;
+  width: 165px;
+  animation: meteor-shoot 9s ease-in-out 6.2s infinite;
+}
+
+.animate-orb-breathe {
+  animation: orb-breathe 8s ease-in-out infinite;
+  transform-origin: center;
+  will-change: transform, scale, filter, opacity;
+}
+
+@keyframes orb-breathe {
+  0%, 100% { scale: 1; filter: hue-rotate(0deg); opacity: 0.8; }
+  50% { scale: 1.1; filter: hue-rotate(15deg); opacity: 1; }
+}
+
+@keyframes dvd-x-1 {
+  0% { transform: translate3d(-180px, 0, 0); }
+  100% { transform: translate3d(calc(100vw - 420px), 0, 0); }
+}
+
+@keyframes dvd-y-1 {
+  0% { transform: translate3d(0, -170px, 0); }
+  100% { transform: translate3d(0, calc(100vh - 430px), 0); }
+}
+
+@keyframes dvd-x-2 {
+  0% { transform: translate3d(-120px, 0, 0); }
+  100% { transform: translate3d(calc(100vw - 380px), 0, 0); }
+}
+
+@keyframes dvd-y-2 {
+  0% { transform: translate3d(0, 10vh, 0); }
+  100% { transform: translate3d(0, calc(100vh - 360px), 0); }
+}
+
+@keyframes dvd-x-3 {
+  0% { transform: translate3d(-240px, 0, 0); }
+  100% { transform: translate3d(calc(100vw - 460px), 0, 0); }
+}
+
+@keyframes dvd-y-3 {
+  0% { transform: translate3d(0, -220px, 0); }
+  100% { transform: translate3d(0, calc(100vh - 480px), 0); }
+}
+
+@keyframes star-twinkle {
+  0%, 100% { opacity: 0.4; }
+  50% { opacity: 0.8; }
+}
+
+@keyframes meteor-shoot {
+  0%, 72% {
+    opacity: 0;
+    transform: rotate(-28deg) translate3d(0, 0, 0);
+  }
+  76% {
+    opacity: 1;
+  }
+  90% {
+    opacity: 0.9;
+  }
+  100% {
+    opacity: 0;
+    transform: rotate(-28deg) translate3d(145vw, 78vh, 0);
+  }
 }
 
 /* 电影级模糊显现入场动画 */
+/* 修复后的全息扫描线动画 */
+@keyframes hologram-scan {
+  0% { top: 0%; opacity: 0; }
+  10% { opacity: 1; }
+  90% { opacity: 1; }
+  100% { top: 100%; opacity: 0; }
+}
+
+.animate-hologram-scan {
+  animation: hologram-scan 10s linear infinite;
+}
+
+@keyframes terminal-dot-pulse {
+  0%, 100% { opacity: 0.25; transform: scale(0.8); }
+  50% { opacity: 1; transform: scale(1.6); }
+}
+
+.animate-terminal-dot {
+  animation: terminal-dot-pulse 1.6s ease-in-out infinite;
+}
+
 @keyframes blurInUp {
   from { opacity: 0; transform: translateY(30px); filter: blur(10px); }
   to { opacity: 1; transform: translateY(0); filter: blur(0); }

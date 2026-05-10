@@ -1,7 +1,7 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { ArrowLeft, Bot, Bookmark, Compass, FileText, Loader2, Search, Star, Trash2 } from 'lucide-vue-next'
+import { ArrowLeft, Bot, Bookmark, Compass, FileText, Loader2, Search, Star, Trash2, X } from 'lucide-vue-next'
 
 const router = useRouter()
 const isLocalDev = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
@@ -11,6 +11,8 @@ const records = ref([])
 const isLoading = ref(true)
 const searchQuery = ref('')
 const busyRecordIds = ref(new Set())
+const selectedChat = ref(null)
+const showChatModal = ref(false)
 
 const loadSavedChats = async () => {
   isLoading.value = true
@@ -58,11 +60,50 @@ const getCategoryColor = (cat) => {
   return 'text-emerald-400 border-emerald-500/30 bg-emerald-500/5'
 }
 
-const goToRecord = (record) => {
-  if (record.category === 'resume_diagnosis') router.push(`/resume-diagnosis?id=${record.id}`)
-  else if (record.category?.startsWith?.('interview')) router.push(`/interview?id=${record.id}`)
-  else if (record.category === 'career_planning') router.push(`/career-planning?id=${record.id}`)
-  else router.push('/dashboard')
+const normalizeChatHistory = (record) => {
+  let history = record?.chat_history
+
+  if (typeof history === 'string') {
+    try {
+      history = JSON.parse(history)
+    } catch {
+      history = []
+    }
+  }
+
+  if (Array.isArray(history) && history.length > 0) {
+    return history.map((message, index) => ({
+      id: message.id || `${record.id}-history-${index}`,
+      role: message.role || message.type || message.sender || 'assistant',
+      content: message.content || message.text || message.message || ''
+    })).filter((message) => String(message.content || '').trim())
+  }
+
+  const fallback = []
+  if (record?.user_input) {
+    fallback.push({ id: `${record.id}-user`, role: 'user', content: record.user_input })
+  }
+  if (record?.ai_result) {
+    fallback.push({ id: `${record.id}-assistant`, role: 'assistant', content: record.ai_result })
+  }
+  return fallback
+}
+
+const selectedChatMessages = computed(() => normalizeChatHistory(selectedChat.value))
+
+const isUserMessage = (message) => {
+  const role = String(message.role || '').toLowerCase()
+  return role === 'user' || role === 'human'
+}
+
+const openChatModal = (record) => {
+  selectedChat.value = record
+  showChatModal.value = true
+}
+
+const closeChatModal = () => {
+  showChatModal.value = false
+  selectedChat.value = null
 }
 
 const markBusy = (recordId, busy) => {
@@ -149,7 +190,7 @@ onMounted(loadSavedChats)
             <div
               v-for="record in filteredRecords"
               :key="record.id"
-              @click="goToRecord(record)"
+              @click="openChatModal(record)"
               class="group relative overflow-hidden bg-[#151520]/60 backdrop-blur-2xl border border-white/5 rounded-2xl p-5 pb-14 cursor-pointer transition-all duration-300 hover:-translate-y-1 hover:border-amber-400/30 hover:shadow-[0_0_20px_rgba(251,191,36,0.12)]"
             >
               <div class="flex items-center justify-between mb-3">
@@ -184,6 +225,61 @@ onMounted(loadSavedChats)
         </div>
       </div>
     </div>
+
+    <Teleport to="body">
+      <transition name="modal-fade">
+        <div
+          v-if="showChatModal && selectedChat"
+          class="fixed inset-0 z-[120] flex items-center justify-center px-4 bg-black/75 backdrop-blur-sm"
+          @click.self="closeChatModal"
+        >
+          <div class="w-full max-w-3xl max-h-[80vh] overflow-y-auto bg-gray-900 border border-cyan-500/30 rounded-2xl shadow-[0_0_40px_rgba(34,211,238,0.16)]">
+            <div class="sticky top-0 z-10 flex items-start justify-between gap-4 border-b border-cyan-500/20 bg-gray-900/95 backdrop-blur px-5 py-4">
+              <div class="min-w-0">
+                <div class="flex items-center gap-2 mb-2">
+                  <component :is="getCategoryIcon(selectedChat.category)" class="w-4 h-4" :class="getCategoryColor(selectedChat.category).split(' ')[0]" />
+                  <span class="text-xs px-2 py-0.5 rounded-full border" :class="getCategoryColor(selectedChat.category)">{{ getCategoryLabel(selectedChat.category) }}</span>
+                </div>
+                <h2 class="text-lg font-semibold text-white truncate">{{ selectedChat.user_input || '保存的对话' }}</h2>
+                <p class="text-xs text-gray-500 mt-1">{{ selectedChat.created_at }}</p>
+              </div>
+              <button
+                @click="closeChatModal"
+                class="w-10 h-10 rounded-xl border border-cyan-400/40 bg-cyan-500/10 text-cyan-200 hover:bg-cyan-500/20 hover:text-white hover:shadow-[0_0_18px_rgba(34,211,238,0.22)] transition-all duration-300 flex items-center justify-center flex-shrink-0"
+                title="关闭"
+              >
+                <X class="w-5 h-5" />
+              </button>
+            </div>
+
+            <div class="p-5 space-y-4">
+              <div v-if="selectedChatMessages.length === 0" class="rounded-xl border border-white/10 bg-black/20 p-6 text-center text-sm text-gray-500">
+                暂无可展示的对话历史
+              </div>
+
+              <div
+                v-for="message in selectedChatMessages"
+                :key="message.id"
+                class="flex"
+                :class="isUserMessage(message) ? 'justify-end' : 'justify-start'"
+              >
+                <div
+                  class="max-w-[78%] rounded-2xl px-4 py-3 text-sm leading-relaxed whitespace-pre-wrap border"
+                  :class="isUserMessage(message)
+                    ? 'bg-cyan-500/20 border-cyan-400/30 text-cyan-50 rounded-tr-sm shadow-[0_0_18px_rgba(34,211,238,0.08)]'
+                    : 'bg-black/35 border-white/10 text-gray-200 rounded-tl-sm'"
+                >
+                  <div class="mb-1 text-[10px] font-semibold uppercase tracking-wider" :class="isUserMessage(message) ? 'text-cyan-200' : 'text-emerald-300'">
+                    {{ isUserMessage(message) ? 'User' : 'AI' }}
+                  </div>
+                  {{ message.content }}
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </transition>
+    </Teleport>
   </div>
 </template>
 
@@ -192,4 +288,8 @@ onMounted(loadSavedChats)
 .animate-pulse-slower { animation: pulse-slow 8s ease-in-out infinite; animation-delay: -4s; }
 @keyframes pulse-slow { 0%, 100% { transform: scale(1); opacity: 0.5; } 50% { transform: scale(1.1); opacity: 1; } }
 .line-clamp-2 { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.modal-fade-enter-active,
+.modal-fade-leave-active { transition: opacity 0.2s ease; }
+.modal-fade-enter-from,
+.modal-fade-leave-to { opacity: 0; }
 </style>

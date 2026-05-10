@@ -7,74 +7,13 @@ import QrcodeVue from 'qrcode.vue'
 import { parseFile } from '@/utils/ocrHelper.js'
 import { marked } from 'marked'
 
-import { Bot, Bookmark, FileText, MessageSquare, Folder, Settings, Clock, Puzzle, Plus, Search, Paperclip, MoreHorizontal, ChevronDown, ChevronLeft, ChevronRight, Upload, CheckCircle, X, Loader2, History, Send, Sparkles, Mic, GraduationCap, Star, Trash2 }
+import { Bot, Bookmark, FileText, MessageSquare, Folder, Settings, Clock, Puzzle, Plus, Search, Paperclip, MoreHorizontal, ChevronDown, ChevronLeft, ChevronRight, Upload, CheckCircle, X, Loader2, Send, Sparkles, Mic, GraduationCap, Trash2, Hash, Database }
   from 'lucide-vue-next'
 
 const router = useRouter()
 
 const isLocalDev = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
 const API_BASE_URL = isLocalDev ? 'http://127.0.0.1:8000/api' : '/api'
-
-const historyRecords = ref([])
-
-const loadHistory = async () => {
-  try {
-    const res = await fetch(`${API_BASE_URL.replace('/api', '')}/api/history?limit=2`)
-    if (res.ok) {
-      const data = await res.json()
-      historyRecords.value = data.records || []
-    }
-  } catch {}
-}
-
-const getCategoryLabel = (cat) => {
-  if (cat === 'resume_diagnosis') return '简历诊断'
-  if (cat === 'interview_beginner') return '温和面试'
-  if (cat === 'interview_standard') return '标准面试'
-  if (cat === 'interview_p8') return 'P8压力面'
-  if (cat.startsWith('interview')) return '面试评估'
-  if (cat === 'career_planning') return '职业规划'
-  if (cat === 'general_chat') return '职业助手'
-  return cat
-}
-
-const getCategoryColor = (cat) => {
-  if (cat === 'resume_diagnosis') return 'text-purple-400 border-purple-500/30 bg-purple-500/5'
-  if (cat === 'interview_beginner') return 'text-emerald-400 border-emerald-500/30 bg-emerald-500/5'
-  if (cat === 'interview_standard') return 'text-blue-400 border-blue-500/30 bg-blue-500/5'
-  if (cat === 'interview_p8') return 'text-pink-400 border-pink-500/30 bg-pink-500/5'
-  if (cat.startsWith('interview')) return 'text-pink-400 border-pink-500/30 bg-pink-500/5'
-  if (cat === 'career_planning') return 'text-cyan-400 border-cyan-500/30 bg-cyan-500/5'
-  if (cat === 'general_chat') return 'text-cyan-400 border-cyan-500/30 bg-cyan-500/5'
-  return 'text-gray-400 border-gray-500/30 bg-gray-500/5'
-}
-
-const getDifficultyBadge = (record) => {
-  if (!record.extra_data) return null
-  try {
-    const extra = typeof record.extra_data === 'string' ? JSON.parse(record.extra_data) : record.extra_data
-    return extra.difficulty || null
-  } catch {
-    return null
-  }
-}
-
-const getDifficultyBadgeConfig = (difficulty) => {
-  if (difficulty === 'beginner') {
-    return { label: '🌱 温和鼓励', class: 'text-emerald-400 border-emerald-500/30 bg-emerald-500/10' }
-  } else if (difficulty === 'standard') {
-    return { label: '💼 标准专业', class: 'text-blue-400 border-blue-500/30 bg-blue-500/10' }
-  } else if (difficulty === 'p8') {
-    return { label: '🔥 P8 压力面', class: 'text-pink-400 border-pink-500/30 bg-pink-500/10' }
-  }
-  return null
-}
-
-const goToHistory = (record) => {
-  if (record.category === 'resume_diagnosis') router.push(`/resume-diagnosis?id=${record.id}`)
-  else if (record.category === 'interview_evaluate') router.push(`/interview?id=${record.id}`)
-  else if (record.category === 'career_planning') router.push(`/career-planning?id=${record.id}`)
-}
 
 // 本地存储用户名
 const userName = ref(localStorage.getItem('candidate_name') || '')
@@ -107,8 +46,8 @@ const toastMessage = ref('')
 const showToast = ref(false)
 let toastTimer = null
 
-const showComingSoonToast = () => {
-  toastMessage.value = '工程师正在玩命开发中，敬请期待！🚀'
+const showComingSoonToast = (message = '工程师正在玩命开发中，敬请期待！🚀') => {
+  toastMessage.value = message
   showToast.value = true
   if (toastTimer) clearTimeout(toastTimer)
   toastTimer = setTimeout(() => {
@@ -509,6 +448,7 @@ const menuItems = [
       { icon: 'file-text', label: '功能模板' },
       { icon: 'message-square', label: '保存的对话' },
       { icon: 'folder', label: '文件管理' },
+      { icon: 'database', label: '知识库管理' },
       { icon: 'clock', label: '历史记录' },
       { icon: 'plugin', label: '插件集成' },
       { icon: 'settings', label: '系统设置' }
@@ -542,6 +482,11 @@ const handleSidebarItemClick = (item, menu) => {
     return
   }
 
+  if (item.label === '知识库管理') {
+    showComingSoonToast('知识库管理正在开发中')
+    return
+  }
+
   if (item.label === '功能模板' || item.label === '插件集成' || item.label === '系统设置' || menu.category === '我的项目') {
     showComingSoonToast()
     return
@@ -550,51 +495,30 @@ const handleSidebarItemClick = (item, menu) => {
   showComingSoonToast()
 }
 
-const toggleSaveRecord = async (record) => {
-  const nextSaved = !record.is_saved
-  try {
-    const response = await fetch(API_BASE_URL + '/history/' + record.id + '/save', {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ is_saved: nextSaved })
-    })
-    if (!response.ok) throw new Error('HTTP ' + response.status)
-    historyRecords.value = historyRecords.value.map((item) =>
-      item.id === record.id ? { ...item, is_saved: nextSaved } : item
-    )
-  } catch (error) {
-    console.error('保存状态切换失败', error)
-  }
-}
-
-const deleteHistoryRecord = async (record) => {
-  try {
-    const response = await fetch(API_BASE_URL + '/history/' + record.id, { method: 'DELETE' })
-    if (!response.ok) throw new Error('HTTP ' + response.status)
-    historyRecords.value = historyRecords.value.filter((item) => item.id !== record.id)
-  } catch (error) {
-    console.error('删除历史记录失败', error)
-  }
-}
-
 // 图标映射
 const iconMap = {
   'file-text': FileText,
   'message-square': MessageSquare,
   'folder': Folder,
   'clock': Clock,
+  'database': Database,
   'plugin': Puzzle,
   'settings': Settings,
   'bot': Bot
 }
 
 const chatMessages = ref([])
+const sessionTOC = ref([])
 const userChatInput = ref('')
 const isChatLoading = ref(false)
 const uploadedGlobalResume = ref('')
 const chatContainerRef = ref(null)
 const currentRecordId = ref(null)
 const showNewChatModal = ref(false)
+
+const scrollToMessage = (id) => {
+  document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+}
 
 const scrollChatToBottom = () => {
   nextTick(() => {
@@ -608,6 +532,8 @@ const sendGeneralChatMessage = async () => {
   if (!userChatInput.value.trim() || isChatLoading.value) return
 
   const userMessage = userChatInput.value.trim()
+  const msgId = 'msg-' + Date.now()
+  const shortTitle = userMessage.length > 12 ? userMessage.slice(0, 12) + '...' : userMessage
   const aiMessage = {
     role: 'ai',
     content: '',
@@ -617,10 +543,12 @@ const sendGeneralChatMessage = async () => {
   }
 
   chatMessages.value.push({
+    id: msgId,
     role: 'user',
     content: userMessage,
     timestamp: new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
   })
+  sessionTOC.value.push({ id: msgId, title: shortTitle })
   chatMessages.value.push(aiMessage)
   userChatInput.value = ''
   isChatLoading.value = true
@@ -722,6 +650,7 @@ const sendGeneralChatMessage = async () => {
 
 const forceStartNew = () => {
   chatMessages.value = []
+  sessionTOC.value = []
   userChatInput.value = ''
   isChatLoading.value = false
   currentRecordId.value = null
@@ -754,8 +683,7 @@ const saveAndStartNew = async () => {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ is_saved: true })
     })
-    if (!response.ok) throw new Error('HTTP ' + response.status)
-    await loadHistory()
+    if (!response.ok) throw new Error('HTTP ' + response.status)
   } catch (error) {
     console.error('保存当前对话失败', error)
   } finally {
@@ -784,9 +712,9 @@ const handleChatEnter = (event) => {
 }
 
 const chatPlaceholder = computed(() => {
-  if (knowledgeId.value) return '基于你上传的文件提问...'
+  if (knowledgeId.value) return '支持上传简历/JD，或上传 PDF 作为知识库挂载'
   if (uploadedGlobalResume.value) return '请输入关于此文件的问题...'
-  return placeholderText.value || '系统预设已就绪，问专业、志愿、就业都可以...'
+  return placeholderText.value || '支持上传简历/JD，或上传 PDF 作为知识库挂载'
 })
 
 const systemCarouselTexts = [
@@ -839,8 +767,7 @@ onMounted(() => {
   startAutoPlay()
   window.addEventListener('mousemove', handleMouseMove)
   window.addEventListener('storage', handleStorageChange)
-  playConsoleAnimation()
-  loadHistory()
+  playConsoleAnimation()
 })
 
 onUnmounted(() => {
@@ -951,9 +878,9 @@ onUnmounted(() => {
 
           <div class="navigation p-4 flex-1">
             <div v-for="menu in menuItems" :key="menu.category" class="mb-6">
-              <h2 class="text-xs text-gray-500 uppercase mb-2 font-semibold text-left pl-2">
+              <h3 class="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3 text-left pl-2">
                 {{ menu.category }}
-              </h2>
+              </h3>
               <div class="space-y-1">
                 <div
                   v-for="(item, index) in menu.items"
@@ -968,18 +895,21 @@ onUnmounted(() => {
               </div>
             </div>
 
-            <div v-if="chatMessages.length > 0" class="history mt-8">
-              <h2 class="text-xs text-gray-500 uppercase mb-2 font-semibold text-left pl-2">
-                最近
-              </h2>
+            <div v-if="sessionTOC.length > 0" class="history mt-8">
+              <h3 class="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3 text-left pl-2">
+                &#24403;&#21069;&#23545;&#35805;&#22823;&#32434;
+              </h3>
               <div class="space-y-1">
-                <div
-                  v-for="(message, index) in chatMessages"
-                  :key="index"
-                  class="history-item p-2 rounded-lg hover:bg-white/10 transition-all duration-300 cursor-pointer hover:translate-x-2"
+                <button
+                  v-for="item in sessionTOC"
+                  :key="item.id"
+                  type="button"
+                  class="history-item w-full flex items-center gap-2 p-2 rounded-lg text-gray-400 hover:text-cyan-400 hover:bg-cyan-500/10 transition-all duration-300 cursor-pointer hover:translate-x-2"
+                  @click="scrollToMessage(item.id)"
                 >
-                  <p class="text-sm truncate text-left">AI分析 - {{ new Date().toLocaleDateString() }}</p>
-                </div>
+                  <Hash class="w-3.5 h-3.5 flex-shrink-0" />
+                  <span class="text-sm truncate text-left">{{ item.title }}</span>
+                </button>
               </div>
             </div>
 
@@ -1210,62 +1140,8 @@ onUnmounted(() => {
                 </div>
               </div>
 
-              <!-- 历史记录区域 -->
-              <div v-if="historyRecords.length > 0" class="mb-8 animate-fade-in-up animation-delay-500">
-                <div class="mb-4 flex items-center justify-between">
-                  <h2 class="text-lg font-semibold text-gray-200 text-left flex items-center gap-2">
-                    <History class="w-5 h-5 text-purple-400" />
-                    历史记录
-                  </h2>
-                  <button
-                    @click="router.push('/history-archive')"
-                    class="text-xs text-purple-400 hover:text-purple-300 transition-colors duration-300 flex items-center gap-1"
-                  >
-                    查看全部
-                    <ChevronRight class="w-4 h-4" />
-                  </button>
-                </div>
-                <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
-                  <div
-                    v-for="record in historyRecords"
-                    :key="record.id"
-                    class="relative overflow-hidden bg-[#151520]/60 backdrop-blur-2xl border border-white/5 rounded-2xl p-4 pb-12 cursor-pointer transition-all duration-300 group hover:-translate-y-1 hover:border-purple-500/30 hover:shadow-[0_0_20px_rgba(168,85,247,0.1)] text-left"
-                    @click="goToHistory(record)"
-                  >
-                    <div class="flex items-center justify-between mb-2">
-                      <div class="flex items-center gap-2">
-                        <span class="text-xs px-2 py-0.5 rounded-full border" :class="getCategoryColor(record.category)">{{ getCategoryLabel(record.category) }}</span>
-                        <span v-if="getDifficultyBadge(record) && getDifficultyBadgeConfig(getDifficultyBadge(record))" class="text-[10px] px-1.5 py-0.5 rounded-full border" :class="getDifficultyBadgeConfig(getDifficultyBadge(record)).class">{{ getDifficultyBadgeConfig(getDifficultyBadge(record)).label }}</span>
-                      </div>
-                      <span class="text-[10px] text-gray-600">{{ record.created_at }}</span>
-                    </div>
-                    <p class="text-xs text-gray-400 truncate">{{ record.user_input }}</p>
-                    <p v-if="record.ai_result" class="text-[11px] text-gray-600 truncate mt-1">{{ record.ai_result.substring(0, 60) }}...</p>
-                    <div class="absolute right-3 bottom-3 flex items-center gap-2">
-                      <button
-                        @click.stop="toggleSaveRecord(record)"
-                        class="w-8 h-8 rounded-full border backdrop-blur flex items-center justify-center transition-all duration-300"
-                        :class="record.is_saved
-                          ? 'border-amber-300/50 bg-amber-400/10 text-amber-300 shadow-[0_0_14px_rgba(251,191,36,0.2)]'
-                          : 'border-white/10 bg-black/20 text-gray-500 hover:text-amber-300 hover:border-amber-300/40 hover:bg-amber-400/10'"
-                        title="保存/取消保存"
-                      >
-                        <Star class="w-3.5 h-3.5" :fill="record.is_saved ? 'currentColor' : 'none'" />
-                      </button>
-                      <button
-                        @click.stop="deleteHistoryRecord(record)"
-                        class="w-8 h-8 rounded-full border border-white/10 bg-black/20 text-gray-500 backdrop-blur flex items-center justify-center hover:text-red-300 hover:border-red-400/40 hover:bg-red-500/10 transition-all duration-300"
-                        title="删除记录"
-                      >
-                        <Trash2 class="w-3.5 h-3.5" />
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              </div>
-
               <div class="chat-messages mb-6 space-y-4 animate-[fadeInUp_0.5s_ease-out_0.3s_both]" v-if="chatMessages.length > 0" v-auto-animate>
-                <div v-for="(message, index) in chatMessages" :key="index" class="chat-message">
+                <div v-for="(message, index) in chatMessages" :key="message.id || index" :id="message.id" class="chat-message scroll-mt-4">
                   <div v-if="message.role === 'user'" class="flex justify-end">
                     <div class="max-w-[80%] bg-gradient-to-r from-fuchsia-500/20 to-purple-500/20 border border-fuchsia-500/30 rounded-xl p-3 text-right">
                       <p class="text-sm text-gray-200">{{ message.content }}</p>
@@ -1320,7 +1196,7 @@ onUnmounted(() => {
               <div v-if="knowledgeId" class="mb-3 flex items-center gap-2">
                 <div class="personal-file-tag rounded-full px-3 py-1 flex items-center gap-2">
                   <FileText class="w-3.5 h-3.5 text-gray-300" />
-                  <span class="text-xs text-gray-200 truncate max-w-[260px]">[个人文件已挂载] {{ knowledgeFileName }}</span>
+                  <span class="text-xs text-gray-200 truncate max-w-[300px]">[临时知识库已挂载: {{ knowledgeFileName }}]</span>
                   <button
                     @click="clearKnowledge"
                     class="text-gray-400 hover:text-white transition-colors ml-1"
@@ -1364,7 +1240,7 @@ onUnmounted(() => {
 
               <div class="flex items-center gap-2 mt-2">
                 <Sparkles class="w-3 h-3 text-cyan-500/50" />
-                <span class="text-[10px] text-gray-600">AI 职场领航员 · 附件仅作本轮对话上下文</span>
+                <span class="text-[10px] text-gray-500">支持上传简历/JD，或上传 PDF 作为知识库挂载</span>
               </div>
             </div>
           </div>
