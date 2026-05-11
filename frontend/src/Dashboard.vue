@@ -7,13 +7,74 @@ import QrcodeVue from 'qrcode.vue'
 import { parseFile } from '@/utils/ocrHelper.js'
 import { marked } from 'marked'
 
-import { Bot, Bookmark, FileText, MessageSquare, Folder, Settings, Clock, Puzzle, Plus, Search, Paperclip, MoreHorizontal, ChevronDown, ChevronLeft, ChevronRight, Upload, CheckCircle, X, Loader2, Send, Sparkles, Mic, GraduationCap, Trash2, Hash, Database }
+import { Bot, Bookmark, FileText, MessageSquare, Folder, Settings, Clock, Puzzle, Plus, Search, Paperclip, MoreHorizontal, ChevronDown, ChevronLeft, ChevronRight, Upload, CheckCircle, X, Loader2, History, Send, Sparkles, Mic, GraduationCap, Star, Trash2 }
   from 'lucide-vue-next'
 
 const router = useRouter()
 
 const isLocalDev = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
 const API_BASE_URL = isLocalDev ? 'http://127.0.0.1:8000/api' : '/api'
+
+const historyRecords = ref([])
+
+const loadHistory = async () => {
+  try {
+    const res = await fetch(`${API_BASE_URL.replace('/api', '')}/api/history?limit=2`)
+    if (res.ok) {
+      const data = await res.json()
+      historyRecords.value = data.records || []
+    }
+  } catch {}
+}
+
+const getCategoryLabel = (cat) => {
+  if (cat === 'resume_diagnosis') return '简历诊断'
+  if (cat === 'interview_beginner') return '温和面试'
+  if (cat === 'interview_standard') return '标准面试'
+  if (cat === 'interview_p8') return 'P8压力面'
+  if (cat.startsWith('interview')) return '面试评估'
+  if (cat === 'career_planning') return '职业规划'
+  if (cat === 'general_chat') return '职业助手'
+  return cat
+}
+
+const getCategoryColor = (cat) => {
+  if (cat === 'resume_diagnosis') return 'text-purple-400 border-purple-500/30 bg-purple-500/5'
+  if (cat === 'interview_beginner') return 'text-emerald-400 border-emerald-500/30 bg-emerald-500/5'
+  if (cat === 'interview_standard') return 'text-blue-400 border-blue-500/30 bg-blue-500/5'
+  if (cat === 'interview_p8') return 'text-pink-400 border-pink-500/30 bg-pink-500/5'
+  if (cat.startsWith('interview')) return 'text-pink-400 border-pink-500/30 bg-pink-500/5'
+  if (cat === 'career_planning') return 'text-cyan-400 border-cyan-500/30 bg-cyan-500/5'
+  if (cat === 'general_chat') return 'text-cyan-400 border-cyan-500/30 bg-cyan-500/5'
+  return 'text-gray-400 border-gray-500/30 bg-gray-500/5'
+}
+
+const getDifficultyBadge = (record) => {
+  if (!record.extra_data) return null
+  try {
+    const extra = typeof record.extra_data === 'string' ? JSON.parse(record.extra_data) : record.extra_data
+    return extra.difficulty || null
+  } catch {
+    return null
+  }
+}
+
+const getDifficultyBadgeConfig = (difficulty) => {
+  if (difficulty === 'beginner') {
+    return { label: '🌱 温和鼓励', class: 'text-emerald-400 border-emerald-500/30 bg-emerald-500/10' }
+  } else if (difficulty === 'standard') {
+    return { label: '💼 标准专业', class: 'text-blue-400 border-blue-500/30 bg-blue-500/10' }
+  } else if (difficulty === 'p8') {
+    return { label: '🔥 P8 压力面', class: 'text-pink-400 border-pink-500/30 bg-pink-500/10' }
+  }
+  return null
+}
+
+const goToHistory = (record) => {
+  if (record.category === 'resume_diagnosis') router.push(`/resume-diagnosis?id=${record.id}`)
+  else if (record.category === 'interview_evaluate') router.push(`/interview?id=${record.id}`)
+  else if (record.category === 'career_planning') router.push(`/career-planning?id=${record.id}`)
+}
 
 // 本地存储用户名
 const userName = ref(localStorage.getItem('candidate_name') || '')
@@ -46,8 +107,8 @@ const toastMessage = ref('')
 const showToast = ref(false)
 let toastTimer = null
 
-const showComingSoonToast = (message = '工程师正在玩命开发中，敬请期待！🚀') => {
-  toastMessage.value = message
+const showComingSoonToast = () => {
+  toastMessage.value = '工程师正在玩命开发中，敬请期待！🚀'
   showToast.value = true
   if (toastTimer) clearTimeout(toastTimer)
   toastTimer = setTimeout(() => {
@@ -448,7 +509,6 @@ const menuItems = [
       { icon: 'file-text', label: '功能模板' },
       { icon: 'message-square', label: '保存的对话' },
       { icon: 'folder', label: '文件管理' },
-      { icon: 'database', label: '知识库管理' },
       { icon: 'clock', label: '历史记录' },
       { icon: 'plugin', label: '插件集成' },
       { icon: 'settings', label: '系统设置' }
@@ -482,11 +542,6 @@ const handleSidebarItemClick = (item, menu) => {
     return
   }
 
-  if (item.label === '知识库管理') {
-    showComingSoonToast('知识库管理正在开发中')
-    return
-  }
-
   if (item.label === '功能模板' || item.label === '插件集成' || item.label === '系统设置' || menu.category === '我的项目') {
     showComingSoonToast()
     return
@@ -495,30 +550,51 @@ const handleSidebarItemClick = (item, menu) => {
   showComingSoonToast()
 }
 
+const toggleSaveRecord = async (record) => {
+  const nextSaved = !record.is_saved
+  try {
+    const response = await fetch(API_BASE_URL + '/history/' + record.id + '/save', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ is_saved: nextSaved })
+    })
+    if (!response.ok) throw new Error('HTTP ' + response.status)
+    historyRecords.value = historyRecords.value.map((item) =>
+      item.id === record.id ? { ...item, is_saved: nextSaved } : item
+    )
+  } catch (error) {
+    console.error('保存状态切换失败', error)
+  }
+}
+
+const deleteHistoryRecord = async (record) => {
+  try {
+    const response = await fetch(API_BASE_URL + '/history/' + record.id, { method: 'DELETE' })
+    if (!response.ok) throw new Error('HTTP ' + response.status)
+    historyRecords.value = historyRecords.value.filter((item) => item.id !== record.id)
+  } catch (error) {
+    console.error('删除历史记录失败', error)
+  }
+}
+
 // 图标映射
 const iconMap = {
   'file-text': FileText,
   'message-square': MessageSquare,
   'folder': Folder,
   'clock': Clock,
-  'database': Database,
   'plugin': Puzzle,
   'settings': Settings,
   'bot': Bot
 }
 
 const chatMessages = ref([])
-const sessionTOC = ref([])
 const userChatInput = ref('')
 const isChatLoading = ref(false)
 const uploadedGlobalResume = ref('')
 const chatContainerRef = ref(null)
 const currentRecordId = ref(null)
 const showNewChatModal = ref(false)
-
-const scrollToMessage = (id) => {
-  document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
-}
 
 const scrollChatToBottom = () => {
   nextTick(() => {
@@ -532,8 +608,6 @@ const sendGeneralChatMessage = async () => {
   if (!userChatInput.value.trim() || isChatLoading.value) return
 
   const userMessage = userChatInput.value.trim()
-  const msgId = 'msg-' + Date.now()
-  const shortTitle = userMessage.length > 12 ? userMessage.slice(0, 12) + '...' : userMessage
   const aiMessage = {
     role: 'ai',
     content: '',
@@ -543,12 +617,10 @@ const sendGeneralChatMessage = async () => {
   }
 
   chatMessages.value.push({
-    id: msgId,
     role: 'user',
     content: userMessage,
     timestamp: new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
   })
-  sessionTOC.value.push({ id: msgId, title: shortTitle })
   chatMessages.value.push(aiMessage)
   userChatInput.value = ''
   isChatLoading.value = true
@@ -650,7 +722,6 @@ const sendGeneralChatMessage = async () => {
 
 const forceStartNew = () => {
   chatMessages.value = []
-  sessionTOC.value = []
   userChatInput.value = ''
   isChatLoading.value = false
   currentRecordId.value = null
@@ -683,7 +754,8 @@ const saveAndStartNew = async () => {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ is_saved: true })
     })
-    if (!response.ok) throw new Error('HTTP ' + response.status)
+    if (!response.ok) throw new Error('HTTP ' + response.status)
+    await loadHistory()
   } catch (error) {
     console.error('保存当前对话失败', error)
   } finally {
@@ -712,9 +784,9 @@ const handleChatEnter = (event) => {
 }
 
 const chatPlaceholder = computed(() => {
-  if (knowledgeId.value) return '支持上传简历/JD，或上传 PDF 作为知识库挂载'
+  if (knowledgeId.value) return '基于你上传的文件提问...'
   if (uploadedGlobalResume.value) return '请输入关于此文件的问题...'
-  return placeholderText.value || '支持上传简历/JD，或上传 PDF 作为知识库挂载'
+  return placeholderText.value || '系统预设已就绪，问专业、志愿、就业都可以...'
 })
 
 const systemCarouselTexts = [
@@ -767,7 +839,8 @@ onMounted(() => {
   startAutoPlay()
   window.addEventListener('mousemove', handleMouseMove)
   window.addEventListener('storage', handleStorageChange)
-  playConsoleAnimation()
+  playConsoleAnimation()
+  loadHistory()
 })
 
 onUnmounted(() => {
@@ -787,7 +860,7 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="app-container relative min-h-screen w-full text-gray-300 overflow-hidden">
+  <div class="app-container bg-[#020205] min-h-screen relative overflow-hidden flex w-full text-gray-300">
     <transition name="toast-slide">
       <div
         v-if="showToast"
@@ -843,26 +916,27 @@ onUnmounted(() => {
       </transition>
     </Teleport>
     <!-- 背景光影效果 -->
-    <div class="absolute top-0 left-0 w-full h-full bg-[#050505] z-0 pointer-events-none">
-      <!-- 左上角紫色光晕 -->
-      <div class="absolute top-0 left-0 w-[50vw] h-[50vh] bg-gradient-to-br from-purple-600/10 via-pink-500/5 to-transparent blur-3xl animate-pulse-slow"></div>
-      <!-- 右下角蓝色光晕 -->
-      <div class="absolute bottom-0 right-0 w-[50vw] h-[50vh] bg-gradient-to-tl from-cyan-500/10 via-blue-500/5 to-transparent blur-3xl animate-pulse-slower"></div>
+    <div class="absolute top-0 left-0 w-full h-full z-0 pointer-events-none overflow-hidden">
+      <div class="absolute top-[-10%] left-[-5%] w-[50vw] h-[50vw] bg-purple-600/35 blur-[150px] rounded-full mix-blend-screen animate-ambient-1 pointer-events-none"></div>
+      
+      <div class="absolute bottom-[-10%] right-[-5%] w-[50vw] h-[50vw] bg-cyan-600/30 blur-[150px] rounded-full mix-blend-screen animate-ambient-2 pointer-events-none"></div>
+      
+      <div class="absolute top-[45%] left-[50%] -translate-x-1/2 -translate-y-1/2 w-[80vw] h-[30vw] bg-indigo-500/25 blur-[120px] rounded-[100%] mix-blend-screen animate-ambient-center pointer-events-none"></div>
     </div>
 
     <div class="relative z-10 flex flex-col md:flex-row h-[100dvh] w-full overflow-x-hidden">
       <!-- 左侧侧边栏 -->
-      <div class="left-sidebar hidden md:flex w-64 fixed h-full z-20">
-        <div class="bg-white/5 backdrop-blur-xl border-r border-white/10 rounded-3xl m-4 h-[calc(100vh-2rem)] shadow-xl shadow-purple-500/5 flex flex-col overflow-y-auto">
-          <div class="logo p-3 border-b border-white/10 pl-4 cursor-pointer" @click="router.push('/')">
-            <div class="flex items-center gap-3 text-left">
-              <div class="w-10 h-10 rounded-full bg-gradient-to-r from-purple-500 to-indigo-600 flex items-center justify-center flex-shrink-0 shadow-lg shadow-purple-500/20">
-                <span class="text-white text-sm font-bold">AI</span>
-              </div>
-              <div class="flex flex-col">
-                <h1 class="text-xl font-bold text-white leading-tight">AI 职业导航</h1>
-                <p class="text-xs text-gray-500 leading-tight mt-0.5">智能助手</p>
-              </div>
+      <div class="left-sidebar hidden md:flex w-64 m-4 rounded-3xl z-10 flex-shrink-0">
+        <div class="bg-[#0a0f1a]/60 backdrop-blur-2xl border border-white/5 shadow-[inset_0_0_20px_rgba(255,255,255,0.02),0_0_40px_rgba(0,0,0,0.5)] rounded-3xl h-full w-full flex flex-col overflow-y-auto">
+          <div class="logo p-4 border-b border-white/5 cursor-pointer flex items-center gap-3" @click="router.push('/')">
+            <div class="w-10 h-10 rounded-full bg-gradient-to-br from-purple-500 to-indigo-600 flex items-center justify-center flex-shrink-0 shadow-[0_0_15px_rgba(168,85,247,0.5)] border border-purple-400/30">
+              <svg class="w-5 h-5 text-white drop-shadow-md" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                <rect x="3" y="11" width="18" height="10" rx="2"/><circle cx="12" cy="5" r="2"/><path d="M12 7v4"/><line x1="8" y1="16" x2="8" y2="16"/><line x1="16" y1="16" x2="16" y2="16"/>
+              </svg>
+            </div>
+            <div class="flex flex-col">
+              <h1 class="text-xl text-white font-bold leading-tight tracking-wide drop-shadow-md">AI 职业导航</h1>
+              <p class="text-xs text-purple-300/70 leading-tight mt-0.5">智能终端在线</p>
             </div>
           </div>
 
@@ -878,9 +952,9 @@ onUnmounted(() => {
 
           <div class="navigation p-4 flex-1">
             <div v-for="menu in menuItems" :key="menu.category" class="mb-6">
-              <h3 class="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3 text-left pl-2">
+              <h2 class="text-xs text-gray-500 uppercase mb-2 font-semibold text-left pl-2">
                 {{ menu.category }}
-              </h3>
+              </h2>
               <div class="space-y-1">
                 <div
                   v-for="(item, index) in menu.items"
@@ -895,21 +969,18 @@ onUnmounted(() => {
               </div>
             </div>
 
-            <div v-if="sessionTOC.length > 0" class="history mt-8">
-              <h3 class="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3 text-left pl-2">
-                &#24403;&#21069;&#23545;&#35805;&#22823;&#32434;
-              </h3>
+            <div v-if="chatMessages.length > 0" class="history mt-8">
+              <h2 class="text-xs text-gray-500 uppercase mb-2 font-semibold text-left pl-2">
+                最近
+              </h2>
               <div class="space-y-1">
-                <button
-                  v-for="item in sessionTOC"
-                  :key="item.id"
-                  type="button"
-                  class="history-item w-full flex items-center gap-2 p-2 rounded-lg text-gray-400 hover:text-cyan-400 hover:bg-cyan-500/10 transition-all duration-300 cursor-pointer hover:translate-x-2"
-                  @click="scrollToMessage(item.id)"
+                <div
+                  v-for="(message, index) in chatMessages"
+                  :key="index"
+                  class="history-item p-2 rounded-lg hover:bg-white/10 transition-all duration-300 cursor-pointer hover:translate-x-2"
                 >
-                  <Hash class="w-3.5 h-3.5 flex-shrink-0" />
-                  <span class="text-sm truncate text-left">{{ item.title }}</span>
-                </button>
+                  <p class="text-sm truncate text-left">AI分析 - {{ new Date().toLocaleDateString() }}</p>
+                </div>
               </div>
             </div>
 
@@ -1005,8 +1076,8 @@ onUnmounted(() => {
       </div>
 
       <!-- 右侧主工作区 -->
-      <div class="right-workspace ml-0 md:ml-64 flex-1 flex flex-col relative h-[100dvh]">
-        <div class="bg-white/5 backdrop-blur-xl border border-white/10 rounded-3xl m-4 flex-1 shadow-xl shadow-purple-500/5 overflow-hidden flex flex-col relative">
+      <div class="right-workspace m-4 ml-0 z-10 relative flex-1 flex flex-col h-[calc(100dvh-2rem)] min-w-0">
+        <div class="bg-white/[0.02] backdrop-blur-xl border border-white/5 rounded-3xl flex-1 shadow-xl shadow-black/50 overflow-hidden flex flex-col relative">
           <div class="top-bar p-4 border-b border-white/10 flex items-center justify-between animate-[fadeIn_0.3s_ease-out]">
             <div class="search-container flex items-center gap-2">
               <div class="relative">
@@ -1037,19 +1108,20 @@ onUnmounted(() => {
             ></div>
             <div class="absolute bottom-20 right-10 w-[600px] h-[600px] bg-cyan-600/10 rounded-full blur-[150px] pointer-events-none z-0"></div>
             
-            <div class="max-w-5xl mx-auto w-full flex-1 flex flex-col justify-center pb-24 relative z-10">
-              <div class="welcome-section mb-6 text-left animate-fade-in-up animation-delay-0">
-                <h1 class="text-3xl md:text-5xl lg:text-6xl xl:text-7xl font-bold text-gray-200 mb-1 tracking-tighter">{{ greeting }}，{{ userName || '新' }}同学</h1>
-                <p class="text-lg md:text-2xl text-purple-200/60 mt-2">今天想探索些什么？</p>
-              </div>
-
-              <div class="workspaces mb-8 text-left animate-fade-in-up animation-delay-100">
-                <h2 class="text-xs text-gray-500 uppercase mb-2 font-semibold pl-1">工作区</h2>
-                <div class="flex flex-wrap gap-2">
+            <div class="grid grid-cols-1 lg:grid-cols-12 gap-6 p-6 pb-28 h-full overflow-y-auto custom-scrollbar relative z-10">
+              <div class="lg:col-span-8 flex flex-col gap-5">
+              
+              <!-- 顶部信息条：Hero + 工作区标签 -->
+              <div class="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-3 animate-fade-in-up animation-delay-0">
+                <div class="flex flex-col">
+                  <h1 class="text-3xl md:text-4xl lg:text-5xl font-bold text-gray-200 tracking-tighter">{{ greeting }}，{{ userName || '新' }}同学</h1>
+                  <p class="text-sm text-white/45 mt-0.5">选择一个 AI 职业任务开始</p>
+                </div>
+                <div class="flex flex-wrap gap-1.5">
                   <button
                     v-for="(workspace, index) in workspaces"
                     :key="workspace"
-                    class="px-4 py-1.5 rounded-full text-sm font-medium border transition-all duration-300"
+                    class="px-3 py-1 rounded-full text-xs font-medium border transition-all duration-300"
                     :class="activeWorkspace === workspace
                       ? 'bg-gradient-to-r from-purple-600 to-indigo-600 border-transparent text-white shadow-lg shadow-purple-500/25'
                       : 'bg-white/5 border-white/10 text-gray-400 hover:bg-white/10 hover:text-white'
@@ -1061,9 +1133,14 @@ onUnmounted(() => {
                 </div>
               </div>
 
-              <div class="templates-section mb-8 animate-fade-in-up animation-delay-200">
+              <!-- 核心任务控制台容器 -->
+              <div class="relative rounded-[32px] border border-white/10 bg-white/[0.025] backdrop-blur-xl p-6 min-h-[420px] overflow-hidden shadow-[0_20px_80px_rgba(0,0,0,0.25)] animate-fade-in-up animation-delay-200">
+                <!-- 容器顶部标题行 -->
                 <div class="mb-4 flex items-center justify-between">
-                  <h2 class="text-lg font-semibold text-gray-200 text-left">核心功能</h2>
+                  <div>
+                    <h2 class="text-lg font-semibold text-gray-200 text-left">核心功能</h2>
+                    <p class="text-xs text-gray-500 mt-0.5">选择一个 AI 职业任务开始</p>
+                  </div>
                   <div class="flex items-center gap-1.5">
                     <button
                       v-for="(feature, index) in features"
@@ -1077,7 +1154,7 @@ onUnmounted(() => {
                 </div>
 
                 <div
-                  class="feature-slider-wrapper relative w-full overflow-hidden h-[240px]"
+                  class="feature-slider-wrapper relative w-full overflow-hidden h-[320px]"
                   @mouseenter="stopAutoPlay"
                   @mouseleave="startAutoPlay"
                 >
@@ -1098,13 +1175,13 @@ onUnmounted(() => {
                       v-for="(feature, index) in extendedFeatures"
                       :key="feature.id + '-' + index"
                       class="feature-slide flex-shrink-0 w-full sm:w-1/2 md:w-1/3 px-2 transition-all duration-700"
-                      :class="index === virtualIndex ? 'scale-105 opacity-100 z-10' : 'scale-90 opacity-40 blur-[1px] z-0'"
+                      :class="index === virtualIndex ? 'scale-100 opacity-100 z-10' : 'scale-95 opacity-45 z-0'"
                     >
                       <div
-                        class="feature-card h-[210px] relative overflow-hidden bg-[#151520]/60 backdrop-blur-2xl border rounded-3xl p-4 md:p-6 cursor-pointer text-left flex flex-col items-start transition-all duration-700 hover:-translate-y-1"
+                        class="feature-card h-[280px] w-full max-w-[420px] mx-auto relative overflow-hidden backdrop-blur-2xl border rounded-3xl p-5 md:p-6 cursor-pointer text-left flex flex-col items-start transition-all duration-700 hover:-translate-y-1"
                         :class="index === virtualIndex
-                          ? feature.themeClass
-                          : 'border-white/5 shadow-none'"
+                          ? [feature.themeClass, 'bg-white/[0.07]']
+                          : 'bg-[#151520]/60 border-white/5 shadow-none'"
                         @click="onCardClick(index, feature)"
                       >
                         <div class="absolute inset-0 opacity-0 transition-opacity duration-700 pointer-events-none"
@@ -1140,8 +1217,77 @@ onUnmounted(() => {
                 </div>
               </div>
 
+              <!-- 继续上次模块 -->
+              <div v-if="historyRecords.length > 0" class="rounded-[28px] border border-white/10 bg-white/[0.03] backdrop-blur-xl p-5 animate-fade-in-up animation-delay-500">
+                <div class="mb-4 flex items-center justify-between">
+                  <div>
+                    <h2 class="text-base font-semibold text-gray-200 text-left flex items-center gap-2">
+                      <History class="w-4 h-4 text-purple-400" />
+                      继续上次
+                    </h2>
+                    <p class="text-xs text-gray-500 mt-0.5">最近的 AI 职业咨询记录</p>
+                  </div>
+                  <button
+                    @click="router.push('/history-archive')"
+                    class="text-xs text-purple-400 hover:text-purple-300 transition-colors duration-300 flex items-center gap-1"
+                  >
+                    查看全部
+                    <ChevronRight class="w-4 h-4" />
+                  </button>
+                </div>
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-3 mb-4">
+                  <div
+                    v-for="record in historyRecords"
+                    :key="record.id"
+                    class="relative overflow-hidden bg-black/20 border border-white/8 rounded-2xl p-3.5 pb-10 cursor-pointer transition-all duration-300 group hover:-translate-y-1 hover:border-purple-500/30 hover:shadow-[0_0_20px_rgba(168,85,247,0.1)] text-left"
+                    @click="goToHistory(record)"
+                  >
+                    <div class="flex items-center justify-between mb-2">
+                      <div class="flex items-center gap-2">
+                        <span class="text-xs px-2 py-0.5 rounded-full border" :class="getCategoryColor(record.category)">{{ getCategoryLabel(record.category) }}</span>
+                        <span v-if="getDifficultyBadge(record) && getDifficultyBadgeConfig(getDifficultyBadge(record))" class="text-[10px] px-1.5 py-0.5 rounded-full border" :class="getDifficultyBadgeConfig(getDifficultyBadge(record)).class">{{ getDifficultyBadgeConfig(getDifficultyBadge(record)).label }}</span>
+                      </div>
+                      <span class="text-[10px] text-gray-600">{{ record.created_at }}</span>
+                    </div>
+                    <p class="text-xs text-gray-400 truncate">{{ record.user_input }}</p>
+                    <p v-if="record.ai_result" class="text-[11px] text-gray-600 truncate mt-1">{{ record.ai_result.substring(0, 60) }}...</p>
+                    <div class="absolute right-3 bottom-3 flex items-center gap-2">
+                      <button
+                        @click.stop="toggleSaveRecord(record)"
+                        class="w-7 h-7 rounded-full border backdrop-blur flex items-center justify-center transition-all duration-300"
+                        :class="record.is_saved
+                          ? 'border-amber-300/50 bg-amber-400/10 text-amber-300 shadow-[0_0_14px_rgba(251,191,36,0.2)]'
+                          : 'border-white/10 bg-black/20 text-gray-500 hover:text-amber-300 hover:border-amber-300/40 hover:bg-amber-400/10'"
+                        title="保存/取消保存"
+                      >
+                        <Star class="w-3 h-3" :fill="record.is_saved ? 'currentColor' : 'none'" />
+                      </button>
+                      <button
+                        @click.stop="deleteHistoryRecord(record)"
+                        class="w-7 h-7 rounded-full border border-white/10 bg-black/20 text-gray-500 backdrop-blur flex items-center justify-center hover:text-red-300 hover:border-red-400/40 hover:bg-red-500/10 transition-all duration-300"
+                        title="删除记录"
+                      >
+                        <Trash2 class="w-3 h-3" />
+                      </button>
+                    </div>
+                  </div>
+                </div>
+                
+                <!-- 快捷问题 chips 收拢在历史记录下方 -->
+                <div class="flex flex-wrap gap-2 pt-3 border-t border-white/5">
+                  <button
+                    v-for="action in quickActions"
+                    :key="action"
+                    @click="userChatInput = action"
+                    class="quick-action px-2.5 py-0.5 rounded-full bg-white/8 hover:bg-white/12 hover:scale-105 text-[11px] text-gray-400 transition-all duration-200"
+                  >
+                    {{ action }}
+                  </button>
+                </div>
+              </div>
+
               <div class="chat-messages mb-6 space-y-4 animate-[fadeInUp_0.5s_ease-out_0.3s_both]" v-if="chatMessages.length > 0" v-auto-animate>
-                <div v-for="(message, index) in chatMessages" :key="message.id || index" :id="message.id" class="chat-message scroll-mt-4">
+                <div v-for="(message, index) in chatMessages" :key="index" :id="message.id" class="chat-message">
                   <div v-if="message.role === 'user'" class="flex justify-end">
                     <div class="max-w-[80%] bg-gradient-to-r from-fuchsia-500/20 to-purple-500/20 border border-fuchsia-500/30 rounded-xl p-3 text-right">
                       <p class="text-sm text-gray-200">{{ message.content }}</p>
@@ -1172,16 +1318,108 @@ onUnmounted(() => {
                   </div>
                 </div>
               </div>
+              </div>
 
-              <div class="quick-actions-bubbles mb-4 flex flex-wrap gap-2 justify-start animate-[fadeInUp_0.5s_ease-out_0.4s_both]">
-                <button
-                  v-for="action in quickActions"
-                  :key="action"
-                  @click="userChatInput = action"
-                  class="quick-action px-3 py-1 rounded-full bg-white/10 hover:bg-white/15 hover:scale-105 text-xs text-gray-300 transition-all duration-200 hover:shadow-lg hover:shadow-purple-500/20"
-                >
-                  {{ action }}
-                </button>
+              <!-- 右侧 Bento 辅助面板 -->
+              <div class="lg:col-span-4 flex flex-col gap-4 sticky top-6 self-start">
+                <!-- 卡片 1：系统状态 -->
+                <div class="bg-white/[0.015] backdrop-blur-xl border border-white/5 rounded-2xl p-4 shadow-[inset_0_0_20px_rgba(255,255,255,0.01)]">
+                  <div class="flex items-center justify-between mb-2">
+                    <h3 class="text-xs font-semibold text-gray-300">系统状态</h3>
+                    <span class="text-[10px] text-gray-600">实时</span>
+                  </div>
+                  <div class="space-y-1.5">
+                    <div class="flex items-center justify-between">
+                      <div class="flex items-center gap-2">
+                        <div class="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse shadow-[0_0_6px_rgba(16,185,129,0.8)]"></div>
+                        <span class="text-[11px] text-gray-300">DeepSeek V4</span>
+                      </div>
+                      <span class="text-[10px] text-emerald-400">Online</span>
+                    </div>
+                    <div class="flex items-center justify-between">
+                      <div class="flex items-center gap-2">
+                        <div class="w-1.5 h-1.5 rounded-full bg-gray-600"></div>
+                        <span class="text-[11px] text-gray-500">GPT-4o</span>
+                      </div>
+                      <span class="text-[10px] text-gray-600">Standby</span>
+                    </div>
+                    <div class="flex items-center justify-between">
+                      <div class="flex items-center gap-2">
+                        <div class="w-1.5 h-1.5 rounded-full bg-gray-600"></div>
+                        <span class="text-[11px] text-gray-500">GLM-4</span>
+                      </div>
+                      <span class="text-[10px] text-gray-600">Standby</span>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- 卡片 2：今日建议 -->
+                <div class="bg-white/[0.015] backdrop-blur-xl border border-white/5 rounded-2xl p-4 shadow-[inset_0_0_20px_rgba(255,255,255,0.01)]">
+                  <div class="flex items-center justify-between mb-2">
+                    <h3 class="text-xs font-semibold text-gray-300">今日建议</h3>
+                    <span class="text-[10px] text-gray-600">3 条</span>
+                  </div>
+                  <div class="space-y-1.5">
+                    <div class="flex items-center gap-2">
+                      <div class="w-1 h-1 rounded-full bg-cyan-400"></div>
+                      <span class="text-[11px] text-gray-400">简历优化建议已就绪</span>
+                    </div>
+                    <div class="flex items-center gap-2">
+                      <div class="w-1 h-1 rounded-full bg-purple-400"></div>
+                      <span class="text-[11px] text-gray-400">专属院校政策更新 3 条</span>
+                    </div>
+                    <div class="flex items-center gap-2">
+                      <div class="w-1 h-1 rounded-full bg-amber-400"></div>
+                      <span class="text-[11px] text-gray-400">面试模拟热度 TOP1</span>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- 卡片 3：职业能力图谱 -->
+                <div class="bg-white/[0.015] backdrop-blur-xl border border-white/5 rounded-2xl p-4 shadow-[inset_0_0_20px_rgba(255,255,255,0.01)] flex-1">
+                  <div class="flex items-center justify-between mb-3">
+                    <h3 class="text-xs font-semibold text-gray-300">职业能力图谱</h3>
+                    <span class="text-[10px] text-gray-600">综合 60%</span>
+                  </div>
+                  <div class="space-y-2.5">
+                    <div>
+                      <div class="flex justify-between text-[10px] text-gray-500 mb-0.5">
+                        <span>专业能力</span>
+                        <span>72%</span>
+                      </div>
+                      <div class="h-1 bg-white/5 rounded-full overflow-hidden">
+                        <div class="h-full bg-purple-500/50" style="width: 72%"></div>
+                      </div>
+                    </div>
+                    <div>
+                      <div class="flex justify-between text-[10px] text-gray-500 mb-0.5">
+                        <span>逻辑表达</span>
+                        <span>58%</span>
+                      </div>
+                      <div class="h-1 bg-white/5 rounded-full overflow-hidden">
+                        <div class="h-full bg-cyan-500/50" style="width: 58%"></div>
+                      </div>
+                    </div>
+                    <div>
+                      <div class="flex justify-between text-[10px] text-gray-500 mb-0.5">
+                        <span>执行韧性</span>
+                        <span>45%</span>
+                      </div>
+                      <div class="h-1 bg-white/5 rounded-full overflow-hidden">
+                        <div class="h-full bg-purple-500/50" style="width: 45%"></div>
+                      </div>
+                    </div>
+                    <div>
+                      <div class="flex justify-between text-[10px] text-gray-500 mb-0.5">
+                        <span>技术亮点</span>
+                        <span>64%</span>
+                      </div>
+                      <div class="h-1 bg-white/5 rounded-full overflow-hidden">
+                        <div class="h-full bg-cyan-500/50" style="width: 64%"></div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
               </div>
             </div>
           </div>
@@ -1196,7 +1434,7 @@ onUnmounted(() => {
               <div v-if="knowledgeId" class="mb-3 flex items-center gap-2">
                 <div class="personal-file-tag rounded-full px-3 py-1 flex items-center gap-2">
                   <FileText class="w-3.5 h-3.5 text-gray-300" />
-                  <span class="text-xs text-gray-200 truncate max-w-[300px]">[临时知识库已挂载: {{ knowledgeFileName }}]</span>
+                  <span class="text-xs text-gray-200 truncate max-w-[260px]">[个人文件已挂载] {{ knowledgeFileName }}</span>
                   <button
                     @click="clearKnowledge"
                     class="text-gray-400 hover:text-white transition-colors ml-1"
@@ -1240,7 +1478,7 @@ onUnmounted(() => {
 
               <div class="flex items-center gap-2 mt-2">
                 <Sparkles class="w-3 h-3 text-cyan-500/50" />
-                <span class="text-[10px] text-gray-500">支持上传简历/JD，或上传 PDF 作为知识库挂载</span>
+                <span class="text-[10px] text-gray-600">AI 职场领航员 · 附件仅作本轮对话上下文</span>
               </div>
             </div>
           </div>
@@ -1665,5 +1903,33 @@ button.bg-gradient-to-r.from-purple-500.to-indigo-600 {
 }
 .feature-inactive:hover {
   filter: blur(0);
+}
+
+/* Dashboard 专属极光沉浮动画 */
+@keyframes ambient-drift-1 {
+  0%, 100% { transform: translate(0, 0) scale(1); opacity: 0.7; }
+  50% { transform: translate(3vw, 5vh) scale(1.1); opacity: 1; }
+}
+
+@keyframes ambient-drift-2 {
+  0%, 100% { transform: translate(0, 0) scale(1); opacity: 0.6; }
+  50% { transform: translate(-4vw, -4vh) scale(1.15); opacity: 1; }
+}
+
+@keyframes ambient-center-pulse {
+  0%, 100% { opacity: 0.4; transform: translate(-50%, -50%) scale(0.95); }
+  50% { opacity: 0.9; transform: translate(-50%, -50%) scale(1.05); }
+}
+
+.animate-ambient-1 {
+  animation: ambient-drift-1 12s ease-in-out infinite;
+}
+
+.animate-ambient-2 {
+  animation: ambient-drift-2 15s ease-in-out infinite;
+}
+
+.animate-ambient-center {
+  animation: ambient-center-pulse 8s ease-in-out infinite;
 }
 </style>
