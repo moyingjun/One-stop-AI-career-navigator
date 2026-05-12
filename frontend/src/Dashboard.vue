@@ -12,6 +12,8 @@ import { Bot, Bookmark, FileText, MessageSquare, Folder, Settings, Clock, Puzzle
 
 const router = useRouter()
 
+const activeDataTab = ref('resume'); // 'resume' | 'interview' | 'career'
+
 const isLocalDev = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
 const API_BASE_URL = isLocalDev ? 'http://127.0.0.1:8000/api' : '/api'
 
@@ -375,15 +377,16 @@ const FEATURE_COUNT = features.length
 const TRANSITION_DURATION = 700
 
 const extendedFeatures = computed(() => {
-  const triple = [...features, ...features, ...features]
-  return triple.map((f, i) => ({
+  const multiplied = []
+  for (let i = 0; i < 7; i++) multiplied.push(...features)
+  return multiplied.map((f, i) => ({
     ...f,
     _extIndex: i,
     _realIndex: i % FEATURE_COUNT
   }))
 })
 
-const virtualIndex = ref(FEATURE_COUNT)
+const virtualIndex = ref(FEATURE_COUNT * 3)
 const isTransitioning = ref(true)
 
 const realIndex = computed(() => virtualIndex.value % FEATURE_COUNT)
@@ -395,32 +398,29 @@ const featureTrackStyle = computed(() => ({
   transitionProperty: 'transform'
 }))
 
+let jumpTimer = null
+
+const checkAndJump = () => {
+  const len = FEATURE_COUNT
+  const safeCenterOffset = len * 3
+  const currentRealIndex = ((virtualIndex.value % len) + len) % len
+  const targetIndex = safeCenterOffset + currentRealIndex
+
+  if (virtualIndex.value !== targetIndex) {
+    isTransitioning.value = false
+    virtualIndex.value = targetIndex
+    nextTick(() => {
+      document.body.offsetHeight
+      isTransitioning.value = true
+    })
+  }
+}
+
 const slideFeature = (direction) => {
   if (!isTransitioning.value) return
-
   virtualIndex.value += direction
-
-  setTimeout(() => {
-    const len = FEATURE_COUNT
-    let needsJump = false
-
-    if (virtualIndex.value >= len * 2) {
-      virtualIndex.value = len
-      needsJump = true
-    } else if (virtualIndex.value <= len - 1) {
-      virtualIndex.value = len * 2 - 1
-      needsJump = true
-    }
-
-    if (needsJump) {
-      isTransitioning.value = false
-      requestAnimationFrame(() => {
-        requestAnimationFrame(() => {
-          isTransitioning.value = true
-        })
-      })
-    }
-  }, TRANSITION_DURATION + 50)
+  if (jumpTimer) clearTimeout(jumpTimer)
+  jumpTimer = setTimeout(checkAndJump, TRANSITION_DURATION + 20)
 }
 
 const setActiveFeature = (index) => {
@@ -449,25 +449,8 @@ const onCardClick = (index, feature) => {
   } else {
     if (!isTransitioning.value) return
     virtualIndex.value = index
-    setTimeout(() => {
-      const len = FEATURE_COUNT
-      let needsJump = false
-      if (virtualIndex.value >= len * 2) {
-        virtualIndex.value = len + feature._realIndex
-        needsJump = true
-      } else if (virtualIndex.value <= len - 1) {
-        virtualIndex.value = len + feature._realIndex
-        needsJump = true
-      }
-      if (needsJump) {
-        isTransitioning.value = false
-        requestAnimationFrame(() => {
-          requestAnimationFrame(() => {
-            isTransitioning.value = true
-          })
-        })
-      }
-    }, TRANSITION_DURATION + 50)
+    if (jumpTimer) clearTimeout(jumpTimer)
+    jumpTimer = setTimeout(checkAndJump, TRANSITION_DURATION + 20)
   }
 }
 
@@ -860,7 +843,7 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="app-container bg-[#020205] min-h-screen relative overflow-hidden flex w-full text-gray-300">
+  <div class="app-container bg-[#020205] h-screen w-screen relative overflow-hidden flex text-gray-300">
     <transition name="toast-slide">
       <div
         v-if="showToast"
@@ -922,12 +905,14 @@ onUnmounted(() => {
       <div class="absolute bottom-[-10%] right-[-5%] w-[50vw] h-[50vw] bg-cyan-600/30 blur-[150px] rounded-full mix-blend-screen animate-ambient-2 pointer-events-none"></div>
       
       <div class="absolute top-[45%] left-[50%] -translate-x-1/2 -translate-y-1/2 w-[80vw] h-[30vw] bg-indigo-500/25 blur-[120px] rounded-[100%] mix-blend-screen animate-ambient-center pointer-events-none"></div>
+      <div class="absolute inset-0 z-[-1] opacity-[0.03]" style="background-image: linear-gradient(rgba(255,255,255,1) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,1) 1px, transparent 1px); background-size: 40px 40px; mask-image: radial-gradient(circle at 50% 50%, black 40%, transparent 80%); -webkit-mask-image: radial-gradient(circle at 50% 50%, black 40%, transparent 80%);"></div>
+      <div class="absolute inset-0 z-[1] opacity-[0.02] mix-blend-overlay pointer-events-none" style="background-image: url('data:image/svg+xml,%3Csvg viewBox=%220 0 200 200%22 xmlns=%22http://www.w3.org/2000/svg%22%3E%3Cfilter id=%22noiseFilter%22%3E%3CfeTurbulence type=%22fractalNoise%22 baseFrequency=%220.85%22 numOctaves=%223%22 stitchTiles=%22stitch%22/%3E%3C/filter%3E%3Crect width=%22100%25%22 height=%22100%25%22 filter=%22url(%23noiseFilter)%22/%3E%3C/svg%3E');"></div>
     </div>
 
-    <div class="relative z-10 flex flex-col md:flex-row h-[100dvh] w-full overflow-x-hidden">
+    <div class="relative z-10 flex flex-col md:flex-row h-[100dvh] w-full overflow-hidden">
       <!-- 左侧侧边栏 -->
       <div class="left-sidebar hidden md:flex w-64 m-4 rounded-3xl z-10 flex-shrink-0">
-        <div class="bg-[#0a0f1a]/60 backdrop-blur-2xl border border-white/5 shadow-[inset_0_0_20px_rgba(255,255,255,0.02),0_0_40px_rgba(0,0,0,0.5)] rounded-3xl h-full w-full flex flex-col overflow-y-auto">
+        <div class="bg-[#0a0f1a]/60 backdrop-blur-2xl border border-white/5 shadow-[inset_0_0_20px_rgba(255,255,255,0.02),0_0_40px_rgba(0,0,0,0.5)] rounded-3xl h-full w-full flex flex-col overflow-y-auto custom-scrollbar">
           <div class="logo p-4 border-b border-white/5 cursor-pointer flex items-center gap-3" @click="router.push('/')">
             <div class="w-10 h-10 rounded-full bg-gradient-to-br from-purple-500 to-indigo-600 flex items-center justify-center flex-shrink-0 shadow-[0_0_15px_rgba(168,85,247,0.5)] border border-purple-400/30">
               <svg class="w-5 h-5 text-white drop-shadow-md" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
@@ -943,7 +928,7 @@ onUnmounted(() => {
           <div class="new-chat p-4">
             <button
               @click="handleNewChat"
-              class="w-full bg-white/10 hover:bg-white/15 hover:shadow-lg hover:shadow-purple-500/20 text-white py-2 px-4 rounded-full transition-all duration-300 flex items-center gap-2 border border-white/10 hover:border-purple-500/50 hover:-translate-y-0.5 group"
+              class="w-full bg-gradient-to-r from-white/[0.08] to-white/[0.04] backdrop-blur-sm hover:from-white/[0.12] hover:to-white/[0.06] hover:shadow-[0_0_20px_rgba(168,85,247,0.3),inset_0_1px_0_rgba(255,255,255,0.1)] text-white py-2.5 px-4 rounded-full transition-all duration-300 flex items-center gap-2 border border-white/[0.08] hover:border-purple-500/40 hover:-translate-y-0.5 group shadow-[inset_0_1px_0_rgba(255,255,255,0.05)]"
             >
               <Plus class="w-5 h-5 group-hover:rotate-180 transition-transform duration-500" />
               <span>新建对话</span>
@@ -960,7 +945,7 @@ onUnmounted(() => {
                   v-for="(item, index) in menu.items"
                   :key="index"
                   class="menu-item flex items-center gap-3 py-1.5 px-2 rounded-lg hover:bg-white/10 hover:bg-gradient-to-r hover:from-purple-500/10 hover:to-transparent transition-all duration-300 cursor-pointer hover:translate-x-2 hover:text-white group"
-                  :class="{ 'bg-white/10 text-white': item.label === activeMenu }"
+                  :class="{ 'bg-gradient-to-r from-purple-500/15 to-purple-500/5 text-white shadow-[0_0_15px_rgba(168,85,247,0.4)] border border-purple-500/30': item.label === activeMenu }"
                   @click="handleSidebarItemClick(item, menu)"
                 >
                   <component :is="iconMap[item.icon]" class="w-5 h-5 text-gray-400 group-hover:text-purple-400 transition-colors duration-300" />
@@ -997,10 +982,10 @@ onUnmounted(() => {
                 全局资产
               </h2>
               <div
-                class="p-3 rounded-xl border transition-all duration-300 cursor-pointer hover:-translate-y-0.5 hover:shadow-lg group/asset"
+                class="p-3 rounded-xl border backdrop-blur-sm transition-all duration-300 cursor-pointer hover:-translate-y-0.5 hover:shadow-lg group/asset"
                 :class="globalResumeStatus === 'ready'
-                  ? 'bg-green-500/5 border-green-500/20 hover:border-green-500/40 hover:shadow-green-500/10'
-                  : 'bg-red-500/5 border-red-500/20 hover:border-red-500/40 hover:shadow-red-500/10'"
+                  ? 'bg-green-500/[0.03] border-green-500/15 hover:border-green-500/30 hover:shadow-green-500/10'
+                  : 'bg-red-500/[0.03] border-red-500/15 hover:border-red-500/30 hover:shadow-red-500/10'"
                 @click="$refs.globalFileInput?.click()"
                 @dragover.prevent="isGlobalDragging = true"
                 @dragleave.prevent="isGlobalDragging = false"
@@ -1076,21 +1061,21 @@ onUnmounted(() => {
       </div>
 
       <!-- 右侧主工作区 -->
-      <div class="right-workspace m-4 ml-0 z-10 relative flex-1 flex flex-col h-[calc(100dvh-2rem)] min-w-0">
+      <div class="right-workspace m-4 ml-0 z-10 relative flex-1 flex flex-col h-[calc(100dvh-2rem)] min-w-0 overflow-x-hidden overflow-y-hidden">
         <div class="bg-white/[0.02] backdrop-blur-xl border border-white/5 rounded-3xl flex-1 shadow-xl shadow-black/50 overflow-hidden flex flex-col relative">
-          <div class="top-bar p-4 border-b border-white/10 flex items-center justify-between animate-[fadeIn_0.3s_ease-out]">
+          <div class="top-bar p-4 border-b border-white/10 flex items-center justify-between animate-[fadeIn_0.3s_ease-out] flex-shrink-0">
             <div class="search-container flex items-center gap-2">
               <div class="relative">
                 <input
                   type="text"
                   placeholder="搜索..."
-                  class="bg-white/10 border border-white/10 rounded-lg py-2 px-4 pl-10 text-base w-full md:w-64 focus:outline-none focus:border-purple-500/50 focus:ring-2 focus:ring-purple-500/20 transition-all duration-300"
+                  class="bg-white/[0.03] backdrop-blur-md border border-white/5 rounded-lg py-2 px-4 pl-10 text-base w-full md:w-64 focus:outline-none focus:border-cyan-500/50 focus:shadow-[0_0_20px_rgba(34,211,238,0.25)] transition-all duration-300"
                 />
                 <Search class="absolute left-3 top-2.5 text-gray-500 w-4 h-4" />
               </div>
             </div>
             <div class="flex items-center gap-3">
-              <div class="bg-white/5 backdrop-blur-xl border border-white/10 rounded-full px-3 py-1.5 flex items-center gap-2">
+              <div class="bg-emerald-500/10 backdrop-blur-md border border-emerald-500/30 rounded-full px-3 py-1.5 flex items-center gap-2 shadow-[0_0_10px_rgba(16,185,129,0.15)]">
                 <div class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse shadow-[0_0_8px_rgba(16,185,129,0.8)]"></div>
                 <span class="text-xs text-emerald-400 font-mono font-semibold tracking-wider drop-shadow-[0_0_5px_rgba(52,211,153,0.4)]">DeepSeek V4 Online</span>
               </div>
@@ -1100,7 +1085,7 @@ onUnmounted(() => {
             </div>
           </div>
 
-          <div class="main-content flex-1 overflow-y-auto relative flex flex-col pb-40">
+          <div class="main-content flex-1 overflow-hidden relative flex flex-col">
             <!-- 鼠标跟随环境光 -->
             <div 
               class="absolute w-[600px] h-[600px] bg-purple-600/15 rounded-full blur-[150px] pointer-events-none z-0 transition-all duration-700 ease-out"
@@ -1108,7 +1093,7 @@ onUnmounted(() => {
             ></div>
             <div class="absolute bottom-20 right-10 w-[600px] h-[600px] bg-cyan-600/10 rounded-full blur-[150px] pointer-events-none z-0"></div>
             
-            <div class="grid grid-cols-1 lg:grid-cols-12 gap-6 p-6 pb-28 h-full overflow-y-auto custom-scrollbar relative z-10">
+            <div class="grid grid-cols-1 lg:grid-cols-12 gap-6 p-6 pb-48 overflow-y-auto overflow-x-hidden custom-scrollbar relative z-10">
               <div class="lg:col-span-8 flex flex-col gap-5">
               
               <!-- 顶部信息条：Hero + 工作区标签 -->
@@ -1174,32 +1159,38 @@ onUnmounted(() => {
                     <div
                       v-for="(feature, index) in extendedFeatures"
                       :key="feature.id + '-' + index"
-                      class="feature-slide flex-shrink-0 w-full sm:w-1/2 md:w-1/3 px-2 transition-all duration-700"
-                      :class="index === virtualIndex ? 'scale-100 opacity-100 z-10' : 'scale-95 opacity-45 z-0'"
+                      class="feature-slide flex-shrink-0 w-full sm:w-1/2 md:w-1/3 px-2 transition-all"
+                      :class="[index === virtualIndex ? 'scale-100 opacity-100 z-10' : 'scale-95 opacity-45 z-0', isTransitioning ? 'duration-700' : 'duration-0']"
                     >
                       <div
-                        class="feature-card h-[280px] w-full max-w-[420px] mx-auto relative overflow-hidden backdrop-blur-2xl border rounded-3xl p-5 md:p-6 cursor-pointer text-left flex flex-col items-start transition-all duration-700 hover:-translate-y-1"
-                        :class="index === virtualIndex
+                        class="feature-card h-[280px] w-full max-w-[420px] mx-auto relative overflow-hidden backdrop-blur-2xl border rounded-3xl p-5 md:p-6 cursor-pointer text-left flex flex-col items-start transition-all hover:-translate-y-1"
+                        :class="[index === virtualIndex
                           ? [feature.themeClass, 'bg-white/[0.07]']
-                          : 'bg-[#151520]/60 border-white/5 shadow-none'"
+                          : 'bg-[#151520]/60 border-white/5 shadow-none', isTransitioning ? 'duration-700' : 'duration-0']"
                         @click="onCardClick(index, feature)"
                       >
-                        <div class="absolute inset-0 opacity-0 transition-opacity duration-700 pointer-events-none"
-                          :class="index === virtualIndex ? 'opacity-100 bg-gradient-to-br from-white/[0.04] via-transparent to-transparent' : ''"
+                        <div class="absolute inset-0 opacity-0 transition-opacity pointer-events-none"
+                          :class="[index === virtualIndex ? 'opacity-100 bg-gradient-to-br from-white/[0.04] via-transparent to-transparent' : '', isTransitioning ? 'duration-700' : 'duration-0']"
                         ></div>
                         <div
-                          class="w-14 h-14 flex items-center justify-center rounded-xl mb-4 transition-all duration-700"
-                          :class="[feature.iconWrapClass, index === virtualIndex ? ['scale-110', feature.themeIconGlow] : '']"
+                          class="cyber-border-wrapper transition-opacity"
+                          :class="[index === virtualIndex ? 'opacity-100' : 'opacity-0', isTransitioning ? 'duration-700' : 'duration-0']"
+                        >
+                          <div class="cyber-border-inner" :style="{ '--glow-color': feature.id === 'resume' ? '#a855f7' : feature.id === 'interview' ? '#ec4899' : feature.id === 'career' ? '#3b82f6' : '#10b981' }"></div>
+                        </div>
+                        <div
+                          class="w-14 h-14 flex items-center justify-center rounded-xl mb-4 transition-all"
+                          :class="[feature.iconWrapClass, index === virtualIndex ? ['scale-110', feature.themeIconGlow] : '', isTransitioning ? 'duration-700' : 'duration-0']"
                         >
                           <component
                             :is="feature.icon"
-                            class="w-7 h-7 transition-all duration-700"
-                            :class="[feature.iconClass, index === virtualIndex ? 'brightness-125' : '']"
+                            class="w-7 h-7 transition-all"
+                            :class="[feature.iconClass, index === virtualIndex ? 'brightness-125' : '', isTransitioning ? 'duration-700' : 'duration-0']"
                           />
                         </div>
                         <h3
-                          class="text-xl md:text-2xl font-black tracking-tight mb-2 text-left transition-colors duration-700"
-                          :class="index === virtualIndex ? 'text-white' : 'text-gray-100'"
+                          class="text-xl md:text-2xl font-black tracking-tight mb-2 text-left transition-colors"
+                          :class="[index === virtualIndex ? 'text-white' : 'text-gray-100', isTransitioning ? 'duration-700' : 'duration-0']"
                         >{{ feature.title }}</h3>
                         <p class="text-base text-gray-400 text-left leading-relaxed">{{ feature.desc }}</p>
                       </div>
@@ -1239,9 +1230,10 @@ onUnmounted(() => {
                   <div
                     v-for="record in historyRecords"
                     :key="record.id"
-                    class="relative overflow-hidden bg-black/20 border border-white/8 rounded-2xl p-3.5 pb-10 cursor-pointer transition-all duration-300 group hover:-translate-y-1 hover:border-purple-500/30 hover:shadow-[0_0_20px_rgba(168,85,247,0.1)] text-left"
+                    class="relative overflow-hidden bg-white/[0.015] backdrop-blur-md border border-white/5 rounded-2xl p-4 pb-10 cursor-pointer transition-all duration-500 group hover:-translate-y-1 hover:bg-white/[0.03] hover:border-purple-500/30 hover:shadow-[0_10px_30px_rgba(168,85,247,0.15)] text-left"
                     @click="goToHistory(record)"
                   >
+                    <div class="absolute bottom-0 left-0 w-full h-[2px] bg-gradient-to-r from-transparent via-purple-500/50 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500"></div>
                     <div class="flex items-center justify-between mb-2">
                       <div class="flex items-center gap-2">
                         <span class="text-xs px-2 py-0.5 rounded-full border" :class="getCategoryColor(record.category)">{{ getCategoryLabel(record.category) }}</span>
@@ -1274,14 +1266,15 @@ onUnmounted(() => {
                 </div>
                 
                 <!-- 快捷问题 chips 收拢在历史记录下方 -->
-                <div class="flex flex-wrap gap-2 pt-3 border-t border-white/5">
+                <div class="flex flex-wrap gap-2 pt-4 border-t border-white/5">
                   <button
                     v-for="action in quickActions"
                     :key="action"
                     @click="userChatInput = action"
-                    class="quick-action px-2.5 py-0.5 rounded-full bg-white/8 hover:bg-white/12 hover:scale-105 text-[11px] text-gray-400 transition-all duration-200"
+                    class="group px-3 py-1.5 rounded-lg border border-white/5 bg-white/[0.02] hover:bg-cyan-500/10 hover:border-cyan-500/30 transition-all duration-300 flex items-center gap-2"
                   >
-                    {{ action }}
+                    <span class="text-cyan-500/40 group-hover:text-cyan-400 font-mono text-[10px] transition-colors duration-300">&gt;&gt;</span>
+                    <span class="text-[11px] text-gray-400 group-hover:text-cyan-100 transition-colors duration-300">{{ action }}</span>
                   </button>
                 </div>
               </div>
@@ -1323,7 +1316,7 @@ onUnmounted(() => {
               <!-- 右侧 Bento 辅助面板 -->
               <div class="lg:col-span-4 flex flex-col gap-4 sticky top-6 self-start">
                 <!-- 卡片 1：系统状态 -->
-                <div class="bg-white/[0.015] backdrop-blur-xl border border-white/5 rounded-2xl p-4 shadow-[inset_0_0_20px_rgba(255,255,255,0.01)]">
+                <div class="bg-white/[0.015] backdrop-blur-xl border border-white/5 rounded-2xl p-4 shadow-[inset_0_0_20px_rgba(255,255,255,0.01)] transition-all duration-500 hover:-translate-y-1 hover:bg-white/[0.03] hover:border-purple-500/20 hover:shadow-[0_10px_30px_rgba(168,85,247,0.1)] group">
                   <div class="flex items-center justify-between mb-2">
                     <h3 class="text-xs font-semibold text-gray-300">系统状态</h3>
                     <span class="text-[10px] text-gray-600">实时</span>
@@ -1354,68 +1347,103 @@ onUnmounted(() => {
                 </div>
 
                 <!-- 卡片 2：今日建议 -->
-                <div class="bg-white/[0.015] backdrop-blur-xl border border-white/5 rounded-2xl p-4 shadow-[inset_0_0_20px_rgba(255,255,255,0.01)]">
+                <div class="bg-white/[0.015] backdrop-blur-xl border border-white/5 rounded-2xl p-4 shadow-[inset_0_0_20px_rgba(255,255,255,0.01)] transition-all duration-500 hover:-translate-y-1 hover:bg-white/[0.03] hover:border-purple-500/20 hover:shadow-[0_10px_30px_rgba(168,85,247,0.1)] group">
                   <div class="flex items-center justify-between mb-2">
                     <h3 class="text-xs font-semibold text-gray-300">今日建议</h3>
                     <span class="text-[10px] text-gray-600">3 条</span>
                   </div>
                   <div class="space-y-1.5">
-                    <div class="flex items-center gap-2">
-                      <div class="w-1 h-1 rounded-full bg-cyan-400"></div>
+                    <div class="flex items-center gap-2 group/item cursor-default">
+                      <div class="w-1.5 h-1.5 rounded-full bg-cyan-400/60 group-hover/item:shadow-[0_0_8px_rgba(34,211,238,0.8)] transition-all duration-300 flex-shrink-0"></div>
                       <span class="text-[11px] text-gray-400">简历优化建议已就绪</span>
                     </div>
-                    <div class="flex items-center gap-2">
-                      <div class="w-1 h-1 rounded-full bg-purple-400"></div>
+                    <div class="flex items-center gap-2 group/item cursor-default">
+                      <div class="w-1.5 h-1.5 rounded-full bg-purple-400/60 group-hover/item:shadow-[0_0_8px_rgba(168,85,247,0.8)] transition-all duration-300 flex-shrink-0"></div>
                       <span class="text-[11px] text-gray-400">专属院校政策更新 3 条</span>
                     </div>
-                    <div class="flex items-center gap-2">
-                      <div class="w-1 h-1 rounded-full bg-amber-400"></div>
+                    <div class="flex items-center gap-2 group/item cursor-default">
+                      <div class="w-1.5 h-1.5 rounded-full bg-amber-400/60 group-hover/item:shadow-[0_0_8px_rgba(251,191,36,0.8)] transition-all duration-300 flex-shrink-0"></div>
                       <span class="text-[11px] text-gray-400">面试模拟热度 TOP1</span>
                     </div>
                   </div>
                 </div>
 
-                <!-- 卡片 3：职业能力图谱 -->
-                <div class="bg-white/[0.015] backdrop-blur-xl border border-white/5 rounded-2xl p-4 shadow-[inset_0_0_20px_rgba(255,255,255,0.01)] flex-1">
+                <!-- 卡片 3：动态多维数据栈（Widget Stack） -->
+                <div class="bg-white/[0.015] backdrop-blur-xl border border-white/5 rounded-2xl p-4 shadow-[inset_0_0_20px_rgba(255,255,255,0.01)] flex-1 transition-all duration-500 hover:bg-white/[0.03] hover:border-cyan-500/20 hover:shadow-[0_10px_30px_rgba(34,211,238,0.1)] group flex flex-col">
+                  <div class="flex items-center justify-between mb-4">
+                    <div class="flex bg-black/20 rounded-lg p-1 border border-white/5 backdrop-blur-sm">
+                      <button @click="activeDataTab = 'resume'" :class="activeDataTab === 'resume' ? 'bg-purple-500/20 text-purple-300 border-purple-500/30' : 'text-gray-500 hover:text-gray-300 border-transparent'" class="px-2 py-1 rounded text-[10px] font-medium transition-all border">简历诊断</button>
+                      <button @click="activeDataTab = 'interview'" :class="activeDataTab === 'interview' ? 'bg-pink-500/20 text-pink-300 border-pink-500/30' : 'text-gray-500 hover:text-gray-300 border-transparent'" class="px-2 py-1 rounded text-[10px] font-medium transition-all border">面试评估</button>
+                      <button @click="activeDataTab = 'career'" :class="activeDataTab === 'career' ? 'bg-blue-500/20 text-blue-300 border-blue-500/30' : 'text-gray-500 hover:text-gray-300 border-transparent'" class="px-2 py-1 rounded text-[10px] font-medium transition-all border">综合规划</button>
+                    </div>
+                    <span class="text-[10px] text-cyan-500/70 cursor-pointer hover:text-cyan-400">历史档案 &gt;</span>
+                  </div>
+
+                  <div class="relative flex-1 overflow-hidden">
+                    <transition name="widget-fade" mode="out-in">
+                      <div v-if="activeDataTab === 'resume'" key="resume" class="space-y-3">
+                        <div><div class="flex justify-between text-[10px] text-gray-500 mb-1"><span>关键词匹配</span><span class="text-purple-400">15/20</span></div><div class="h-1 bg-white/5 rounded-full overflow-hidden"><div class="h-full bg-purple-500/60 animate-boot-bar" style="width: 75%"></div></div></div>
+                        <div><div class="flex justify-between text-[10px] text-gray-500 mb-1"><span>经历含金量</span><span class="text-purple-400">10/20</span></div><div class="h-1 bg-white/5 rounded-full overflow-hidden"><div class="h-full bg-purple-500/60 animate-boot-bar" style="width: 50%"></div></div></div>
+                        <div><div class="flex justify-between text-[10px] text-gray-500 mb-1"><span>逻辑与排版</span><span class="text-purple-400">12/20</span></div><div class="h-1 bg-white/5 rounded-full overflow-hidden"><div class="h-full bg-purple-500/60 animate-boot-bar" style="width: 60%"></div></div></div>
+                      </div>
+                      
+                      <div v-else-if="activeDataTab === 'interview'" key="interview" class="space-y-3">
+                        <div><div class="flex justify-between text-[10px] text-gray-500 mb-1"><span>专业技能</span><span class="text-pink-400">85%</span></div><div class="h-1 bg-white/5 rounded-full overflow-hidden"><div class="h-full bg-pink-500/60 animate-boot-bar" style="width: 85%"></div></div></div>
+                        <div><div class="flex justify-between text-[10px] text-gray-500 mb-1"><span>沟通表达</span><span class="text-pink-400">60%</span></div><div class="h-1 bg-white/5 rounded-full overflow-hidden"><div class="h-full bg-pink-500/60 animate-boot-bar" style="width: 60%"></div></div></div>
+                        <div><div class="flex justify-between text-[10px] text-gray-500 mb-1"><span>抗压韧性</span><span class="text-pink-400">92%</span></div><div class="h-1 bg-white/5 rounded-full overflow-hidden"><div class="h-full bg-pink-500/60 animate-boot-bar" style="width: 92%"></div></div></div>
+                      </div>
+
+                      <div v-else key="career" class="flex items-center justify-center h-full">
+                         <p class="text-xs text-gray-500 border border-dashed border-gray-600/50 rounded-lg p-4 w-full text-center">暂未生成综合规划，<br>请在左侧发起咨询</p>
+                      </div>
+                    </transition>
+                  </div>
+                </div>
+
+                <!-- 卡片 4：智能预测看板 (骨架版) -->
+                <div class="bg-white/[0.015] backdrop-blur-xl border border-white/5 rounded-2xl p-4 shadow-[inset_0_0_20px_rgba(255,255,255,0.01)] transition-all duration-500 hover:-translate-y-1 hover:bg-white/[0.03] hover:border-purple-500/20 hover:shadow-[0_10px_30px_rgba(168,85,247,0.1)] group">
                   <div class="flex items-center justify-between mb-3">
-                    <h3 class="text-xs font-semibold text-gray-300">职业能力图谱</h3>
-                    <span class="text-[10px] text-gray-600">综合 60%</span>
+                    <h3 class="text-xs font-semibold text-gray-300">智能预测</h3>
+                    <div class="flex items-center gap-1.5 bg-indigo-500/10 backdrop-blur-sm border border-indigo-500/20 rounded-full px-2.5 py-1 shadow-[0_0_8px_rgba(99,102,241,0.1)]">
+                      <div class="w-1.5 h-1.5 rounded-full bg-indigo-400 animate-pulse shadow-[0_0_6px_rgba(129,140,248,0.8)]"></div>
+                      <span class="text-[10px] text-indigo-300/80 font-mono">AI 计算中</span>
+                    </div>
                   </div>
                   <div class="space-y-2.5">
-                    <div>
-                      <div class="flex justify-between text-[10px] text-gray-500 mb-0.5">
-                        <span>专业能力</span>
-                        <span>72%</span>
+                    <!-- 冲 -->
+                    <div class="bg-rose-500/5 border border-rose-500/10 rounded-xl p-3 transition-all duration-300 hover:bg-rose-500/10 cursor-default">
+                      <div class="flex items-center gap-2 mb-2">
+                        <span class="text-[10px] px-1.5 py-0.5 rounded bg-rose-500/20 text-rose-300 font-semibold tracking-wider shadow-[0_0_6px_rgba(244,63,94,0.3)]">冲</span>
+                        <span class="text-[10px] text-gray-600">胜率 30%-50%</span>
                       </div>
-                      <div class="h-1 bg-white/5 rounded-full overflow-hidden">
-                        <div class="h-full bg-purple-500/50" style="width: 72%"></div>
-                      </div>
-                    </div>
-                    <div>
-                      <div class="flex justify-between text-[10px] text-gray-500 mb-0.5">
-                        <span>逻辑表达</span>
-                        <span>58%</span>
-                      </div>
-                      <div class="h-1 bg-white/5 rounded-full overflow-hidden">
-                        <div class="h-full bg-cyan-500/50" style="width: 58%"></div>
+                      <div class="flex gap-2">
+                        <div class="h-6 w-full bg-white/5 border border-white/5 rounded backdrop-blur-sm animate-pulse"></div>
+                        <div class="h-6 w-full bg-white/5 border border-white/5 rounded backdrop-blur-sm animate-pulse" style="animation-delay: 0.2s;"></div>
+                        <div class="h-6 w-full bg-white/5 border border-white/5 rounded backdrop-blur-sm animate-pulse" style="animation-delay: 0.4s;"></div>
                       </div>
                     </div>
-                    <div>
-                      <div class="flex justify-between text-[10px] text-gray-500 mb-0.5">
-                        <span>执行韧性</span>
-                        <span>45%</span>
+                    <!-- 稳 -->
+                    <div class="bg-blue-500/5 border border-blue-500/10 rounded-xl p-3 transition-all duration-300 hover:bg-blue-500/10 cursor-default">
+                      <div class="flex items-center gap-2 mb-2">
+                        <span class="text-[10px] px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-300 font-semibold tracking-wider shadow-[0_0_6px_rgba(59,130,246,0.3)]">稳</span>
+                        <span class="text-[10px] text-gray-600">胜率 60%-80%</span>
                       </div>
-                      <div class="h-1 bg-white/5 rounded-full overflow-hidden">
-                        <div class="h-full bg-purple-500/50" style="width: 45%"></div>
+                      <div class="flex gap-2">
+                        <div class="h-6 w-full bg-white/5 border border-white/5 rounded backdrop-blur-sm animate-pulse" style="animation-delay: 0.3s;"></div>
+                        <div class="h-6 w-full bg-white/5 border border-white/5 rounded backdrop-blur-sm animate-pulse" style="animation-delay: 0.5s;"></div>
+                        <div class="h-6 w-full bg-white/5 border border-white/5 rounded backdrop-blur-sm animate-pulse" style="animation-delay: 0.7s;"></div>
                       </div>
                     </div>
-                    <div>
-                      <div class="flex justify-between text-[10px] text-gray-500 mb-0.5">
-                        <span>技术亮点</span>
-                        <span>64%</span>
+                    <!-- 保 -->
+                    <div class="bg-emerald-500/5 border border-emerald-500/10 rounded-xl p-3 transition-all duration-300 hover:bg-emerald-500/10 cursor-default">
+                      <div class="flex items-center gap-2 mb-2">
+                        <span class="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 font-semibold tracking-wider shadow-[0_0_6px_rgba(16,185,129,0.3)]">保</span>
+                        <span class="text-[10px] text-gray-600">胜率 95%以上</span>
                       </div>
-                      <div class="h-1 bg-white/5 rounded-full overflow-hidden">
-                        <div class="h-full bg-cyan-500/50" style="width: 64%"></div>
+                      <div class="flex gap-2">
+                        <div class="h-6 w-full bg-white/5 border border-white/5 rounded backdrop-blur-sm animate-pulse" style="animation-delay: 0.6s;"></div>
+                        <div class="h-6 w-full bg-white/5 border border-white/5 rounded backdrop-blur-sm animate-pulse" style="animation-delay: 0.8s;"></div>
+                        <div class="h-6 w-full bg-white/5 border border-white/5 rounded backdrop-blur-sm animate-pulse" style="animation-delay: 1s;"></div>
                       </div>
                     </div>
                   </div>
@@ -1427,7 +1455,7 @@ onUnmounted(() => {
           <!-- 底部 Dock 输入框 - 通用职业助手 -->
           <div class="input-container absolute bottom-8 left-0 w-full flex justify-center z-[60] pointer-events-none animate-[fadeInUp_0.5s_ease-out_0.5s_both] pb-[env(safe-area-inset-bottom)]">
             <div
-              class="input-wrapper relative pointer-events-auto w-full max-w-4xl bg-black/50 backdrop-blur-md rounded-xl border border-white/10 p-4 transition-all duration-300"
+              class="input-wrapper relative pointer-events-auto w-full max-w-4xl bg-black/50 backdrop-blur-md rounded-xl border border-white/10 p-4 transition-all duration-300 shadow-[0_0_15px_rgba(168,85,247,0.1)] border-purple-500/20 focus-within:border-cyan-500/50 focus-within:shadow-[0_0_30px_rgba(34,211,238,0.2)] focus-within:-translate-y-1"
               :class="{ 'border-cyan-500/50 shadow-[0_0_30px_rgba(6,182,212,0.2)]': isChatLoading }"
             >
               <!-- 个人文件挂载状态（白色极简风格） -->
@@ -1619,33 +1647,10 @@ onUnmounted(() => {
   background-color: #050505;
 }
 
-.left-sidebar::-webkit-scrollbar,
-.main-content::-webkit-scrollbar {
-  width: 6px;
-}
-
-.left-sidebar::-webkit-scrollbar-track,
-.main-content::-webkit-scrollbar-track {
-  background: rgba(255, 255, 255, 0.05);
-  border-radius: 3px;
-}
-
-.left-sidebar::-webkit-scrollbar-thumb,
-.main-content::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.15);
-  border-radius: 3px;
-}
-
-.left-sidebar::-webkit-scrollbar-thumb:hover,
-.main-content::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.25);
-}
-
 .hide-scrollbar {
   scrollbar-width: none;
   -ms-overflow-style: none;
 }
-
 .hide-scrollbar::-webkit-scrollbar {
   display: none;
 }
@@ -1931,5 +1936,70 @@ button.bg-gradient-to-r.from-purple-500.to-indigo-600 {
 
 .animate-ambient-center {
   animation: ambient-center-pulse 8s ease-in-out infinite;
+}
+
+.left-sidebar::-webkit-scrollbar,
+.main-content::-webkit-scrollbar,
+.custom-scrollbar::-webkit-scrollbar {
+  width: 4px;
+}
+.left-sidebar::-webkit-scrollbar-track,
+.main-content::-webkit-scrollbar-track,
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+.left-sidebar::-webkit-scrollbar-thumb,
+.main-content::-webkit-scrollbar-thumb,
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 4px;
+}
+.left-sidebar::-webkit-scrollbar-thumb:hover,
+.main-content::-webkit-scrollbar-thumb:hover,
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: rgba(168, 85, 247, 0.5);
+}
+
+@keyframes boot-up-bar {
+  0% { transform: scaleX(0); transform-origin: left; }
+  100% { transform: scaleX(1); transform-origin: left; }
+}
+.animate-boot-bar {
+  animation: boot-up-bar 1.5s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+.cyber-border-wrapper {
+  position: absolute;
+  inset: 0;
+  border-radius: 1.5rem;
+  padding: 2px;
+  pointer-events: none;
+  -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  overflow: hidden;
+  z-index: 0;
+}
+.cyber-border-inner {
+  position: absolute;
+  inset: -50%;
+  background: conic-gradient(from 0deg, transparent 75%, var(--glow-color) 100%);
+  animation: cyber-spin 3s linear infinite;
+}
+@keyframes cyber-spin {
+  to { transform: rotate(360deg); }
+}
+
+.widget-fade-enter-active,
+.widget-fade-leave-active {
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.widget-fade-enter-from {
+  opacity: 0;
+  transform: translateX(10px) scale(0.98);
+}
+.widget-fade-leave-to {
+  opacity: 0;
+  transform: translateX(-10px) scale(0.98);
 }
 </style>
