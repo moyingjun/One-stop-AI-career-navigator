@@ -4,7 +4,9 @@ import { useRouter, useRoute } from 'vue-router'
 import { FileText, ArrowLeft, Paperclip, Sparkles, Bot, Loader2 } from 'lucide-vue-next'
 import { marked } from 'marked'
 import { parseFile } from '@/utils/ocrHelper.js'
+import { ACCEPTED_EXTENSIONS, validateFile } from '@/utils/fileConstants.js'
 import CyberRadarChart from '@/components/CyberRadarChart.vue'
+import CyberGlassCard from './components/CyberGlassCard.vue'
 
 const isLocalDev = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
 const API_BASE_URL = isLocalDev ? 'http://127.0.0.1:8000/api' : '/api'
@@ -83,6 +85,13 @@ const handleFileSelect = (event) => {
 }
 
 const processFile = async (file) => {
+  const validation = validateFile(file)
+  if (!validation.valid) {
+    error.value = validation.error
+    setTimeout(() => { error.value = '' }, 4000)
+    return
+  }
+
   uploadedFileName.value = file.name
   isParsing.value = true
   isScanPdfDetected.value = false
@@ -272,67 +281,27 @@ onUnmounted(() => {})
 
 <template>
   <div class="min-h-[100dvh] bg-[#020205] text-gray-300 relative flex flex-col lg:flex-row overflow-x-hidden">
-    <!-- 左侧导航侧边栏 -->
-    <div class="hidden lg:flex w-64 fixed h-full z-20">
-      <div class="bg-white/[0.03] backdrop-blur-2xl border-r border-white/[0.05] rounded-3xl m-4 h-[calc(100vh-2rem)] shadow-xl shadow-purple-500/[0.03] flex flex-col">
-        <div class="p-3 border-b border-white/[0.05] pl-4 cursor-pointer" @click="router.push('/')">
-          <div class="flex items-center gap-3 text-left">
-            <div class="w-10 h-10 rounded-full bg-gradient-to-r from-purple-500 to-indigo-600 flex items-center justify-center flex-shrink-0 shadow-lg shadow-purple-500/20">
-              <span class="text-white text-sm font-bold">AI</span>
-            </div>
-            <div class="flex flex-col">
-              <h1 class="text-xl font-bold text-white leading-tight">AI 职业导航</h1>
-              <p class="text-xs text-gray-500 leading-tight mt-0.5">智能助手</p>
-            </div>
-          </div>
-        </div>
-
-        <div class="p-4">
-          <button
-            @click="router.push('/dashboard')"
-            class="w-full bg-white/[0.04] hover:bg-white/[0.08] text-white py-2 px-4 rounded-full transition-all duration-300 flex items-center justify-center gap-2 border border-white/[0.05] hover:border-purple-500/30 group"
-          >
-            <ArrowLeft class="w-5 h-5 group-hover:-translate-x-1 transition-transform duration-300" />
-            <span>返回工作台</span>
-          </button>
-        </div>
-
-        <div class="p-4 flex-1">
-          <div class="mb-6">
-            <h2 class="text-xs text-gray-500 uppercase mb-2 font-semibold text-left pl-2">简历诊断</h2>
-            <div class="flex items-center gap-3 py-1.5 px-2 rounded-lg bg-white/[0.04] text-white">
-              <FileText class="w-5 h-5 text-purple-400" />
-              <span class="text-sm">深度分析</span>
-            </div>
-          </div>
-        </div>
-      </div>
+    <!-- 统一紫/青 blur 背景层 -->
+    <div class="absolute inset-0 pointer-events-none overflow-hidden">
+      <div class="absolute top-[-10%] left-[-5%] w-[50vw] h-[50vw] bg-purple-600/20 blur-[150px] rounded-full"></div>
+      <div class="absolute bottom-[-10%] right-[-5%] w-[50vw] h-[50vw] bg-cyan-600/15 blur-[150px] rounded-full"></div>
     </div>
 
-    <!-- 右侧主工作区 -->
-    <div class="ml-0 lg:ml-64 flex-1 flex flex-col min-h-[100dvh]">
-      <div class="bg-white/[0.02] backdrop-blur-xl border border-white/[0.04] rounded-3xl m-3 md:m-4 flex-1 shadow-xl shadow-purple-500/[0.03] overflow-hidden flex flex-col">
-        <!-- 顶栏 -->
-        <div class="top-bar px-3 py-3 md:px-6 md:py-4 border-b border-white/[0.05] flex items-center justify-between">
-          <div class="flex items-center gap-2 md:gap-3 flex-shrink-0 cursor-pointer hover:opacity-80 transition-opacity duration-200 active:scale-95" @click="router.push('/')">
-            <div class="w-8 h-8 rounded-full bg-gradient-to-r from-purple-500 to-indigo-600 flex items-center justify-center">
-              <Sparkles class="w-4 h-4 text-white" />
-            </div>
-            <h1 class="text-lg md:text-2xl font-bold text-white whitespace-nowrap">AI 简历诊断</h1>
-          </div>
-          <div class="flex items-center gap-2 text-xs text-gray-500 flex-shrink-0">
-            <div class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse shadow-[0_0_8px_rgba(16,185,129,0.8)]"></div>
-            <span class="text-xs md:text-sm text-emerald-400 font-mono hidden sm:inline-block font-semibold tracking-wider drop-shadow-[0_0_5px_rgba(52,211,153,0.4)]">DeepSeek V4 Online</span>
-          </div>
-        </div>
+    <!-- 返回按钮 - 页面级别 -->
+    <div class="absolute top-4 left-4 z-20">
+      <button
+        @click="router.push('/dashboard')"
+        class="flex items-center gap-2 text-cyan-400/70 hover:text-cyan-400 transition-all duration-300 group focus:outline-none focus:ring-2 focus:ring-cyan-400/50 focus:ring-offset-2 focus:ring-offset-[#020205] rounded-lg px-2 py-1"
+      >
+        <ArrowLeft class="w-4 h-4 group-hover:-translate-x-1 transition-transform duration-300" />
+        <span class="text-sm">返回工作台</span>
+      </button>
+    </div>
 
-        <!-- 分屏工作台 -->
-        <div class="flex-1 flex flex-col lg:flex-row overflow-hidden relative">
-          <div class="absolute top-0 left-[10%] w-[300px] h-[300px] bg-purple-600/[0.04] rounded-full blur-[150px] pointer-events-none z-0"></div>
-          <div class="absolute bottom-[20%] right-[5%] w-[400px] h-[400px] bg-cyan-600/[0.03] rounded-full blur-[150px] pointer-events-none z-0"></div>
-
-          <!-- 左栏 40%：简历参考区 -->
-          <div class="relative z-10 w-full lg:w-[40%] border-b lg:border-b-0 lg:border-r border-white/[0.05] flex flex-col min-h-0 overflow-y-auto bg-white/[0.01]">
+    <!-- 主内容 -->
+    <div class="relative z-10 flex w-full flex-col lg:flex-row min-h-[100dvh] pt-14 overflow-y-auto">
+      <!-- 左栏 40%：简历参考区 -->
+      <CyberGlassCard variant="purple" headerless no-padding class="w-full lg:w-[40%] flex flex-col min-h-0 overflow-y-auto border-r border-purple-500/10">
             <!-- 文件上传区 -->
             <div class="p-3 md:p-4 border-b border-white/[0.04]">
               <div
@@ -342,7 +311,7 @@ onUnmounted(() => {})
                 @dragleave.prevent="dropZoneActive = false; isDragging = false"
                 @drop.prevent="handleFileDrop"
               >
-                <input type="file" ref="fileInput" class="hidden" accept=".txt,.pdf,.docx,image/*" @change="handleFileSelect" />
+                <input type="file" ref="fileInput" class="hidden" :accept="ACCEPTED_EXTENSIONS" @change="handleFileSelect" />
                 <div class="flex items-center gap-3">
                   <div class="w-10 h-10 rounded-xl flex items-center justify-center transition-all duration-300" :class="dropZoneActive ? 'bg-purple-500/15' : 'bg-white/[0.03]'">
                     <Paperclip class="w-4 h-4" :class="dropZoneActive ? 'text-purple-400' : 'text-gray-500'" />
@@ -352,7 +321,7 @@ onUnmounted(() => {})
                       <span class="text-purple-400 cursor-pointer font-medium" @click="$refs.fileInput.click()">点击上传</span>
                       <span class="text-gray-500"> 或拖拽文件到此处</span>
                     </p>
-                    <p class="text-[10px] md:text-xs text-gray-600 mt-0.5">TXT / PDF / DOCX / 图片</p>
+                    <p class="text-[10px] md:text-xs text-gray-600 mt-0.5">支持文档与图片格式上传（PDF/Word/TXT/JPG/PNG/WEBP）</p>
                   </div>
                 </div>
                 <p v-if="uploadedFileName && !isParsing" class="mt-2 text-xs text-purple-400 flex items-center gap-1">
@@ -411,10 +380,10 @@ onUnmounted(() => {})
                 {{ error }}
               </div>
             </div>
-          </div>
+          </CyberGlassCard>
 
           <!-- 右栏 60%：AI 诊断报告 -->
-          <div class="relative z-10 flex-1 lg:w-[60%] flex flex-col min-h-0">
+          <CyberGlassCard variant="purple" headerless no-padding class="flex-1 lg:w-[60%] flex flex-col min-h-0">
             <!-- 报告标题栏 -->
             <div class="px-3 py-2 md:px-6 md:py-3 border-b border-white/[0.04] flex items-center justify-between bg-white/[0.01]">
               <div class="flex items-center gap-2">
@@ -488,9 +457,7 @@ onUnmounted(() => {})
                 已根据诊断生成专属题目，立即开启 AI 模拟面试
               </button>
             </div>
-          </div>
-        </div>
-      </div>
+          </CyberGlassCard>
     </div>
   </div>
 </template>

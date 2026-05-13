@@ -7,13 +7,18 @@ import GlobalSetup from '@/GlobalSetup.vue'
 import CareerPlanning from '@/CareerPlanning.vue'
 import HistoryArchive from '@/HistoryArchive.vue'
 import SavedChats from '@/SavedChats.vue'
-import FilesPlaceholder from '@/FilesPlaceholder.vue'
+import KnowledgeBase from '@/KnowledgeBase.vue'
 
 const routes = [
   {
     path: '/',
     name: 'Landing',
     component: Landing
+  },
+  {
+    path: '/auth',
+    name: 'Auth',
+    component: () => import('../Auth.vue')
   },
   {
     path: '/setup',
@@ -24,7 +29,7 @@ const routes = [
     path: '/dashboard',
     name: 'Dashboard',
     component: Dashboard,
-    meta: { requiresSetup: true }
+    meta: { requiresAuth: true }
   },
   {
     path: '/resume-diagnosis',
@@ -61,8 +66,8 @@ const routes = [
   },
   {
     path: '/files',
-    name: 'FilesPlaceholder',
-    component: FilesPlaceholder
+    name: 'KnowledgeBase',
+    component: KnowledgeBase
   }
 ]
 
@@ -72,18 +77,32 @@ const router = createRouter({
 })
 
 router.beforeEach((to, from) => {
-  if (to.meta.requiresSetup) {
-    const candidateName = localStorage.getItem('candidate_name')
-    const resumeText = localStorage.getItem('resume_text')
-
-    // 拦截：如果没有姓名或简历，强制打回 setup
-    if (!candidateName || !resumeText) {
-      return '/setup' 
-    }
+  // 无需认证的页面直接放行
+  if (!to.meta.requiresAuth) {
+    return true
   }
 
-  // 放行：条件都满足，或者是不需要校验的页面，直接 return true
-  return true 
+  // 需要认证的页面：检查 token 或 guest 角色
+  try {
+    const token = localStorage.getItem('token')
+    // token 非空且非纯空白字符串时放行
+    if (token && token.trim().length > 0) {
+      return true
+    }
+
+    // guest 角色放行
+    const userRole = localStorage.getItem('userRole')
+    if (userRole === 'guest') {
+      return true
+    }
+  } catch (e) {
+    // localStorage 不可用时（如浏览器隐私模式）默认放行
+    console.warn('[Router Guard] localStorage 不可用，默认放行:', e)
+    return true
+  }
+
+  // 两者均不满足，重定向至首页
+  return '/'
 })
 
 export default router

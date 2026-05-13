@@ -32,6 +32,7 @@ const radarOption = computed(() => ({
   },
   tooltip: {
     trigger: 'item',
+    appendToBody: true,
     backgroundColor: 'rgba(15, 23, 42, 0.9)',
     borderColor: 'rgba(139, 92, 246, 0.3)',
     textStyle: { color: '#e2e8f0', fontSize: 12 }

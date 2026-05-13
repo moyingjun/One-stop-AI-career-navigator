@@ -3,6 +3,7 @@ import { ref, computed, nextTick, onMounted, onUnmounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { ArrowLeft, Compass, Map, Target, Loader2, FileText, Copy, Download } from 'lucide-vue-next'
 import { marked } from 'marked'
+import CyberGlassCard from './components/CyberGlassCard.vue'
 
 const isLocalDev = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
 const API_BASE_URL = isLocalDev ? 'http://127.0.0.1:8000/api' : '/api'
@@ -216,38 +217,28 @@ onUnmounted(() => {})
 </script>
 
 <template>
-  <div class="min-h-[100dvh] relative flex flex-col lg:flex-row overflow-hidden bg-[#050505]">
-    <!-- 极光流体背景 -->
+  <div class="min-h-[100dvh] relative flex flex-col lg:flex-row overflow-hidden bg-[#020205]">
+    <!-- 统一紫/青 blur 背景层 -->
     <div class="absolute inset-0 pointer-events-none overflow-hidden">
-      <div class="aurora-blob aurora-blob-1"></div>
-      <div class="aurora-blob aurora-blob-2"></div>
-      <div class="aurora-blob aurora-blob-3"></div>
+      <div class="absolute top-[-10%] left-[-5%] w-[50vw] h-[50vw] bg-purple-600/20 blur-[150px] rounded-full"></div>
+      <div class="absolute bottom-[-10%] right-[-5%] w-[50vw] h-[50vw] bg-cyan-600/15 blur-[150px] rounded-full"></div>
     </div>
 
-    <!-- 动态网格 -->
-    <div class="absolute inset-0 pointer-events-none">
-      <div class="absolute inset-0 grid-bg"></div>
-      <div class="absolute inset-0" style="background: radial-gradient(ellipse at center, transparent 0%, #050505 75%);"></div>
+    <!-- 返回按钮 - 页面级别 -->
+    <div class="absolute top-4 left-4 z-20">
+      <button
+        @click="router.push('/dashboard')"
+        class="flex items-center gap-2 text-cyan-400/70 hover:text-cyan-400 transition-all duration-300 group focus:outline-none focus:ring-2 focus:ring-cyan-400/50 focus:ring-offset-2 focus:ring-offset-[#020205] rounded-lg px-2 py-1"
+      >
+        <ArrowLeft class="w-4 h-4 group-hover:-translate-x-1 transition-transform duration-300" />
+        <span class="text-sm">返回工作台</span>
+      </button>
     </div>
-
-    <!-- CRT 扫描线 -->
-    <div class="crt-overlay absolute inset-0 pointer-events-none z-50"></div>
 
     <!-- 主内容 -->
-    <div class="relative z-10 flex w-full flex-col lg:flex-row min-h-[100dvh] overflow-y-auto">
+    <div class="relative z-10 flex w-full flex-col lg:flex-row min-h-[100dvh] pt-14 overflow-y-auto">
       <!-- 左侧控制台 40% -->
-      <div class="left-panel w-full lg:w-[40%] xl:w-[38%] flex flex-col border-r border-cyan-500/10 bg-white/[0.02] backdrop-blur-3xl shadow-[inset_0_1px_1px_rgba(255,255,255,0.1)]">
-        <!-- 返回按钮 -->
-        <div class="p-4 border-b border-cyan-500/10">
-          <button
-            @click="router.push('/dashboard')"
-            class="w-full flex items-center gap-2 text-cyan-400/70 hover:text-cyan-400 transition-all duration-300 group"
-          >
-            <ArrowLeft class="w-4 h-4 group-hover:-translate-x-1 transition-transform duration-300" />
-            <span class="text-sm">返回工作台</span>
-          </button>
-        </div>
-
+      <CyberGlassCard variant="cyan" headerless no-padding class="left-panel w-full lg:w-[40%] xl:w-[38%] flex flex-col border-r border-cyan-500/10">
         <!-- 简历预览面板 -->
         <div class="p-4 border-b border-cyan-500/10">
           <div class="flex items-center gap-2 mb-3">
@@ -319,10 +310,10 @@ onUnmounted(() => {})
             {{ error }}
           </div>
         </div>
-      </div>
+      </CyberGlassCard>
 
       <!-- 右侧主报告区 60% -->
-      <div class="flex-1 w-full lg:w-[60%] flex flex-col relative z-[60] pointer-events-auto pb-[env(safe-area-inset-bottom)]">
+      <CyberGlassCard headerless variant="emerald" no-padding class="flex-1 w-full lg:w-[60%] flex flex-col relative z-[60] pointer-events-auto pb-[env(safe-area-inset-bottom)]">
         <!-- Header -->
         <div class="flex items-center justify-between px-3 py-3 md:px-6 md:py-4 border-b border-cyan-500/20 bg-white/[0.03] backdrop-blur-3xl shadow-[inset_0_1px_1px_rgba(255,255,255,0.1)]">
           <div class="flex items-center gap-2 md:gap-3 flex-shrink-0 cursor-pointer hover:opacity-80 transition-opacity duration-200 active:scale-95" @click="router.push('/')">
@@ -384,93 +375,12 @@ onUnmounted(() => {})
             <p class="text-gray-600 text-xs mt-2">AI 将结合您的简历，提供精准的职业导航</p>
           </div>
         </div>
-      </div>
+      </CyberGlassCard>
     </div>
   </div>
 </template>
 
 <style scoped>
-.aurora-blob {
-  position: absolute;
-  border-radius: 50%;
-  filter: blur(120px);
-  mix-blend-mode: screen;
-}
-
-.aurora-blob-1 {
-  width: 700px;
-  height: 700px;
-  background: radial-gradient(circle, rgba(6, 182, 212, 0.2) 0%, transparent 70%);
-  top: -15%;
-  left: 5%;
-  animation: auroraSpin1 30s ease-in-out infinite;
-}
-
-.aurora-blob-2 {
-  width: 600px;
-  height: 600px;
-  background: radial-gradient(circle, rgba(37, 99, 235, 0.18) 0%, transparent 70%);
-  top: 30%;
-  right: -10%;
-  animation: auroraSpin2 35s ease-in-out infinite;
-}
-
-.aurora-blob-3 {
-  width: 500px;
-  height: 500px;
-  background: radial-gradient(circle, rgba(6, 182, 212, 0.12) 0%, transparent 70%);
-  bottom: -10%;
-  left: 25%;
-  animation: auroraSpin3 40s ease-in-out infinite;
-}
-
-@keyframes auroraSpin1 {
-  0% { transform: translate(0, 0) rotate(0deg) scale(1); }
-  25% { transform: translate(150px, -100px) rotate(90deg) scale(1.2); }
-  50% { transform: translate(-50px, 150px) rotate(180deg) scale(0.85); }
-  75% { transform: translate(-150px, -50px) rotate(270deg) scale(1.1); }
-  100% { transform: translate(0, 0) rotate(360deg) scale(1); }
-}
-
-@keyframes auroraSpin2 {
-  0% { transform: translate(0, 0) rotate(0deg) scale(1); }
-  25% { transform: translate(-200px, 80px) rotate(-90deg) scale(1.15); }
-  50% { transform: translate(100px, -120px) rotate(-180deg) scale(0.9); }
-  75% { transform: translate(80px, 60px) rotate(-270deg) scale(1.1); }
-  100% { transform: translate(0, 0) rotate(-360deg) scale(1); }
-}
-
-@keyframes auroraSpin3 {
-  0% { transform: translate(0, 0) rotate(0deg) scale(1); }
-  33% { transform: translate(100px, -150px) rotate(120deg) scale(1.25); }
-  66% { transform: translate(-150px, 80px) rotate(240deg) scale(0.8); }
-  100% { transform: translate(0, 0) rotate(360deg) scale(1); }
-}
-
-.grid-bg {
-  background-image:
-    linear-gradient(rgba(6, 182, 212, 0.06) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(6, 182, 212, 0.06) 1px, transparent 1px);
-  background-size: 40px 40px;
-}
-
-.crt-overlay {
-  background: repeating-linear-gradient(
-    0deg,
-    transparent,
-    transparent 2px,
-    rgba(255, 255, 255, 0.03) 2px,
-    rgba(255, 255, 255, 0.03) 4px
-  );
-  animation: crtFlicker 0.15s infinite;
-}
-
-@keyframes crtFlicker {
-  0% { opacity: 0.97; }
-  50% { opacity: 1; }
-  100% { opacity: 0.98; }
-}
-
 .generate-btn {
   position: relative;
   overflow: hidden;
@@ -667,5 +577,11 @@ textarea::-webkit-scrollbar-thumb:hover {
   height: 1px;
   background: linear-gradient(90deg, transparent, rgba(6, 182, 212, 0.2), transparent);
   margin: 1.2em 0;
+}
+
+@media (max-width: 767px) {
+  .left-panel {
+    border-right: none;
+  }
 }
 </style>

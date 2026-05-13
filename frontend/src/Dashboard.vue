@@ -5,6 +5,7 @@ import { useRouter } from 'vue-router'
 import { vAutoAnimate } from '@formkit/auto-animate/vue'
 import QrcodeVue from 'qrcode.vue'
 import { parseFile } from '@/utils/ocrHelper.js'
+import { ACCEPTED_EXTENSIONS, validateFile } from '@/utils/fileConstants.js'
 import { marked } from 'marked'
 
 // Pinia store
@@ -116,13 +117,17 @@ const toastMessage = ref('')
 const showToast = ref(false)
 let toastTimer = null
 
-const showComingSoonToast = () => {
-  toastMessage.value = '工程师正在玩命开发中，敬请期待！🚀'
+const showToastMsg = (msg, duration = 3000) => {
+  toastMessage.value = msg
   showToast.value = true
   if (toastTimer) clearTimeout(toastTimer)
   toastTimer = setTimeout(() => {
     showToast.value = false
-  }, 2400)
+  }, duration)
+}
+
+const showComingSoonToast = () => {
+  showToastMsg('工程师正在玩命开发中，敬请期待！🚀', 2400)
 }
 
 // 动态时间问候语
@@ -186,9 +191,9 @@ const handleMouseMove = (e) => {
 const uploadKnowledgeFile = async (file) => {
   if (!file || isKnowledgeUploading.value) return
 
-  const ext = file.name.split('.').pop()?.toLowerCase()
-  if (!['pdf', 'txt'].includes(ext)) {
-    alert('当前知识库仅支持 PDF / TXT 文件')
+  const { valid, error: validationError } = validateFile(file)
+  if (!valid) {
+    showToastMsg(validationError)
     return
   }
 
@@ -222,7 +227,7 @@ const uploadKnowledgeFile = async (file) => {
     localStorage.setItem('dashboard_knowledge_file_name', knowledgeFileName.value)
   } catch (error) {
     console.error('知识库上传失败', error)
-    alert(error.message || '知识库上传失败，请稍后重试')
+    showToastMsg(error.message || '知识库上传失败，请稍后重试')
   } finally {
     isKnowledgeUploading.value = false
   }
@@ -253,14 +258,14 @@ const processGlobalResume = async (file) => {
   try {
     const text = await parseFile(file)
     if (!text.trim()) {
-      alert('文件内容为空，请检查后重试')
+      showToastMsg('文件内容为空，请检查后重试')
       return
     }
     pendingFileName.value = file.name
     pendingResumeText.value = text
     showResumeDialog.value = true
   } catch (e) {
-    alert(e.message || '文件解析失败，请重试')
+    showToastMsg(e.message || '文件解析失败，请重试')
   }
 }
 
@@ -289,7 +294,7 @@ const handleStorageChange = (e) => {
 // 面试舱门逻辑
 const openInterviewModal = () => {
   if (globalResumeStatus.value === 'missing') {
-    alert('请先在【全局信息录入】或侧边栏上传您的简历')
+    showToastMsg('请先在【全局信息录入】或侧边栏上传您的简历')
     return
   }
   const savedJd = localStorage.getItem('current_interview_jd')
@@ -306,7 +311,7 @@ const closeInterviewModal = () => {
 
 const unlockInterview = () => {
   if (!interviewJd.value.trim()) {
-    alert('请先粘贴岗位描述 (JD)')
+    showToastMsg('请先粘贴岗位描述 (JD)')
     return
   }
   localStorage.setItem('current_interview_jd', interviewJd.value.trim())
@@ -1048,7 +1053,7 @@ onUnmounted(() => {
                 ref="globalFileInput"
                 type="file"
                 class="hidden"
-                accept=".txt,.pdf"
+                :accept="ACCEPTED_EXTENSIONS"
                 @change="handleGlobalFileSelect"
               />
             </div>
@@ -1503,7 +1508,7 @@ onUnmounted(() => {
 
               <div class="flex items-end gap-3">
                 <label class="relative flex-shrink-0 mb-0.5">
-                  <input type="file" class="absolute inset-0 w-full h-full opacity-0 cursor-pointer" @change="handleChatFileUpload" accept=".pdf,.txt" />
+                  <input type="file" class="absolute inset-0 w-full h-full opacity-0 cursor-pointer" @change="handleChatFileUpload" :accept="ACCEPTED_EXTENSIONS" />
                   <Paperclip class="w-5 h-5 text-gray-400 hover:text-cyan-400 transition-colors cursor-pointer" />
                 </label>
 

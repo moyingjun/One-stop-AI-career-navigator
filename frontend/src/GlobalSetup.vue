@@ -3,6 +3,7 @@ import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { Terminal, User, FileText, ArrowRight, Upload, Sparkles, Loader2, FileUp, ClipboardPaste } from 'lucide-vue-next'
 import { parseFile } from '@/utils/ocrHelper.js'
+import { ACCEPTED_EXTENSIONS, validateFile } from '@/utils/fileConstants.js'
 
 const router = useRouter()
 
@@ -141,7 +142,7 @@ onMounted(() => {
               <FileText class="w-4 h-4 text-fuchsia-400" />
               简历输入
               <span class="text-red-400">*</span>
-              <span class="text-xs text-gray-500 ml-1">（支持 TXT, PDF, DOCX 或直接粘贴）</span>
+              <span class="text-xs text-gray-500 ml-1">（支持文档与图片格式上传：PDF/Word/TXT/JPG/PNG/WEBP）</span>
             </label>
 
             <div class="resume-card relative rounded-2xl border border-white/10 bg-white/[0.02] overflow-hidden">
@@ -162,7 +163,7 @@ onMounted(() => {
                   ref="fileInput"
                   type="file"
                   class="hidden"
-                  accept=".txt,.pdf,.docx"
+                  :accept="ACCEPTED_EXTENSIONS"
                   @change="handleFileSelect"
                 />
 
@@ -180,7 +181,7 @@ onMounted(() => {
                   <div class="flex-1">
                     <template v-if="!parseSuccess">
                       <p class="text-gray-300 text-sm font-medium">拖拽简历文档到此处，或点击上传</p>
-                      <p class="text-gray-600 text-xs mt-0.5">支持 TXT, PDF, DOCX 格式</p>
+                      <p class="text-gray-600 text-xs mt-0.5">支持文档与图片格式上传（PDF/Word/TXT/JPG/PNG/WEBP）</p>
                     </template>
                     <template v-else>
                       <div class="flex items-center gap-2">

@@ -108,6 +108,48 @@ def _extract_text_from_pdf(content: bytes) -> str:
         raise HTTPException(status_code=400, detail=f"PDF 解析失败: {exc}") from exc
 
 
+def _extract_text_from_docx(content: bytes) -> str:
+    """从 DOCX 文件中提取文本。"""
+    try:
+        from docx import Document
+
+        doc = Document(io.BytesIO(content))
+        paragraphs = [p.text for p in doc.paragraphs if p.text.strip()]
+        return "\n".join(paragraphs)
+    except ImportError:
+        raise HTTPException(
+            status_code=500,
+            detail="服务器缺少 python-docx 依赖，无法解析 Word 文件",
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"DOCX 解析失败: {exc}") from exc
+
+
+def _extract_text_from_image(content: bytes) -> str:
+    """从图片中通过 OCR 提取文本（使用腾讯云 OCR 或 fallback）。"""
+    import base64
+
+    base64_str = base64.b64encode(content).decode("utf-8")
+
+    # 尝试调用本地 OCR 接口（与前端 ocrHelper 使用同一后端接口）
+    try:
+        import httpx
+
+        api_base = os.getenv("OCR_API_BASE", "http://127.0.0.1:8000/api")
+        resp = httpx.post(
+            f"{api_base}/ocr/recognize",
+            json={"image_base64": f"data:image/png;base64,{base64_str}"},
+            timeout=60,
+        )
+        if resp.status_code == 200:
+            data = resp.json()
+            return data.get("extracted_text", "")
+    except Exception as exc:
+        print(f"[RAG] 图片 OCR 调用失败: {exc}")
+
+    raise HTTPException(status_code=400, detail="图片 OCR 识别失败，请确保 OCR 服务可用")
+
+
 def extract_text_from_file(filename: str, content: bytes) -> str:
     """根据文件扩展名选择解析器。"""
     suffix = os.path.splitext(filename.lower())[1]
@@ -115,8 +157,15 @@ def extract_text_from_file(filename: str, content: bytes) -> str:
         text = _extract_text_from_pdf(content)
     elif suffix in {".txt", ".md"}:
         text = _decode_text(content)
+    elif suffix in {".docx", ".doc"}:
+        text = _extract_text_from_docx(content)
+    elif suffix in {".jpg", ".jpeg", ".png", ".webp"}:
+        text = _extract_text_from_image(content)
     else:
-        raise HTTPException(status_code=400, detail="仅支持 PDF、TXT 和 MD 文件")
+        raise HTTPException(
+            status_code=400,
+            detail="不支持的文件格式，请上传 PDF、Word、TXT、MD 或图片文件",
+        )
 
     text = "\n".join(line.strip() for line in text.splitlines() if line.strip())
     if not text:

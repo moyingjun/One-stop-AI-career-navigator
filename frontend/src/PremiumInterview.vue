@@ -3,6 +3,7 @@ import { ref, computed, nextTick, onMounted, onUnmounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { ArrowLeft, Send, UserCircle, Cpu, Loader2, Shield, AlertTriangle, X, Sprout, Briefcase, Flame } from 'lucide-vue-next'
 import { marked } from 'marked'
+import CyberGlassCard from './components/CyberGlassCard.vue'
 
 const generateUUID = () => {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
@@ -613,31 +614,41 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="min-h-[100dvh] relative flex flex-col lg:flex-row overflow-hidden bg-[#050505] transition-all duration-1000" :class="{
+  <div class="min-h-[100dvh] relative flex flex-col lg:flex-row overflow-hidden bg-[#020205] transition-all duration-1000" :class="{
     'ambient-negative': ambientMood === 'negative',
     'ambient-positive': ambientMood === 'positive',
     'ambient-neutral': ambientMood === 'neutral'
   }">
-    <!-- 极光流体背景 -->
+    <!-- 统一紫/青 blur 背景层 -->
     <div class="absolute inset-0 pointer-events-none overflow-hidden">
-      <div class="aurora-blob aurora-blob-1"></div>
-      <div class="aurora-blob aurora-blob-2"></div>
-      <div class="aurora-blob aurora-blob-3"></div>
+      <div class="absolute top-[-10%] left-[-5%] w-[50vw] h-[50vw] bg-purple-600/20 blur-[150px] rounded-full"></div>
+      <div class="absolute bottom-[-10%] right-[-5%] w-[50vw] h-[50vw] bg-cyan-600/15 blur-[150px] rounded-full"></div>
     </div>
 
     <!-- 动态网格 -->
     <div class="absolute inset-0 pointer-events-none">
       <div class="absolute inset-0 grid-bg"></div>
-      <div class="absolute inset-0" style="background: radial-gradient(ellipse at center, transparent 0%, #050505 75%);"></div>
+      <div class="absolute inset-0" style="background: radial-gradient(ellipse at center, transparent 0%, #020205 75%);"></div>
     </div>
 
     <!-- CRT 扫描线覆盖层 -->
     <div class="crt-overlay absolute inset-0 pointer-events-none z-50"></div>
 
+    <!-- 返回按钮 - 页面级别 -->
+    <div class="absolute top-4 left-4 z-20">
+      <button
+        @click="router.push('/dashboard')"
+        class="flex items-center gap-2 text-cyan-400/70 hover:text-cyan-400 transition-all duration-300 group focus:outline-none focus:ring-2 focus:ring-cyan-400/50 focus:ring-offset-2 focus:ring-offset-[#020205] rounded-lg px-2 py-1"
+      >
+        <ArrowLeft class="w-4 h-4 group-hover:-translate-x-1 transition-transform duration-300" />
+        <span class="text-sm">返回工作台</span>
+      </button>
+    </div>
+
     <!-- 主内容 -->
-    <div class="relative z-10 flex w-full h-[100dvh]">
+    <div class="relative z-10 flex w-full h-[100dvh] pt-14">
       <!-- 左侧面板 -->
-      <div class="left-panel hidden lg:flex w-[30%] flex-col border-r border-white/10 bg-white/[0.02] backdrop-blur-3xl shadow-[inset_0_1px_1px_rgba(255,255,255,0.1)] relative transition-all duration-500" :class="isAiSpeaking ? 'opacity-60' : ''">
+      <CyberGlassCard variant="pink" headerless no-padding class="left-panel hidden lg:flex w-[30%] flex-col border-r border-white/10 relative transition-all duration-500" :class="isAiSpeaking ? 'opacity-60' : ''">
         <!-- 专注模式遮罩 -->
         <div v-if="isAiSpeaking" class="absolute inset-0 bg-black/40 backdrop-blur-sm z-10 flex items-center justify-center">
           <div class="text-center">
@@ -646,17 +657,6 @@ onUnmounted(() => {
             </div>
             <p class="text-xs" :class="themeConfig.text">AI 正在审视...</p>
           </div>
-        </div>
-
-        <!-- 返回按钮 -->
-        <div class="p-4 border-b border-white/10 relative z-0">
-          <button
-            @click="router.push('/dashboard')"
-            class="w-full flex items-center gap-2 transition-all duration-300 group"
-            :class="[themeConfig.text, 'hover:opacity-80']">
-            <ArrowLeft class="w-4 h-4 group-hover:-translate-x-1 transition-transform duration-300" />
-            <span class="text-sm">返回工作台</span>
-          </button>
         </div>
 
         <!-- 能力评估雷达 -->
@@ -725,10 +725,10 @@ onUnmounted(() => {
             </div>
           </div>
         </div>
-      </div>
+      </CyberGlassCard>
 
       <!-- 右侧主对话控制台 -->
-      <div class="flex-1 flex flex-col relative z-[60] pointer-events-auto pb-[env(safe-area-inset-bottom)]">
+      <CyberGlassCard headerless variant="default" no-padding class="flex-1 flex flex-col relative z-[60] pointer-events-auto pb-[env(safe-area-inset-bottom)]">
         <!-- 专注模式脉冲光晕 -->
         <div v-if="isAiSpeaking" class="absolute inset-0 pointer-events-none z-0">
           <div class="focus-glow focus-glow-1"></div>
@@ -853,7 +853,7 @@ onUnmounted(() => {
             </button>
           </div>
         </div>
-      </div>
+      </CyberGlassCard>
     </div>
 
     <!-- 难度选择 Modal -->
@@ -1013,24 +1013,6 @@ onUnmounted(() => {
 </template>
 
 <style scoped>
-/* 极光流体动画 - GPU 加速优化 */
-.aurora-blob {
-  position: absolute;
-  border-radius: 50%;
-  filter: blur(80px);
-  mix-blend-mode: screen;
-  transform: translateZ(0);
-  will-change: transform, opacity;
-  backface-visibility: hidden;
-}
-.aurora-blob-1 { width: 600px; height: 600px; background: radial-gradient(circle, rgba(147, 51, 234, 0.18) 0%, transparent 70%); top: -15%; left: 5%; animation: auroraSpin1 40s ease-in-out infinite; }
-.aurora-blob-2 { width: 500px; height: 500px; background: radial-gradient(circle, rgba(236, 72, 153, 0.16) 0%, transparent 70%); top: 30%; right: -10%; animation: auroraSpin2 45s ease-in-out infinite; }
-.aurora-blob-3 { width: 400px; height: 400px; background: radial-gradient(circle, rgba(6, 182, 212, 0.14) 0%, transparent 70%); bottom: -10%; left: 25%; animation: auroraSpin3 50s ease-in-out infinite; }
-
-@keyframes auroraSpin1 { 0%, 100% { transform: translate(0, 0) rotate(0deg) scale(1); } 50% { transform: translate(100px, -80px) rotate(180deg) scale(1.1); } }
-@keyframes auroraSpin2 { 0%, 100% { transform: translate(0, 0) rotate(0deg) scale(1); } 50% { transform: translate(-120px, 60px) rotate(-180deg) scale(1.08); } }
-@keyframes auroraSpin3 { 0%, 100% { transform: translate(0, 0) rotate(0deg) scale(1); } 50% { transform: translate(80px, -100px) rotate(180deg) scale(1.15); } }
-
 .grid-bg { background-image: linear-gradient(rgba(236, 72, 153, 0.06) 1px, transparent 1px), linear-gradient(90deg, rgba(236, 72, 153, 0.06) 1px, transparent 1px); background-size: 40px 40px; }
 
 /* CRT 扫描线 - 降频优化：移除高频闪烁动画 + GPU加速 + 防遮挡 */
@@ -1183,5 +1165,12 @@ onUnmounted(() => {
   background: linear-gradient(to right, transparent, currentColor, transparent);
   animation: scanline 3s linear infinite;
   pointer-events: none;
+}
+
+/* 移动端响应式：隐藏左侧面板，仅显示对话区 */
+@media (max-width: 767px) {
+  .left-panel {
+    display: none;
+  }
 }
 </style>

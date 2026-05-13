@@ -248,6 +248,15 @@ const destroySmoke = () => {
   smokeCamera = null
 }
 
+const enterAsGuest = () => {
+  localStorage.setItem('userRole', 'guest')
+  router.push('/dashboard')
+}
+
+const goToAuth = () => {
+  router.push('/auth')
+}
+
 const goToDashboard = () => {
   router.push('/dashboard')
 }
@@ -373,14 +382,17 @@ onBeforeUnmount(() => {
       </div>
 
       <div class="flex items-center gap-4">
-        <button class="text-gray-300 hover:text-white transition-colors duration-300 px-4 py-2">
-          登录
+        <button 
+          @click="goToAuth"
+          class="text-gray-300 hover:text-white transition-colors duration-300 px-4 py-2"
+        >
+          登录 / 注册
         </button>
         <button 
-          @click="goToDashboard"
+          @click="enterAsGuest"
           class="bg-gradient-to-r from-purple-600 to-indigo-600 text-white px-6 py-2 rounded-full font-medium hover:shadow-lg hover:shadow-purple-500/40 transition-all duration-300"
         >
-          免费开始
+          免注册极速体验
         </button>
       </div>
     </nav>
@@ -409,13 +421,16 @@ onBeforeUnmount(() => {
 
           <div class="flex flex-col md:flex-row gap-4 mb-6 md:mb-12 animate-blur-in-up animation-delay-400">
             <button 
-              @click="goToDashboard"
+              @click="enterAsGuest"
               class="bg-gradient-to-r from-cyan-500 to-purple-600 text-white px-6 py-3 md:px-10 md:py-4 rounded-xl font-semibold text-base md:text-lg border border-white/20 shadow-[0_0_40px_rgba(34,211,238,0.4)] hover:shadow-[0_0_60px_rgba(168,85,247,0.6)] transition-all duration-300 hover:-translate-y-0.5"
             >
-              免费开始使用
+              免注册极速体验
             </button>
-            <button class="bg-white/5 backdrop-blur-xl border border-white/10 text-gray-300 px-6 py-3 md:px-10 md:py-4 rounded-xl font-semibold text-base md:text-lg hover:bg-white/10 transition-all duration-300 hover:-translate-y-0.5">
-              查看演示
+            <button 
+              @click="goToAuth"
+              class="bg-white/5 backdrop-blur-xl border border-white/10 text-gray-300 px-6 py-3 md:px-10 md:py-4 rounded-xl font-semibold text-base md:text-lg hover:bg-white/10 transition-all duration-300 hover:-translate-y-0.5"
+            >
+              登录 / 注册
             </button>
           </div>
 

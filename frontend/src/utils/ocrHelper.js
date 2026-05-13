@@ -116,11 +116,11 @@ export const parseFile = async (file, { onScanDetected } = {}) => {
 
   if (ext === 'txt') {
     return await parseTxtFile(file)
-  } else if (ext === 'docx') {
+  } else if (ext === 'docx' || ext === 'doc') {
     return await parseDocxFile(file)
   } else if (ext === 'pdf') {
     return await parsePdfFile(file, onScanDetected)
   }
 
-  throw new Error('不支持的文件格式，仅支持 TXT / PDF / DOCX 或图片')
+  throw new Error(`不支持的文件格式: .${ext}`)
 }
