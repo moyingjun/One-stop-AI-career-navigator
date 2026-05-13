@@ -7,10 +7,89 @@ import QrcodeVue from 'qrcode.vue'
 import { parseFile } from '@/utils/ocrHelper.js'
 import { marked } from 'marked'
 
+// ECharts tree-shaking imports
+import { use } from 'echarts/core'
+import { CanvasRenderer } from 'echarts/renderers'
+import { RadarChart } from 'echarts/charts'
+import { TitleComponent, TooltipComponent, LegendComponent } from 'echarts/components'
+import VChart from 'vue-echarts'
+
+use([CanvasRenderer, RadarChart, TitleComponent, TooltipComponent, LegendComponent])
+
+// Pinia store
+import { useUserStore } from '@/stores/userStore'
+
 import { Bot, Bookmark, FileText, MessageSquare, Folder, Settings, Clock, Puzzle, Plus, Search, Paperclip, MoreHorizontal, ChevronDown, ChevronLeft, ChevronRight, Upload, CheckCircle, X, Loader2, History, Send, Sparkles, Mic, GraduationCap, Star, Trash2 }
   from 'lucide-vue-next'
 
 const router = useRouter()
+const userStore = useUserStore()
+const radarData = computed(() => userStore.radarData)
+
+// 六维能力雷达图 ECharts 配置
+const radarOption = computed(() => ({
+  title: {
+    show: false
+  },
+  tooltip: {
+    trigger: 'item',
+    backgroundColor: 'rgba(15, 23, 42, 0.9)',
+    borderColor: 'rgba(139, 92, 246, 0.3)',
+    textStyle: { color: '#e2e8f0', fontSize: 12 }
+  },
+  legend: {
+    show: false
+  },
+  radar: {
+    indicator: radarData.value.indicators.map(item => ({
+      name: item.name,
+      max: item.max
+    })),
+    shape: 'polygon',
+    splitNumber: 4,
+    axisName: {
+      color: '#a5b4fc',
+      fontSize: 11
+    },
+    splitLine: {
+      lineStyle: { color: 'rgba(139, 92, 246, 0.15)' }
+    },
+    splitArea: {
+      areaStyle: { color: ['rgba(139, 92, 246, 0.02)', 'rgba(139, 92, 246, 0.05)'] }
+    },
+    axisLine: {
+      lineStyle: { color: 'rgba(139, 92, 246, 0.2)' }
+    }
+  },
+  series: [{
+    type: 'radar',
+    symbol: 'circle',
+    symbolSize: 5,
+    data: [{
+      value: radarData.value.values,
+      name: '能力评估',
+      areaStyle: {
+        color: {
+          type: 'linear',
+          x: 0, y: 0, x2: 0, y2: 1,
+          colorStops: [
+            { offset: 0, color: 'rgba(6, 182, 212, 0.35)' },
+            { offset: 1, color: 'rgba(139, 92, 246, 0.10)' }
+          ]
+        }
+      },
+      lineStyle: {
+        color: 'rgba(6, 182, 212, 0.8)',
+        width: 2
+      },
+      itemStyle: {
+        color: '#06b6d4',
+        borderColor: '#a78bfa',
+        borderWidth: 1
+      }
+    }]
+  }]
+}))
 
 const activeDataTab = ref('resume'); // 'resume' | 'interview' | 'career'
 
@@ -1277,6 +1356,22 @@ onUnmounted(() => {
                     <span class="text-[11px] text-gray-400 group-hover:text-cyan-100 transition-colors duration-300">{{ action }}</span>
                   </button>
                 </div>
+              </div>
+
+              <!-- 六维能力雷达图 Bento Card -->
+              <div class="rounded-[28px] border border-purple-500/20 bg-white/[0.03] backdrop-blur-xl p-5 animate-fade-in-up animation-delay-600">
+                <div class="flex items-center gap-2 mb-3">
+                  <div class="w-7 h-7 rounded-lg bg-purple-500/10 border border-purple-500/20 flex items-center justify-center">
+                    <Sparkles class="w-3.5 h-3.5 text-purple-400" />
+                  </div>
+                  <h2 class="text-base font-semibold text-gray-200">六维能力雷达图</h2>
+                  <span class="text-[10px] text-gray-500 ml-auto">Mock Data</span>
+                </div>
+                <v-chart
+                  :option="radarOption"
+                  style="height: 300px; width: 100%;"
+                  :autoresize="true"
+                />
               </div>
 
               <div class="chat-messages mb-6 space-y-4 animate-[fadeInUp_0.5s_ease-out_0.3s_both]" v-if="chatMessages.length > 0" v-auto-animate>

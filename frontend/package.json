@@ -12,15 +12,18 @@
     "@formkit/auto-animate": "^0.9.0",
     "@vueuse/core": "^14.2.1",
     "axios": "^1.15.0",
+    "echarts": "^6.0.0",
     "lucide-vue-next": "^1.0.0",
     "mammoth": "^1.12.0",
     "marked": "^18.0.2",
     "pdfjs-dist": "^5.6.205",
+    "pinia": "^3.0.4",
     "qrcode-vue": "^1.2.0",
     "qrcode.vue": "^3.9.0",
     "three": "^0.181.2",
     "vanta": "^0.5.24",
     "vue": "^3.5.32",
+    "vue-echarts": "^8.0.1",
     "vue-router": "^5.0.4"
   },
   "devDependencies": {
