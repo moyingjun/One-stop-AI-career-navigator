@@ -7,17 +7,9 @@ import QrcodeVue from 'qrcode.vue'
 import { parseFile } from '@/utils/ocrHelper.js'
 import { marked } from 'marked'
 
-// ECharts tree-shaking imports
-import { use } from 'echarts/core'
-import { CanvasRenderer } from 'echarts/renderers'
-import { RadarChart } from 'echarts/charts'
-import { TitleComponent, TooltipComponent, LegendComponent } from 'echarts/components'
-import VChart from 'vue-echarts'
-
-use([CanvasRenderer, RadarChart, TitleComponent, TooltipComponent, LegendComponent])
-
 // Pinia store
 import { useUserStore } from '@/stores/userStore'
+import CyberRadarChart from '@/components/CyberRadarChart.vue'
 
 import { Bot, Bookmark, FileText, MessageSquare, Folder, Settings, Clock, Puzzle, Plus, Search, Paperclip, MoreHorizontal, ChevronDown, ChevronLeft, ChevronRight, Upload, CheckCircle, X, Loader2, History, Send, Sparkles, Mic, GraduationCap, Star, Trash2 }
   from 'lucide-vue-next'
@@ -26,70 +18,6 @@ const router = useRouter()
 const userStore = useUserStore()
 const radarData = computed(() => userStore.radarData)
 
-// 六维能力雷达图 ECharts 配置
-const radarOption = computed(() => ({
-  title: {
-    show: false
-  },
-  tooltip: {
-    trigger: 'item',
-    backgroundColor: 'rgba(15, 23, 42, 0.9)',
-    borderColor: 'rgba(139, 92, 246, 0.3)',
-    textStyle: { color: '#e2e8f0', fontSize: 12 }
-  },
-  legend: {
-    show: false
-  },
-  radar: {
-    indicator: radarData.value.indicators.map(item => ({
-      name: item.name,
-      max: item.max
-    })),
-    shape: 'polygon',
-    splitNumber: 4,
-    axisName: {
-      color: '#a5b4fc',
-      fontSize: 11
-    },
-    splitLine: {
-      lineStyle: { color: 'rgba(139, 92, 246, 0.15)' }
-    },
-    splitArea: {
-      areaStyle: { color: ['rgba(139, 92, 246, 0.02)', 'rgba(139, 92, 246, 0.05)'] }
-    },
-    axisLine: {
-      lineStyle: { color: 'rgba(139, 92, 246, 0.2)' }
-    }
-  },
-  series: [{
-    type: 'radar',
-    symbol: 'circle',
-    symbolSize: 5,
-    data: [{
-      value: radarData.value.values,
-      name: '能力评估',
-      areaStyle: {
-        color: {
-          type: 'linear',
-          x: 0, y: 0, x2: 0, y2: 1,
-          colorStops: [
-            { offset: 0, color: 'rgba(6, 182, 212, 0.35)' },
-            { offset: 1, color: 'rgba(139, 92, 246, 0.10)' }
-          ]
-        }
-      },
-      lineStyle: {
-        color: 'rgba(6, 182, 212, 0.8)',
-        width: 2
-      },
-      itemStyle: {
-        color: '#06b6d4',
-        borderColor: '#a78bfa',
-        borderWidth: 1
-      }
-    }]
-  }]
-}))
 
 const activeDataTab = ref('resume'); // 'resume' | 'interview' | 'career'
 
@@ -1358,21 +1286,7 @@ onUnmounted(() => {
                 </div>
               </div>
 
-              <!-- 六维能力雷达图 Bento Card -->
-              <div class="rounded-[28px] border border-purple-500/20 bg-white/[0.03] backdrop-blur-xl p-5 animate-fade-in-up animation-delay-600">
-                <div class="flex items-center gap-2 mb-3">
-                  <div class="w-7 h-7 rounded-lg bg-purple-500/10 border border-purple-500/20 flex items-center justify-center">
-                    <Sparkles class="w-3.5 h-3.5 text-purple-400" />
-                  </div>
-                  <h2 class="text-base font-semibold text-gray-200">六维能力雷达图</h2>
-                  <span class="text-[10px] text-gray-500 ml-auto">Mock Data</span>
-                </div>
-                <v-chart
-                  :option="radarOption"
-                  style="height: 300px; width: 100%;"
-                  :autoresize="true"
-                />
-              </div>
+
 
               <div class="chat-messages mb-6 space-y-4 animate-[fadeInUp_0.5s_ease-out_0.3s_both]" v-if="chatMessages.length > 0" v-auto-animate>
                 <div v-for="(message, index) in chatMessages" :key="index" :id="message.id" class="chat-message">
@@ -1476,16 +1390,28 @@ onUnmounted(() => {
 
                   <div class="relative flex-1 overflow-hidden">
                     <transition name="widget-fade" mode="out-in">
-                      <div v-if="activeDataTab === 'resume'" key="resume" class="space-y-3">
-                        <div><div class="flex justify-between text-[10px] text-gray-500 mb-1"><span>关键词匹配</span><span class="text-purple-400">15/20</span></div><div class="h-1 bg-white/5 rounded-full overflow-hidden"><div class="h-full bg-purple-500/60 animate-boot-bar" style="width: 75%"></div></div></div>
-                        <div><div class="flex justify-between text-[10px] text-gray-500 mb-1"><span>经历含金量</span><span class="text-purple-400">10/20</span></div><div class="h-1 bg-white/5 rounded-full overflow-hidden"><div class="h-full bg-purple-500/60 animate-boot-bar" style="width: 50%"></div></div></div>
-                        <div><div class="flex justify-between text-[10px] text-gray-500 mb-1"><span>逻辑与排版</span><span class="text-purple-400">12/20</span></div><div class="h-1 bg-white/5 rounded-full overflow-hidden"><div class="h-full bg-purple-500/60 animate-boot-bar" style="width: 60%"></div></div></div>
+                      <div v-if="activeDataTab === 'resume'" key="resume" class="flex flex-col">
+                        <CyberRadarChart :chartData="radarData" style="height: 220px;" class="-mt-4 -mb-2" />
+                        <div class="grid grid-cols-2 gap-x-4 gap-y-3">
+                          <div><div class="flex justify-between text-[9px] text-gray-500 mb-1"><span>技术能力</span><span class="text-purple-400">78%</span></div><div class="h-1 bg-white/5 rounded-full overflow-hidden"><div class="h-full bg-purple-500/60 animate-boot-bar" style="width: 78%"></div></div></div>
+                          <div><div class="flex justify-between text-[9px] text-gray-500 mb-1"><span>沟通表达</span><span class="text-cyan-400">65%</span></div><div class="h-1 bg-white/5 rounded-full overflow-hidden"><div class="h-full bg-cyan-500/60 animate-boot-bar" style="width: 65%"></div></div></div>
+                          <div><div class="flex justify-between text-[9px] text-gray-500 mb-1"><span>项目经验</span><span class="text-purple-400">82%</span></div><div class="h-1 bg-white/5 rounded-full overflow-hidden"><div class="h-full bg-purple-500/60 animate-boot-bar" style="width: 82%"></div></div></div>
+                          <div><div class="flex justify-between text-[9px] text-gray-500 mb-1"><span>学习能力</span><span class="text-cyan-400">90%</span></div><div class="h-1 bg-white/5 rounded-full overflow-hidden"><div class="h-full bg-cyan-500/60 animate-boot-bar" style="width: 90%"></div></div></div>
+                          <div><div class="flex justify-between text-[9px] text-gray-500 mb-1"><span>团队协作</span><span class="text-purple-400">72%</span></div><div class="h-1 bg-white/5 rounded-full overflow-hidden"><div class="h-full bg-purple-500/60 animate-boot-bar" style="width: 72%"></div></div></div>
+                          <div><div class="flex justify-between text-[9px] text-gray-500 mb-1"><span>职业规划</span><span class="text-cyan-400">68%</span></div><div class="h-1 bg-white/5 rounded-full overflow-hidden"><div class="h-full bg-cyan-500/60 animate-boot-bar" style="width: 68%"></div></div></div>
+                        </div>
                       </div>
                       
-                      <div v-else-if="activeDataTab === 'interview'" key="interview" class="space-y-3">
-                        <div><div class="flex justify-between text-[10px] text-gray-500 mb-1"><span>专业技能</span><span class="text-pink-400">85%</span></div><div class="h-1 bg-white/5 rounded-full overflow-hidden"><div class="h-full bg-pink-500/60 animate-boot-bar" style="width: 85%"></div></div></div>
-                        <div><div class="flex justify-between text-[10px] text-gray-500 mb-1"><span>沟通表达</span><span class="text-pink-400">60%</span></div><div class="h-1 bg-white/5 rounded-full overflow-hidden"><div class="h-full bg-pink-500/60 animate-boot-bar" style="width: 60%"></div></div></div>
-                        <div><div class="flex justify-between text-[10px] text-gray-500 mb-1"><span>抗压韧性</span><span class="text-pink-400">92%</span></div><div class="h-1 bg-white/5 rounded-full overflow-hidden"><div class="h-full bg-pink-500/60 animate-boot-bar" style="width: 92%"></div></div></div>
+                      <div v-else-if="activeDataTab === 'interview'" key="interview" class="flex flex-col">
+                        <CyberRadarChart :chartData="radarData" style="height: 220px;" class="-mt-4 -mb-2" />
+                        <div class="grid grid-cols-2 gap-x-4 gap-y-3">
+                          <div><div class="flex justify-between text-[9px] text-gray-500 mb-1"><span>技术能力</span><span class="text-pink-400">85%</span></div><div class="h-1 bg-white/5 rounded-full overflow-hidden"><div class="h-full bg-pink-500/60 animate-boot-bar" style="width: 85%"></div></div></div>
+                          <div><div class="flex justify-between text-[9px] text-gray-500 mb-1"><span>沟通表达</span><span class="text-pink-400">60%</span></div><div class="h-1 bg-white/5 rounded-full overflow-hidden"><div class="h-full bg-pink-500/60 animate-boot-bar" style="width: 60%"></div></div></div>
+                          <div><div class="flex justify-between text-[9px] text-gray-500 mb-1"><span>项目经验</span><span class="text-pink-400">75%</span></div><div class="h-1 bg-white/5 rounded-full overflow-hidden"><div class="h-full bg-pink-500/60 animate-boot-bar" style="width: 75%"></div></div></div>
+                          <div><div class="flex justify-between text-[9px] text-gray-500 mb-1"><span>学习能力</span><span class="text-pink-400">92%</span></div><div class="h-1 bg-white/5 rounded-full overflow-hidden"><div class="h-full bg-pink-500/60 animate-boot-bar" style="width: 92%"></div></div></div>
+                          <div><div class="flex justify-between text-[9px] text-gray-500 mb-1"><span>团队协作</span><span class="text-pink-400">70%</span></div><div class="h-1 bg-white/5 rounded-full overflow-hidden"><div class="h-full bg-pink-500/60 animate-boot-bar" style="width: 70%"></div></div></div>
+                          <div><div class="flex justify-between text-[9px] text-gray-500 mb-1"><span>职业规划</span><span class="text-pink-400">55%</span></div><div class="h-1 bg-white/5 rounded-full overflow-hidden"><div class="h-full bg-pink-500/60 animate-boot-bar" style="width: 55%"></div></div></div>
+                        </div>
                       </div>
 
                       <div v-else key="career" class="flex items-center justify-center h-full">

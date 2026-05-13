@@ -4,6 +4,7 @@ import { useRouter, useRoute } from 'vue-router'
 import { FileText, ArrowLeft, Paperclip, Sparkles, Bot, Loader2 } from 'lucide-vue-next'
 import { marked } from 'marked'
 import { parseFile } from '@/utils/ocrHelper.js'
+import CyberRadarChart from '@/components/CyberRadarChart.vue'
 
 const isLocalDev = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
 const API_BASE_URL = isLocalDev ? 'http://127.0.0.1:8000/api' : '/api'
@@ -29,8 +30,6 @@ const isScanPdfDetected = ref(false)
 
 const DIAGNOSIS_LABELS = ['keywordMatch', 'experienceQuality', 'dataDriven', 'skillCompleteness', 'layoutLogic', 'coreCompetitiveness']
 const DIAGNOSIS_LABEL_CN = ['关键词匹配', '经历含金量', '数据化程度', '技能完整性', '逻辑排版', '核心竞争力']
-const RADAR_CENTER = 100
-const RADAR_MAX_RADIUS = 70
 
 const diagnosisScores = ref({
   keywordMatch: 2,
@@ -41,14 +40,11 @@ const diagnosisScores = ref({
   coreCompetitiveness: 2
 })
 
-const diagnosisRadarPoints = computed(() => {
-  const angles = DIAGNOSIS_LABELS.map((_, i) => (i * 60 - 90) * Math.PI / 180)
-  return angles.map((angle, i) => {
-    const score = diagnosisScores.value[DIAGNOSIS_LABELS[i]]
-    const r = (score / 100) * RADAR_MAX_RADIUS
-    return `${RADAR_CENTER + r * Math.cos(angle)},${RADAR_CENTER + r * Math.sin(angle)}`
-  }).join(' ')
-})
+// 将诊断分数转换为 CyberRadarChart 所需的 chartData 格式
+const cyberRadarChartData = computed(() => ({
+  indicators: DIAGNOSIS_LABEL_CN.map(name => ({ name, max: 100 })),
+  values: DIAGNOSIS_LABELS.map(key => diagnosisScores.value[key])
+}))
 
 const extractScoresFromResult = (text) => {
   try {
@@ -275,7 +271,7 @@ onUnmounted(() => {})
 </script>
 
 <template>
-  <div class="min-h-[100dvh] bg-[#08080d] relative flex flex-col lg:flex-row overflow-x-hidden">
+  <div class="min-h-[100dvh] bg-[#020205] text-gray-300 relative flex flex-col lg:flex-row overflow-x-hidden">
     <!-- 左侧导航侧边栏 -->
     <div class="hidden lg:flex w-64 fixed h-full z-20">
       <div class="bg-white/[0.03] backdrop-blur-2xl border-r border-white/[0.05] rounded-3xl m-4 h-[calc(100vh-2rem)] shadow-xl shadow-purple-500/[0.03] flex flex-col">
@@ -445,28 +441,7 @@ onUnmounted(() => {})
                   <Sparkles class="w-4 h-4 text-purple-400" />
                   <h3 class="text-sm font-semibold text-purple-400">六维简历评分</h3>
                 </div>
-                <div class="aspect-square max-w-[280px] mx-auto rounded-xl border border-purple-500/20 bg-white/[0.02] backdrop-blur-xl p-4 relative overflow-hidden">
-                  <svg viewBox="0 0 200 200" class="w-full h-full relative z-10">
-                    <defs>
-                      <linearGradient id="diagRadarGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-                        <stop offset="0%" stop-color="#a855f7" stop-opacity="0.6" />
-                        <stop offset="100%" stop-color="#6366f1" stop-opacity="0.3" />
-                      </linearGradient>
-                    </defs>
-                    <circle cx="100" cy="100" r="20" fill="none" stroke="rgba(168,85,247,0.1)" stroke-width="0.5" />
-                    <circle cx="100" cy="100" r="40" fill="none" stroke="rgba(168,85,247,0.1)" stroke-width="0.5" />
-                    <circle cx="100" cy="100" r="60" fill="none" stroke="rgba(168,85,247,0.1)" stroke-width="0.5" />
-                    <polygon points="100,30 160.6,65 160.6,135 100,170 39.4,135 39.4,65" fill="none" stroke="rgba(168,85,247,0.15)" stroke-width="1" />
-                    <polygon :points="diagnosisRadarPoints" fill="url(#diagRadarGrad)" stroke="rgba(168,85,247,0.5)" stroke-width="1.5" />
-                    <circle v-for="(point, i) in diagnosisRadarPoints.split(' ')" :key="i" :cx="point.split(',')[0]" :cy="point.split(',')[1]" r="2.5" fill="#a855f7" />
-                    <text x="100" y="15" text-anchor="middle" fill="#a855f7" font-size="8">关键词匹配</text>
-                    <text x="175" y="65" text-anchor="middle" fill="#a855f7" font-size="8">经历含金量</text>
-                    <text x="175" y="140" text-anchor="middle" fill="#a855f7" font-size="8">数据化程度</text>
-                    <text x="100" y="190" text-anchor="middle" fill="#a855f7" font-size="8">技能完整性</text>
-                    <text x="25" y="140" text-anchor="middle" fill="#a855f7" font-size="8">逻辑排版</text>
-                    <text x="25" y="65" text-anchor="middle" fill="#a855f7" font-size="8">核心竞争力</text>
-                  </svg>
-                </div>
+                <CyberRadarChart :chartData="cyberRadarChartData" />
                 <div class="grid grid-cols-6 gap-1 mt-3">
                   <div v-for="(label, i) in DIAGNOSIS_LABEL_CN" :key="i" class="text-center">
                     <div class="text-sm font-bold text-purple-400">{{ diagnosisScores[DIAGNOSIS_LABELS[i]] }}</div>
