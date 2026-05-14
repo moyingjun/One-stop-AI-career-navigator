@@ -2,10 +2,14 @@ import os
 import json
 import httpx
 import re
+import time
+import asyncio
 from dotenv import load_dotenv
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
+from fastapi.responses import StreamingResponse
+from Router.dependencies import get_optional_user
 from pydantic import BaseModel
-from typing import Optional, List
+from typing import Optional, List, AsyncGenerator
 from database import insert_record
 
 load_dotenv()
@@ -25,6 +29,7 @@ class ChatRequest(BaseModel):
     resume_text: Optional[str] = ""
     jd_text: Optional[str] = ""
     difficulty: Optional[str] = "standard"
+    target_job: Optional[str] = ""
 
 
 class EvaluateRequest(BaseModel):
@@ -33,6 +38,7 @@ class EvaluateRequest(BaseModel):
     resume_text: Optional[str] = ""
     jd_text: Optional[str] = ""
     difficulty: Optional[str] = "standard"
+    user_id: Optional[int] = None
 
 
 def _build_headers():
@@ -94,7 +100,73 @@ def get_interview_system_prompt(difficulty: str = "standard") -> str:
     difficulty = difficulty if difficulty in DIFFICULTY_PROMPTS else "standard"
     return INTERVIEW_SYSTEM_PROMPT_BASE + DIFFICULTY_PROMPTS[difficulty]
 
+
+def build_messages(request: ChatRequest) -> list[dict]:
+    """
+    构建发送给 LLM 的消息列表（纯函数，无副作用）。
+
+    消息结构：
+    - index 0: system 消息，包含面试官角色设定、简历/JD 上下文（可选）、难度提示词
+    - index 1..N: 历史对话（最近 20 条，仅保留 user/assistant 角色，每条内容截断至 2000 字符）
+    - index N+1: 当前用户提问
+
+    盲模式支持：当 resume_text 或 jd_text 为空时，自动省略对应段落。
+    """
+    # 构建简历和 JD 段落（盲模式：字段为空时省略）
+    resume_section = ""
+    jd_section = ""
+    if request.resume_text and request.resume_text.strip():
+        resume_section = f"这是候选人的简历：{request.resume_text.strip()[:4000]}"
+    if request.jd_text and request.jd_text.strip():
+        jd_section = f"这是目标岗位 JD：{request.jd_text.strip()[:3000]}"
+
+    # 构建目标岗位段落（字段为空时省略）
+    target_job_section = ""
+    if request.target_job and request.target_job.strip():
+        target_job_section = f"候选人的目标岗位是：{request.target_job.strip()}"
+
+    # 拼接 system 消息前缀：角色设定 + 简历/JD 上下文 + 禁止索要材料指令
+    context_prefix = (
+        "你是一个专业面试官。"
+        + resume_section
+        + target_job_section
+        + jd_section
+        + "请根据这些背景严格进行追问，绝对不要在对话中要求候选人重新提供简历或JD！"
+    )
+
+    # 获取难度提示词（fallback 到 standard）
+    difficulty_prompt = DIFFICULTY_PROMPTS.get(request.difficulty, DIFFICULTY_PROMPTS["standard"])
+    system_content = context_prefix + "\n\n" + difficulty_prompt
+
+    messages: list[dict] = [{"role": "system", "content": system_content}]
+
+    # 追加历史消息：取最近 20 条，过滤非 user/assistant 角色，内容截断至 2000 字符
+    for msg in request.history[-20:]:
+        if msg.get("role") in ("user", "assistant"):
+            messages.append({
+                "role": msg["role"],
+                "content": msg["content"][:2000]
+            })
+
+    # 追加当前用户提问作为最后一条消息
+    messages.append({"role": "user", "content": request.user_query})
+
+    return messages
+
 EVALUATE_SYSTEM_PROMPT = """你是一个绝对客观、中立、没有感情的"AI 面试评估分析师"。你的唯一任务是阅读面试官与候选人的【完整对话历史】，并对候选人的表现进行六维打分（0-100分）。【打分标准】：professional(专业技能分) logic(逻辑分析分) communication(沟通表达分) problemSolving(问题解决分) potential(综合潜力分) resilience(抗压韧性分)。【强制输出纪律】：1. 必须且只能输出一个合法的 JSON 对象，绝对不要输出任何 markdown 标记、分析过程、问候语或其他文字。2. JSON 必须包含且仅包含以下 7 个键：{"professional": 数字, "logic": 数字, "communication": 数字, "problemSolving": 数字, "potential": 数字, "resilience": 数字, "comment": "总体评价50字以内"}。【极度严厉红线】：如果检测到候选人的输入是脸滚键盘的乱码（如"asdasd"、"hhh"、无意义字符拼凑）、严重偏离主题、或者明显敷衍了事，请毫不留情地在所有维度给出 0 分或最低分（1分），并在 comment 中明确指出这是无效输入！绝对不允许给无效输入任何同情分！【WARNING警告扣分规则】：分析聊天记录时，如果发现有 [WARNING] 警告标记，每出现一次 [WARNING]，所有维度得分必须额外扣减20分！如果出现3次或以上 [WARNING] 警告，所有六个维度的得分必须全部为 0 或 1 分，并在 comment 中直接宣告"面试失败（Fail）- 多次无效输入"！"""
+
+# V2 版本：移除 WARNING 计数惩罚逻辑，仅基于语义回答质量进行客观打分
+EVALUATE_SYSTEM_PROMPT_V2 = """
+你是一个绝对客观、中立的 AI 面试评估分析师。
+这是该候选人完整的面试逐字稿。
+请根据回答的技术深度、逻辑连贯性、以及与简历/JD的匹配度进行客观打分（0-100）。
+不要受任何系统警告信息的干扰，只看用户真实的回答内容！
+
+【强制输出纪律】：只输出合法 JSON，包含且仅包含以下 7 个键：
+{"professional": 数字, "logic": 数字, "communication": 数字,
+ "problemSolving": 数字, "potential": 数字, "resilience": 数字,
+ "comment": "总体评价50字以内"}
+"""
 
 
 async def call_deepseek(merged_user_content: str, temperature: float = 0.7, max_tokens: int = 4096) -> str:
@@ -160,36 +232,101 @@ def _extract_json_from_text(text: str) -> dict:
     return None
 
 
+async def stream_interview_response(request: ChatRequest) -> AsyncGenerator[str, None]:
+    """
+    面试流式响应生成器（SSE 格式）。
+
+    调用 build_messages 构建消息列表，通过 httpx 流式请求 DeepSeek API，
+    逐行解析 SSE data 行并 yield 给调用方。
+
+    SSE 事件格式：
+    - event: message  — 正常内容片段
+    - event: error    — 错误信息（超时或服务器异常）
+    - event: done     — 流结束标志（始终在 finally 中发送）
+    - ': ping'        — 心跳保活（超过 15 秒无内容时发送）
+    """
+    messages = build_messages(request)
+    last_yield_time = time.time()
+
+    try:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(120.0)) as client:
+            async with client.stream(
+                'POST',
+                DEEPSEEK_BASE_URL,
+                json={
+                    "model": DEEPSEEK_MODEL_NAME,
+                    "messages": messages,
+                    "stream": True,
+                    "temperature": 0.7,
+                    "max_tokens": 4096
+                },
+                headers=_build_headers()
+            ) as response:
+                async for line in response.aiter_lines():
+                    # 超过 15 秒无内容时发送心跳保活
+                    if time.time() - last_yield_time > 15:
+                        yield ': ping\n\n'
+                        last_yield_time = time.time()
+
+                    # 跳过空行和非 data: 开头的行
+                    if not line or not line.startswith('data:'):
+                        continue
+
+                    data_str = line[5:].strip()
+
+                    # 流结束标志
+                    if data_str == '[DONE]':
+                        break
+
+                    # 解析 JSON 并提取 delta content
+                    try:
+                        parsed = json.loads(data_str)
+                        content = parsed['choices'][0]['delta'].get('content', '')
+                        if content:
+                            yield f'event: message\ndata: {json.dumps({"content": content}, ensure_ascii=False)}\n\n'
+                            last_yield_time = time.time()
+                    except (json.JSONDecodeError, KeyError, IndexError):
+                        continue
+
+    except httpx.ReadTimeout:
+        yield 'event: error\ndata: {"content":"模型思考超时，请稍后重试"}\n\n'
+    except Exception:
+        yield 'event: error\ndata: {"content":"服务器内部错误，请稍后重试"}\n\n'
+    finally:
+        yield 'event: done\ndata: {}\n\n'
+
+
 @router.post("/chat")
 async def interview_chat(request: ChatRequest):
-    enhanced_query = request.user_query
-
-    if len(request.history) == 0:
-        jd_section = f"\n【岗位JD】：\n{request.jd_text.strip()}" if request.jd_text and request.jd_text.strip() else ""
-        resume_section = f"\n【候选人简历】：\n{request.resume_text.strip()}" if request.resume_text and request.resume_text.strip() else ""
-        enhanced_query = f"{resume_section}{jd_section}\n\n【候选人发言】：\n{request.user_query}"
-
-    system_prompt = get_interview_system_prompt(request.difficulty)
-    merged = f"{system_prompt}\n\n====================\n\n【最高指令】：禁止复述我提供的材料，直接输出你的核心结论！\n\n{enhanced_query}"
-
-    agent_reply = await call_deepseek(merged, temperature=0.7, max_tokens=4096)
-
-    if agent_reply:
-        agent_reply = re.sub(r'^(面试官[：:]\s*|HR[：:]\s*|根据你提供的简历[^，。]*[，。]\s*)', '', agent_reply).strip()
-        return {"reply": agent_reply, "is_payment_required": False, "qr_code": ""}
-
-    return {"reply": "导师正在开小差，请重新点击发送哦~", "is_payment_required": False, "qr_code": ""}
+    """
+    面试聊天端点 — 返回 SSE StreamingResponse。
+    使用 stream_interview_response 生成器逐块推送 AI 回复，
+    支持打字机效果和心跳保活。
+    """
+    return StreamingResponse(
+        stream_interview_response(request),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        }
+    )
 
 
 @router.post("/evaluate")
-async def evaluate_interview(request: EvaluateRequest):
+async def evaluate_interview(request: EvaluateRequest, current_user_id: Optional[int] = Depends(get_optional_user)):
+    request.user_id = current_user_id
     history_text = "\n".join([f"{m.get('role', 'unknown')}: {m.get('content', '')}" for m in request.history])
 
-    eval_user_prompt = f"请对以下面试对话记录进行五维打分，输出标准 JSON：\n{history_text}"
+    # 构建简历和 JD 段落（无截断，完整传入以提升评分准确性）
+    resume_section = f"\n\n【候选人简历】：\n{request.resume_text}" if request.resume_text else ""
+    jd_section = f"\n\n【目标岗位 JD】：\n{request.jd_text}" if request.jd_text else ""
+    eval_user_prompt = f"请对以下面试对话记录进行六维打分，输出标准 JSON：\n{history_text}{resume_section}{jd_section}"
 
     print("\n========== [开始调用打分 Agent] ==========")
 
-    merged = f"{EVALUATE_SYSTEM_PROMPT}\n\n====================\n\n【最高指令】：禁止复述我提供的材料，直接输出你的核心结论！\n\n{eval_user_prompt}"
+    merged = f"{EVALUATE_SYSTEM_PROMPT_V2}\n\n====================\n\n【最高指令】：禁止复述我提供的材料，直接输出你的核心结论！\n\n{eval_user_prompt}"
 
     eval_reply = await call_deepseek(merged, temperature=0.1, max_tokens=2048)
 
@@ -213,7 +350,8 @@ async def evaluate_interview(request: EvaluateRequest):
                             "jd_text": request.jd_text[:1000] if request.jd_text else "",
                             "difficulty": request.difficulty
                         },
-                        chat_history=request.history
+                        chat_history=request.history,
+                        user_id=request.user_id
                     )
                 except Exception as db_err:
                     print(f"⚠️ 数据库写入失败: {db_err}")

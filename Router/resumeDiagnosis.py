@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from typing import Optional
@@ -8,6 +8,7 @@ import json
 import re
 from dotenv import load_dotenv
 from database import insert_record
+from Router.dependencies import get_optional_user
 
 load_dotenv()
 
@@ -24,6 +25,7 @@ class ResumeDiagnoseRequest(BaseModel):
     resume_text: str
     target_role: Optional[str] = ""
     jd_text: Optional[str] = ""
+    user_id: Optional[int] = None
 
 
 def _build_headers():
@@ -36,7 +38,7 @@ def _build_headers():
 RESUME_DIAGNOSIS_SYSTEM_PROMPT = """你是一名大厂顶级的"毒舌"资深 HR 面试官，阅人无数，一眼就能看穿简历的虚假和包装。你的任务是基于候选人提供的【真实简历】和【目标岗位（JD）】，出具一份极其犀利、一针见血的简历诊断报告。【核心约束】：1. 拒绝客套：不要说任何废话，直接开喷，指出简历与岗位要求之间的致命鸿沟。2. 精准找茬：挑出简历中假大空、缺乏数据支撑、与岗位无关的描述，并进行无情嘲讽。3. 建设性打击：在嘲讽之后，必须给出基于 STAR 法则（情境、任务、行动、结果）的高分重构示范。4. 格式要求：使用 Markdown 排版，必须包含三个固定版块：『致命问题诊断』、『简历排雷建议』、『高分重构示范』。5. 最终目的：语言犀利直接，但最终目的是为了帮助高职学生认清现实并快速改进。6. 六维评分：在报告的最末尾，必须输出一个独立的 JSON 对象（用 ```json ``` 包裹），包含以下六个维度的评分（0-100分）：{"keywordMatch": 数字, "experienceQuality": 数字, "dataDriven": 数字, "skillCompleteness": 数字, "layoutLogic": 数字, "coreCompetitiveness": 数字}。六个维度含义：keywordMatch(关键词匹配度)、experienceQuality(经历含金量)、dataDriven(数据化程度)、skillCompleteness(技能完整性)、layoutLogic(逻辑排版)、coreCompetitiveness(核心竞争力)。【极度严厉红线】：如果检测到用户输入的是脸滚键盘的乱码（如"asdasd"、"hhh"、无意义字符拼凑）、完全不是简历内容、或者严重敷衍了事，请毫不留情地在所有维度给出 0 分或最低分（1分），并在诊断报告中明确指出这是无效输入！绝对不允许给无效输入任何同情分！"""
 
 
-async def deepseek_resume_stream(resume_text: str, target_role: str, jd_text: str):
+async def deepseek_resume_stream(resume_text: str, target_role: str, jd_text: str, user_id: Optional[int] = None):
     print("\n========== [🟣 简历诊断 DeepSeek SSE 流式隧道开启] ==========")
 
     if not DEEPSEEK_API_KEY:
@@ -129,7 +131,8 @@ async def deepseek_resume_stream(resume_text: str, target_role: str, jd_text: st
                     user_input=f"目标岗位: {target_role or '未指定'}",
                     ai_result=full_text[:5000],
                     scores=scores,
-                    extra_data={"resume_text": resume_text[:2000], "target_role": target_role, "jd_text": jd_text[:1000]}
+                    extra_data={"resume_text": resume_text[:2000], "target_role": target_role, "jd_text": jd_text[:1000]},
+                    user_id=user_id
                 )
             except Exception as db_err:
                 print(f"⚠️ 数据库写入失败: {db_err}")
@@ -137,10 +140,11 @@ async def deepseek_resume_stream(resume_text: str, target_role: str, jd_text: st
 
 
 @router.post("/resume/diagnose")
-async def diagnose_resume(request: ResumeDiagnoseRequest):
+async def diagnose_resume(request: ResumeDiagnoseRequest, current_user_id: Optional[int] = Depends(get_optional_user)):
     try:
+        request.user_id = current_user_id
         return StreamingResponse(
-            deepseek_resume_stream(request.resume_text, request.target_role, request.jd_text),
+            deepseek_resume_stream(request.resume_text, request.target_role, request.jd_text, user_id=request.user_id),
             media_type="text/event-stream",
             headers={
                 "Cache-Control": "no-cache",

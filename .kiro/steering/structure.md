@@ -64,3 +64,26 @@ Three-layer backend + SPA frontend. Backend enforces separation of concerns:
 - All complex logic must have Chinese docstring comments
 - Variable names must be semantic (no single-letter names)
 - Route guards enforce setup completion before accessing personalized pages
+
+
+# 🏗️ Architecture, Decoupling & Clean Code Standards
+
+You are an expert Software Architect. To prevent technical debt ("spaghetti code") and ensure the codebase is highly readable and maintainable for human developers, you MUST strictly follow these architectural principles:
+
+## 1. Modularization & Separation of Concerns (SoC)
+- **No "God Components"**: NEVER dump all logic into a single massive file. If a `.vue` component exceeds 300-400 lines, you MUST extract its parts into smaller, reusable sub-components.
+- **Logic Extraction**: Keep UI components "dumb" (focused on rendering and emitting events). Move complex business logic, data formatting, and state management OUT of `.vue` templates. 
+  - Put reusable reactive logic into `src/composables/` (Vue 3 Composables).
+  - Put global state into `src/stores/` (Pinia).
+  - Put pure helper functions into `src/utils/`.
+  - Put API HTTP calls into `src/services/`.
+
+## 2. Routing & Business Domain Organization
+- Keep `router/index.js` extremely clean and organized. Group routes by feature domain (e.g., Auth, Dashboard, KnowledgeBase, Interview).
+- ALWAYS use Route Lazy Loading (e.g., `component: () => import('@/views/...')`) for all page-level components to optimize bundle size and decoupling.
+- Use Route Meta Fields (e.g., `meta: { requiresAuth: true }`) for permission control, rather than writing complex permission `if/else` logic inside the UI components.
+
+## 3. Human-Readable & Inheritable Code
+- **Naming Conventions**: Use highly descriptive and predictable names. (e.g., Use `fetchUserResume()` instead of `getData()`, use `isSetupModalVisible` instead of `flag`).
+- **Comments & Documentation**: You are writing code for human developers to maintain. Add concise comments explaining the *WHY* behind complex algorithms, regex, or business rules. 
+- **Props & Emits**: Strictly define component inputs and outputs using `defineProps` and `defineEmits` with basic type definitions to ensure clear component boundaries.

@@ -2,7 +2,10 @@
 import { ref, onMounted } from 'vue'
 import { X, User, FileText, FileUp, ClipboardPaste, Sparkles, Loader2 } from 'lucide-vue-next'
 import { parseFile } from '@/utils/ocrHelper.js'
-import { ACCEPTED_EXTENSIONS } from '@/utils/fileConstants.js'
+import { ACCEPTED_EXTENSIONS, validateFile } from '@/utils/fileConstants.js'
+import { useUserStore } from '@/stores/userStore.js'
+
+const userStore = useUserStore()
 
 const emit = defineEmits(['close', 'complete'])
 
@@ -18,11 +21,43 @@ const error = ref('')
 const nameError = ref('')
 const resumeError = ref('')
 
+// Tab 切换状态
+const activeTab = ref('job')  // 'job' | 'education'
+
+// 求职模式字段
+const targetJob = ref('')
+const jobDescription = ref('')
+const targetJobError = ref('')
+const jobDescriptionError = ref('')
+
+// 升学模式字段
+const examType = ref('')
+const estimatedScore = ref('')
+const targetSchool = ref('')
+const targetGoal = ref('')
+const examTypeError = ref('')
+const estimatedScoreError = ref('')
+const targetSchoolError = ref('')
+
+// 考试类型选项
+const examTypeOptions = [
+  { value: 'zhuanchaben', label: '专插本' },
+  { value: 'gaokao', label: '普通高考' },
+  { value: 'kaoyan', label: '考研' },
+  { value: 'kaogong', label: '考公' },
+  { value: 'other', label: '其他' }
+]
+
 // 表单提交处理
 const handleSubmit = () => {
   // 清除之前的错误
   nameError.value = ''
   resumeError.value = ''
+  targetJobError.value = ''
+  jobDescriptionError.value = ''
+  examTypeError.value = ''
+  estimatedScoreError.value = ''
+  targetSchoolError.value = ''
 
   let hasError = false
 
@@ -41,14 +76,61 @@ const handleSubmit = () => {
   if (trimmedResume.length < 20) {
     resumeError.value = '简历内容至少需要 20 个字符'
     hasError = true
+  } else if (resumeText.value.length > 10000) {
+    resumeError.value = '简历内容不能超过 10000 个字符'
+    hasError = true
   }
+
+  // 模式特定字段验证
+  if (activeTab.value === 'job') {
+    if (jobDescription.value.length > 5000) {
+      jobDescriptionError.value = 'JD 不能超过 5000 字符'
+      hasError = true
+    }
+  }
+  // 升学模式：所有字段可选，无必填验证
 
   if (hasError) return
 
-  // 验证通过，写入 localStorage
-  localStorage.setItem('candidate_name', trimmedName.slice(0, 50))
-  localStorage.setItem('resume_text', trimmedResume.slice(0, 10000))
-  localStorage.setItem('userRole', 'registered')
+  // 验证通过，写入 localStorage（用 try-catch 包裹，隐私模式或存储已满时静默失败）
+  try {
+    localStorage.setItem('candidate_name', trimmedName.slice(0, 50))
+    localStorage.setItem('resume_text', trimmedResume.slice(0, 10000))
+    localStorage.setItem('userRole', 'registered')
+    localStorage.setItem('active_mode', activeTab.value)
+
+    if (activeTab.value === 'job') {
+      // 求职模式：写入目标岗位和 JD
+      localStorage.setItem('target_job', targetJob.value.trim())
+      localStorage.setItem('job_description', jobDescription.value.trim())
+    } else if (activeTab.value === 'education') {
+      // 升学模式：写入考试类型、预估分数、意向院校
+      localStorage.setItem('exam_type', examType.value)
+      localStorage.setItem('estimated_score', estimatedScore.value.trim())
+      localStorage.setItem('target_school', targetSchool.value.trim())
+      // target_goal 独立写入，与 target_school 互不干扰
+      try {
+        localStorage.setItem('target_goal', targetGoal.value.trim())
+      } catch {
+        // target_goal 写入失败时静默处理，不影响其他字段保存
+      }
+    }
+  } catch {
+    // localStorage 写入失败（隐私模式/存储已满）时静默处理，不阻断后续 Store 更新
+  }
+
+  // 同步所有字段到 Pinia Store（单一数据源）
+  userStore.updateUserProfile({
+    candidateName: trimmedName.slice(0, 50),
+    resumeText: trimmedResume.slice(0, 10000),
+    activeMode: activeTab.value,
+    targetJob: targetJob.value.trim(),
+    jobDescription: jobDescription.value.trim(),
+    examType: examType.value,
+    estimatedScore: estimatedScore.value.trim(),
+    targetSchool: targetSchool.value.trim(),
+    targetGoal: targetGoal.value.trim()
+  })
 
   // 通知父组件完成
   emit('complete')
@@ -56,9 +138,18 @@ const handleSubmit = () => {
 
 // 文件处理逻辑
 const processFile = async (file) => {
-  isParsing.value = true
   error.value = ''
   parseSuccess.value = false
+
+  // 文件大小和格式校验（Requirements 8.6, 8.7）
+  const validation = validateFile(file)
+  if (!validation.valid) {
+    error.value = validation.error
+    setTimeout(() => { error.value = '' }, 4000)
+    return
+  }
+
+  isParsing.value = true
   uploadedFileName.value = file.name
 
   try {
@@ -99,6 +190,20 @@ onMounted(() => {
     resumeText.value = savedResume
     uploadedFileName.value = '已加载的简历数据'
     parseSuccess.value = true
+  }
+
+  // 预填充模式相关字段
+  activeTab.value = localStorage.getItem('active_mode') || 'job'
+  targetJob.value = localStorage.getItem('target_job') || ''
+  jobDescription.value = localStorage.getItem('job_description') || ''
+  examType.value = localStorage.getItem('exam_type') || ''
+  estimatedScore.value = localStorage.getItem('estimated_score') || ''
+  targetSchool.value = localStorage.getItem('target_school') || ''
+  // target_goal 独立读取，渲染错误时降级处理，不影响其他字段
+  try {
+    targetGoal.value = localStorage.getItem('target_goal') || ''
+  } catch {
+    targetGoal.value = ''
   }
 })
 </script>
@@ -191,7 +296,7 @@ onMounted(() => {
                   <div class="flex-1">
                     <template v-if="!parseSuccess">
                       <p class="text-gray-300 text-sm font-medium">拖拽简历文档到此处，或点击上传</p>
-                      <p class="text-gray-600 text-xs mt-0.5">支持文档与图片格式上传</p>
+                      <p class="text-gray-500 text-xs mt-0.5">支持文档与图片格式上传</p>
                     </template>
                     <template v-else>
                       <div class="flex items-center gap-2">
@@ -216,7 +321,7 @@ onMounted(() => {
               <div class="flex items-center gap-3 px-4 py-2 md:px-6 bg-black/20">
                 <div class="h-px flex-1 bg-gradient-to-r from-purple-500/20 to-transparent"></div>
                 <ClipboardPaste class="w-3.5 h-3.5 text-gray-500" />
-                <span class="text-[10px] text-gray-500 font-mono tracking-wider">TEXT INPUT</span>
+                <span class="text-xs text-gray-500 font-mono tracking-wider">TEXT INPUT</span>
                 <div class="h-px flex-1 bg-gradient-to-l from-fuchsia-500/20 to-transparent"></div>
               </div>
 
@@ -233,7 +338,7 @@ onMounted(() => {
 
                 <!-- 字数提示 -->
                 <div class="flex items-center justify-between mt-2 px-1">
-                  <span class="text-xs" :class="resumeText.trim().length >= 20 ? 'text-green-400/70' : resumeText.trim() ? 'text-red-400/70' : 'text-gray-600'">
+                  <span class="text-xs" :class="resumeText.trim().length >= 20 ? 'text-green-400/70' : resumeText.trim() ? 'text-red-400/70' : 'text-gray-500'">
                     {{ resumeText.trim().length >= 20 ? '✓ 字数达标' : resumeText.trim() ? `还需 ${20 - resumeText.trim().length} 字` : '至少 20 字' }}
                   </span>
                   <button
@@ -247,6 +352,115 @@ onMounted(() => {
                 <!-- 简历验证错误提示 -->
                 <p v-if="resumeError" class="text-xs text-red-400 mt-1 pl-1">{{ resumeError }}</p>
               </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 模式切换 Tab -->
+        <div class="mt-4 mb-3">
+          <label class="block text-sm text-gray-400 mb-2">选择模式</label>
+          <div class="flex gap-2 p-1 rounded-lg bg-white/5 backdrop-blur-sm border border-white/10">
+            <button
+              type="button"
+              @click="activeTab = 'job'"
+              :class="[
+                'flex-1 px-4 py-2 rounded-md text-sm font-medium transition-all duration-200',
+                activeTab === 'job'
+                  ? 'bg-purple-500/20 text-purple-300 shadow-[0_0_12px_rgba(168,85,247,0.3)] border border-purple-500/30'
+                  : 'text-gray-400 hover:text-gray-300 hover:bg-white/5'
+              ]"
+            >
+              💼 求职模式
+            </button>
+            <button
+              type="button"
+              @click="activeTab = 'education'"
+              :class="[
+                'flex-1 px-4 py-2 rounded-md text-sm font-medium transition-all duration-200',
+                activeTab === 'education'
+                  ? 'bg-purple-500/20 text-purple-300 shadow-[0_0_12px_rgba(168,85,247,0.3)] border border-purple-500/30'
+                  : 'text-gray-400 hover:text-gray-300 hover:bg-white/5'
+              ]"
+            >
+              🎓 升学模式
+            </button>
+          </div>
+        </div>
+
+        <!-- 求职模式字段 -->
+        <div v-if="activeTab === 'job'" class="space-y-3">
+          <div>
+            <label class="block text-sm text-gray-400 mb-1">目标岗位</label>
+            <input
+              v-model="targetJob"
+              type="text"
+              maxlength="100"
+              placeholder="如：前端工程师、产品经理..."
+              class="w-full px-3 py-2 rounded-lg bg-white/5 border border-white/10 text-white placeholder-gray-500 focus:border-purple-500/50 focus:outline-none focus:ring-1 focus:ring-purple-500/30 transition-all"
+            />
+            <p v-if="targetJobError" class="mt-1 text-xs text-red-400">{{ targetJobError }}</p>
+          </div>
+          <div>
+            <label class="block text-sm text-gray-400 mb-1">岗位描述 JD</label>
+            <textarea
+              v-model="jobDescription"
+              maxlength="5000"
+              rows="3"
+              placeholder="粘贴目标岗位的职位描述..."
+              class="w-full px-3 py-2 rounded-lg bg-white/5 border border-white/10 text-white placeholder-gray-500 focus:border-purple-500/50 focus:outline-none focus:ring-1 focus:ring-purple-500/30 transition-all resize-none"
+            ></textarea>
+            <p v-if="jobDescriptionError" class="mt-1 text-xs text-red-400">{{ jobDescriptionError }}</p>
+          </div>
+        </div>
+
+        <!-- 升学模式字段 -->
+        <div v-else class="space-y-3">
+          <div>
+            <label class="block text-sm text-gray-400 mb-1">考试类型</label>
+            <select
+              v-model="examType"
+              class="w-full px-3 py-2 rounded-lg bg-white/5 border border-white/10 text-white focus:border-purple-500/50 focus:outline-none focus:ring-1 focus:ring-purple-500/30 transition-all"
+            >
+              <option value="" disabled class="bg-gray-900">请选择考试类型</option>
+              <option v-for="opt in examTypeOptions" :key="opt.value" :value="opt.value" class="bg-gray-900">
+                {{ opt.label }}
+              </option>
+            </select>
+            <p v-if="examTypeError" class="mt-1 text-xs text-red-400">{{ examTypeError }}</p>
+          </div>
+          <div>
+            <label class="block text-sm text-gray-400 mb-1">预估分数/排位</label>
+            <input
+              v-model="estimatedScore"
+              type="text"
+              maxlength="50"
+              placeholder="如：550分、前10%..."
+              class="w-full px-3 py-2 rounded-lg bg-white/5 border border-white/10 text-white placeholder-gray-500 focus:border-purple-500/50 focus:outline-none focus:ring-1 focus:ring-purple-500/30 transition-all"
+            />
+            <p v-if="estimatedScoreError" class="mt-1 text-xs text-red-400">{{ estimatedScoreError }}</p>
+          </div>
+          <!-- 两栏布局：意向院校 + 目标志愿/目标 -->
+          <div class="grid grid-cols-2 gap-3">
+            <div>
+              <label class="block text-sm text-gray-400 mb-1">意向院校</label>
+              <input
+                v-model="targetSchool"
+                type="text"
+                maxlength="200"
+                placeholder="如：华南理工大学..."
+                class="w-full px-3 py-2 rounded-lg bg-white/5 border border-white/10 text-white placeholder-gray-500 focus:border-purple-500/50 focus:outline-none focus:ring-1 focus:ring-purple-500/30 transition-all"
+              />
+              <p v-if="targetSchoolError" class="mt-1 text-xs text-red-400">{{ targetSchoolError }}</p>
+            </div>
+            <div>
+              <label class="block text-sm text-gray-400 mb-1">目标志愿/目标</label>
+              <input
+                v-model="targetGoal"
+                type="text"
+                maxlength="200"
+                placeholder="如：计算机科学与技术专业..."
+                class="w-full px-3 py-2 rounded-lg bg-white/5 border border-white/10 text-white placeholder-gray-500 focus:border-purple-500/50 focus:outline-none focus:ring-1 focus:ring-purple-500/30 transition-all"
+              />
             </div>
           </div>
         </div>

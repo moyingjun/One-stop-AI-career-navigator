@@ -126,28 +126,21 @@ def _extract_text_from_docx(content: bytes) -> str:
 
 
 def _extract_text_from_image(content: bytes) -> str:
-    """从图片中通过 OCR 提取文本（使用腾讯云 OCR 或 fallback）。"""
+    """从图片中通过 OCR 提取文本 — 直接调用 SDK，消除死锁。"""
     import base64
 
+    from Service.Utils.ocr_sdk import recognize_image_text
+
     base64_str = base64.b64encode(content).decode("utf-8")
+    result = recognize_image_text(f"data:image/png;base64,{base64_str}")
 
-    # 尝试调用本地 OCR 接口（与前端 ocrHelper 使用同一后端接口）
-    try:
-        import httpx
-
-        api_base = os.getenv("OCR_API_BASE", "http://127.0.0.1:8000/api")
-        resp = httpx.post(
-            f"{api_base}/ocr/recognize",
-            json={"image_base64": f"data:image/png;base64,{base64_str}"},
-            timeout=60,
+    if not result or "图片解析失败" in result:
+        raise HTTPException(
+            status_code=400,
+            detail="图片 OCR 识别失败，请确保图片清晰",
         )
-        if resp.status_code == 200:
-            data = resp.json()
-            return data.get("extracted_text", "")
-    except Exception as exc:
-        print(f"[RAG] 图片 OCR 调用失败: {exc}")
 
-    raise HTTPException(status_code=400, detail="图片 OCR 识别失败，请确保 OCR 服务可用")
+    return result
 
 
 def extract_text_from_file(filename: str, content: bytes) -> str:

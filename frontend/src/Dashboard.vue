@@ -1,23 +1,44 @@
-<script setup>
-import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
+﻿<script setup>
+import { ref, computed, onMounted, onUnmounted, nextTick, watch } from 'vue'
+import { useDebounceFn } from '@vueuse/core'
 import { llmService } from '@/services/llm_service.js'
-import { useRouter } from 'vue-router'
+import { getAuthHeaders } from '@/services/authService.js'
+import { useRouter, useRoute } from 'vue-router'
 import { vAutoAnimate } from '@formkit/auto-animate/vue'
 import QrcodeVue from 'qrcode.vue'
-import { parseFile } from '@/utils/ocrHelper.js'
 import { ACCEPTED_EXTENSIONS, validateFile } from '@/utils/fileConstants.js'
 import { marked } from 'marked'
 
 // Pinia store
 import { useUserStore } from '@/stores/userStore'
 import CyberRadarChart from '@/components/CyberRadarChart.vue'
+import SetupModal from '@/components/SetupModal.vue'
+import DataSourceModal from '@/components/DataSourceModal.vue'
+import ChatPreviewModal from '@/components/ChatPreviewModal.vue'
 
 import { Bot, Bookmark, FileText, MessageSquare, Folder, Settings, Clock, Puzzle, Plus, Search, Paperclip, MoreHorizontal, ChevronDown, ChevronLeft, ChevronRight, Upload, CheckCircle, X, Loader2, History, Send, Sparkles, Mic, GraduationCap, Star, Trash2 }
   from 'lucide-vue-next'
 
 const router = useRouter()
+const route = useRoute()
 const userStore = useUserStore()
 const radarData = computed(() => userStore.radarData)
+
+// 考试类型标签映射（升学模式侧边栏展示用）
+// 使用 hasOwnProperty 而非 map[key] || fallback，避免原型链属性（如 'toString'）被误判为合法 key
+const examTypeLabel = computed(() => {
+  const map = {
+    'zhuanchaben': '专插本',
+    'gaokao': '普通高考',
+    'kaoyan': '考研',
+    'kaogong': '考公',
+    'other': '其他'
+  }
+  if (Object.prototype.hasOwnProperty.call(map, userStore.examType)) {
+    return map[userStore.examType]
+  }
+  return '未设置'
+})
 
 
 const activeDataTab = ref('resume'); // 'resume' | 'interview' | 'career'
@@ -29,7 +50,9 @@ const historyRecords = ref([])
 
 const loadHistory = async () => {
   try {
-    const res = await fetch(`${API_BASE_URL.replace('/api', '')}/api/history?limit=2`)
+    const res = await fetch(`${API_BASE_URL.replace('/api', '')}/api/history?limit=2`, {
+      headers: { ...getAuthHeaders() }
+    })
     if (res.ok) {
       const data = await res.json()
       historyRecords.value = data.records || []
@@ -80,24 +103,71 @@ const getDifficultyBadgeConfig = (difficulty) => {
   return null
 }
 
+// ChatPreviewModal 弹窗控制（Requirements 13.1, 13.5, 13.6）
+const showChatPreviewModal = ref(false)
+const chatPreviewRecordId = ref(null)
+
 const goToHistory = (record) => {
+  // agent_ 类别（如 general_chat）：打开对话预览弹窗（Requirements 13.5）
+  if (record.category && record.category.startsWith('agent_')) {
+    showChatPreviewModal.value = true
+    chatPreviewRecordId.value = record.id
+    return
+  }
   if (record.category === 'resume_diagnosis') router.push(`/resume-diagnosis?id=${record.id}`)
   else if (record.category === 'interview_evaluate') router.push(`/interview?id=${record.id}`)
   else if (record.category === 'career_planning') router.push(`/career-planning?id=${record.id}`)
 }
 
+/**
+ * 接收 ChatPreviewModal 的 load-context 事件：
+ * 将历史对话消息载入当前聊天，并在 nextTick 后 focus 输入框并滚动到底部（Requirements 13.1）
+ */
+const handleChatPreviewLoadContext = async (payload) => {
+  chatMessages.value = payload.messages.map(msg => ({
+    role: msg.role === 'user' ? 'user' : 'ai',
+    content: msg.content || '',
+    timestamp: '',
+    isNew: false
+  }))
+  currentRecordId.value = payload.recordId
+  await nextTick()
+  chatInputRef.value?.focus()
+  scrollChatToBottom()
+}
+
+/**
+ * 接收 ChatPreviewModal 的 close 事件：关闭弹窗（Requirements 13.6）
+ */
+const handleChatPreviewClose = () => {
+  showChatPreviewModal.value = false
+}
+
 // 本地存储用户名
 const userName = ref(localStorage.getItem('candidate_name') || '')
 
-// 全局简历状态
-const globalResumeStatus = ref(localStorage.getItem('resume_text') ? 'ready' : 'missing')
+// 全局简历状态 — 初始化时检查 localStorage resume_text 去除首尾空白后是否非空
+const globalResumeStatus = ref(
+  (localStorage.getItem('resume_text') || '').trim().length > 0 ? 'ready' : 'missing'
+)
 const showResumeDialog = ref(false)
 const pendingResumeText = ref('')
 const pendingFileName = ref('')
-const isGlobalDragging = ref(false)
+
 const knowledgeId = ref(localStorage.getItem('dashboard_knowledge_id') || '')
 const knowledgeFileName = ref(localStorage.getItem('dashboard_knowledge_file_name') || '')
 const isKnowledgeUploading = ref(false)
+
+// SetupModal 弹窗控制
+const showSetupModal = ref(false)
+// DataSourceModal 弹窗控制（数据面板设置，与 SetupModal 解耦）
+const showDataSourceModal = ref(false)
+
+const handleSetupComplete = () => {
+  showSetupModal.value = false
+  globalResumeStatus.value = 'ready'
+  userName.value = localStorage.getItem('candidate_name') || ''
+}
 
 // 面试舱门模态框
 const showInterviewModal = ref(false)
@@ -240,34 +310,7 @@ const clearKnowledge = () => {
   localStorage.removeItem('dashboard_knowledge_file_name')
 }
 
-// 全局简历拖拽处理
-const handleGlobalFileDrop = (event) => {
-  event.preventDefault()
-  isGlobalDragging.value = false
-  const files = event.dataTransfer.files
-  if (files.length > 0) uploadKnowledgeFile(files[0])
-}
 
-const handleGlobalFileSelect = (event) => {
-  const files = event.target.files
-  if (files.length > 0) uploadKnowledgeFile(files[0])
-  event.target.value = ''
-}
-
-const processGlobalResume = async (file) => {
-  try {
-    const text = await parseFile(file)
-    if (!text.trim()) {
-      showToastMsg('文件内容为空，请检查后重试')
-      return
-    }
-    pendingFileName.value = file.name
-    pendingResumeText.value = text
-    showResumeDialog.value = true
-  } catch (e) {
-    showToastMsg(e.message || '文件解析失败，请重试')
-  }
-}
 
 const confirmResumeUpdate = () => {
   localStorage.setItem('resume_text', pendingResumeText.value.trim())
@@ -284,10 +327,12 @@ const cancelResumeUpdate = () => {
   pendingFileName.value = ''
 }
 
-// 监听其他页面更新简历
+// 监听其他标签页更新简历（storage 事件仅在其他标签页修改时触发）
+// 100ms 内更新 globalResumeStatus，此处为同步赋值，远快于 100ms
 const handleStorageChange = (e) => {
   if (e.key === 'resume_text') {
-    globalResumeStatus.value = e.newValue ? 'ready' : 'missing'
+    const newVal = (e.newValue || '').trim()
+    globalResumeStatus.value = newVal.length > 0 ? 'ready' : 'missing'
   }
 }
 
@@ -502,7 +547,6 @@ const menuItems = [
     category: '主要功能',
     items: [
       { icon: 'file-text', label: '功能模板' },
-      { icon: 'message-square', label: '保存的对话' },
       { icon: 'folder', label: '文件管理' },
       { icon: 'clock', label: '历史记录' },
       { icon: 'plugin', label: '插件集成' },
@@ -527,11 +571,6 @@ const handleSidebarItemClick = (item, menu) => {
     return
   }
 
-  if (item.label === '保存的对话') {
-    router.push('/saved-chats')
-    return
-  }
-
   if (item.label === '文件管理') {
     router.push('/files')
     return
@@ -550,7 +589,7 @@ const toggleSaveRecord = async (record) => {
   try {
     const response = await fetch(API_BASE_URL + '/history/' + record.id + '/save', {
       method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
       body: JSON.stringify({ is_saved: nextSaved })
     })
     if (!response.ok) throw new Error('HTTP ' + response.status)
@@ -564,7 +603,10 @@ const toggleSaveRecord = async (record) => {
 
 const deleteHistoryRecord = async (record) => {
   try {
-    const response = await fetch(API_BASE_URL + '/history/' + record.id, { method: 'DELETE' })
+    const response = await fetch(API_BASE_URL + '/history/' + record.id, {
+      method: 'DELETE',
+      headers: { ...getAuthHeaders() }
+    })
     if (!response.ok) throw new Error('HTTP ' + response.status)
     historyRecords.value = historyRecords.value.filter((item) => item.id !== record.id)
   } catch (error) {
@@ -640,9 +682,13 @@ const sendGeneralChatMessage = async () => {
     const savedJd = localStorage.getItem('current_interview_jd') || ''
     if (savedJd) payload.jd_text = savedJd
 
+    // 注入求职意向，让 AI 知道用户的目标岗位
+    const targetJobValue = userStore.targetJob || localStorage.getItem('target_job') || ''
+    if (targetJobValue) payload.target_job = targetJobValue
+
     const response = await fetch(API_BASE_URL + '/agent/chat', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
       body: JSON.stringify(payload)
     })
 
@@ -746,7 +792,7 @@ const saveAndStartNew = async () => {
   try {
     const response = await fetch(API_BASE_URL + '/history/' + currentRecordId.value + '/save', {
       method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
       body: JSON.stringify({ is_saved: true })
     })
     if (!response.ok) throw new Error('HTTP ' + response.status)
@@ -827,8 +873,227 @@ const playConsoleAnimation = async () => {
   }
 }
 
+// 加载最新雷达图数据（使用 has_scores=true 筛选含有效评分的记录）
+async function loadLatestRadarData() {
+  try {
+    const response = await fetch(`${API_BASE_URL}/history?has_scores=true&limit=1`, {
+      headers: { ...getAuthHeaders() }
+    })
+    if (!response.ok) return  // 网络错误时保持当前状态不变，不向用户展示错误
+
+    const data = await response.json()
+    const records = data.records || []
+
+    if (records.length === 0) {
+      userStore.resetRadarData()
+      return
+    }
+
+    // 解析 scores JSON 字符串
+    let scores = records[0].scores
+    if (typeof scores === 'string') {
+      try { scores = JSON.parse(scores) } catch { scores = {} }
+    }
+
+    if (scores && Object.keys(scores).length > 0) {
+      userStore.updateRadarData(scores)
+      userStore.activeDataSourceId = records[0].id
+    } else {
+      userStore.resetRadarData()
+    }
+  } catch {
+    // 请求失败时保持当前 radarData 状态不变，不向用户展示错误
+  }
+}
+
+// 恢复对话上下文
+async function restoreChatContext(chatId) {
+  if (!chatId) return
+
+  try {
+    const response = await fetch(`${API_BASE_URL}/history/${chatId}`, {
+      headers: { ...getAuthHeaders() }
+    })
+    if (!response.ok) {
+      // 404 或其他错误：清空聊天，用户可开始新对话
+      chatMessages.value = []
+      return
+    }
+
+    const record = await response.json()
+    let chatHistory = record.chat_history
+
+    // 解析 chat_history（可能是 JSON 字符串）
+    if (typeof chatHistory === 'string') {
+      try { chatHistory = JSON.parse(chatHistory) } catch { chatHistory = [] }
+    }
+
+    if (!Array.isArray(chatHistory) || chatHistory.length === 0) {
+      // 降级：从 user_input + ai_result 构建最小上下文
+      chatMessages.value = []
+      if (record.user_input) {
+        chatMessages.value.push({
+          role: 'user',
+          content: record.user_input,
+          timestamp: record.created_at
+        })
+      }
+      if (record.ai_result) {
+        chatMessages.value.push({
+          role: 'ai',
+          content: record.ai_result,
+          timestamp: record.created_at
+        })
+      }
+    } else {
+      // 正常解析 chat_history
+      chatMessages.value = chatHistory.map(msg => ({
+        role: msg.role === 'user' ? 'user' : 'ai',
+        content: msg.content || '',
+        timestamp: record.created_at,
+        isNew: false
+      }))
+    }
+
+    currentRecordId.value = Number(chatId)
+    await nextTick()
+    scrollChatToBottom()
+  } catch (error) {
+    console.error('恢复对话上下文失败:', error)
+    chatMessages.value = []
+  }
+}
+
+// ─────────────────────────────────────────────
+// 雷达图 Pinned ID 动态数据绑定（Requirements 10.1, 10.2, 10.3, 10.7）
+// ─────────────────────────────────────────────
+
+/** 雷达图 fetch 错误状态，fetch 失败时显示提示，不重置数据 */
+const radarFetchError = ref('')
+
+/** 用于取消上一次 in-flight 请求的 AbortController */
+let radarAbortController = null
+
+/**
+ * 根据当前激活 Tab 和 pinnedId 拉取对应历史记录的 scores 并更新雷达图。
+ * - pinnedId 为 null 时：调用 resetRadarData() 显示空状态
+ * - fetch 失败时：保留现有 radarData，显示错误提示，不重置为零
+ * - 使用 AbortController 取消上一次 in-flight 请求（Requirements 10.7）
+ *
+ * @param {string} tab - 'resume' | 'interview' | 'career'
+ * @param {number|null} pinnedId - 置顶记录 ID
+ */
+async function fetchPinnedRadarData(tab, pinnedId) {
+  // 取消上一次尚未完成的请求，避免竞态条件
+  if (radarAbortController) {
+    radarAbortController.abort()
+  }
+
+  if (pinnedId === null) {
+    // 无置顶记录时重置为空状态
+    userStore.resetRadarData()
+    radarFetchError.value = ''
+    return
+  }
+
+  radarAbortController = new AbortController()
+  const signal = radarAbortController.signal
+
+  try {
+    radarFetchError.value = ''
+    const response = await fetch(`${API_BASE_URL}/history/${pinnedId}`, {
+      headers: { ...getAuthHeaders() },
+      signal
+    })
+
+    if (!response.ok) {
+      // fetch 失败：保留现有 radarData，显示错误提示（Requirements 10.2）
+      radarFetchError.value = `数据加载失败（HTTP ${response.status}），显示上次缓存数据`
+      return
+    }
+
+    const record = await response.json()
+
+    // 解析 scores（可能是 JSON 字符串）
+    let scores = record.scores
+    if (typeof scores === 'string') {
+      try { scores = JSON.parse(scores) } catch { scores = {} }
+    }
+
+    if (scores && Object.keys(scores).length > 0) {
+      userStore.updateRadarData(scores)
+    } else {
+      // 记录存在但无有效 scores，重置为空状态
+      userStore.resetRadarData()
+    }
+  } catch (err) {
+    if (err.name === 'AbortError') {
+      // 请求被主动取消（新请求已发出），静默处理
+      return
+    }
+    // 网络错误：保留现有 radarData，显示错误提示（Requirements 10.2）
+    radarFetchError.value = '网络异常，显示上次缓存数据'
+    console.error('雷达图数据加载失败:', err)
+  }
+}
+
+/**
+ * 防抖包装的雷达图数据拉取函数（300ms 防抖，Requirements 10.7）
+ * 快速切换 Tab 或 pinnedId 时只触发最后一次请求
+ */
+const debouncedFetchRadarData = useDebounceFn((tab, pinnedId) => {
+  fetchPinnedRadarData(tab, pinnedId)
+}, 300)
+
+// 监听 activeDataTab 切换：Tab 变化时用新 Tab 的 pinnedId 更新雷达图（Requirements 10.3）
+watch(activeDataTab, (newTab) => {
+  const pinnedId = userStore.getPinnedIdByTab(newTab)
+  debouncedFetchRadarData(newTab, pinnedId)
+})
+
+// 监听当前激活 Tab 的 pinnedId 变化：用户在 DataSourceModal 选中新记录时触发（Requirements 10.1）
+watch(
+  () => userStore.getPinnedIdByTab(activeDataTab.value),
+  (newPinnedId) => {
+    debouncedFetchRadarData(activeDataTab.value, newPinnedId)
+  }
+)
+
+// 监听 chat_id 路由参数，恢复历史对话上下文
+watch(() => route.query.chat_id, async (chatId) => {
+  if (!chatId) return
+  await restoreChatContext(chatId)
+}, { immediate: true })
+
+// ─────────────────────────────────────────────
+// 目标志愿展示（Requirements 15.1 ~ 15.5）
+// ─────────────────────────────────────────────
+
+/**
+ * 读取 localStorage 或 userStore 中的 target_goal，
+ * trim 后为空则返回 null，否则返回 trimmed 字符串。
+ * localStorage 优先（保证跨组件写入后立即可见），
+ * 同时依赖 userStore.targetGoal 触发响应式更新。
+ */
+const targetGoalDisplay = computed(() => {
+  // 先读 localStorage（最新写入值），再 fallback 到 store
+  const raw = localStorage.getItem('target_goal') || userStore.targetGoal || ''
+  const trimmed = raw.trim()
+  return trimmed.length > 0 ? trimmed : null
+})
+
+// 当 userStore.targetGoal 变化时，computed 会自动重新求值；
+// 此 watch 的作用是确保其他组件（如 SetupModal）通过 store 更新后，
+// Dashboard 能立即响应，无需页面刷新（Requirements 15.4）
+watch(() => userStore.targetGoal, () => {
+  // targetGoalDisplay 是 computed，依赖 userStore.targetGoal，会自动更新。
+  // 此处无需额外操作，watch 的存在本身保证了响应式追踪链路完整。
+})
+
 // 生命周期
 onMounted(() => {
+  // 恢复用户画像状态，确保 Sidebar 等组件初始化时能读到正确的 Store 状态
+  userStore.loadFromStorage()
   typeWriter()
   startCarousel()
   startAutoPlay()
@@ -836,6 +1101,7 @@ onMounted(() => {
   window.addEventListener('storage', handleStorageChange)
   playConsoleAnimation()
   loadHistory()
+  loadLatestRadarData()
 })
 
 onUnmounted(() => {
@@ -851,6 +1117,10 @@ onUnmounted(() => {
   stopAutoPlay()
   window.removeEventListener('mousemove', handleMouseMove)
   window.removeEventListener('storage', handleStorageChange)
+  // 组件卸载时取消任何 in-flight 的雷达图请求，避免内存泄漏
+  if (radarAbortController) {
+    radarAbortController.abort()
+  }
 })
 </script>
 
@@ -998,10 +1268,7 @@ onUnmounted(() => {
                 :class="globalResumeStatus === 'ready'
                   ? 'bg-green-500/[0.03] border-green-500/15 hover:border-green-500/30 hover:shadow-green-500/10'
                   : 'bg-red-500/[0.03] border-red-500/15 hover:border-red-500/30 hover:shadow-red-500/10'"
-                @click="$refs.globalFileInput?.click()"
-                @dragover.prevent="isGlobalDragging = true"
-                @dragleave.prevent="isGlobalDragging = false"
-                @drop.prevent="handleGlobalFileDrop"
+                @click="showSetupModal = true"
               >
                 <div class="flex items-center gap-2 mb-1">
                   <div class="w-2 h-2 rounded-full transition-all duration-300"
@@ -1010,12 +1277,31 @@ onUnmounted(() => {
                       : 'bg-red-500 animate-pulse shadow-[0_0_8px_rgba(239,68,68,0.8)]'"></div>
                   <span class="text-xs font-medium transition-colors duration-300"
                     :class="globalResumeStatus === 'ready' ? 'text-green-400' : 'text-red-400'">
-                    {{ globalResumeStatus === 'ready' ? '全局简历：已就绪' : '简历缺失' }}
+                    {{ globalResumeStatus === 'ready' ? '个人信息：已就绪' : '信息缺失' }}
                   </span>
                 </div>
-                <p class="text-[10px] text-gray-600 group-hover/asset:text-gray-400 transition-colors duration-300">
-                  {{ globalResumeStatus === 'ready' ? '拖入新文件可更新' : '点击上传简历' }}
-                </p>
+                <!-- 升学模式：展示考试类型标签 + 分数 + 排位 -->
+                <template v-if="userStore.activeMode === 'education'">
+                  <div class="flex items-center gap-2 mt-1.5">
+                    <span class="text-xs px-2 py-0.5 rounded-full bg-purple-500/20 text-purple-300 border border-purple-500/30">
+                      {{ examTypeLabel }}
+                    </span>
+                  </div>
+                  <p class="text-xs text-gray-400 mt-1">
+                    分数: {{ userStore.estimatedScore || '未设置' }} /
+                    排位: {{ userStore.examRank || '未设置' }}
+                  </p>
+                </template>
+                <!-- 求职模式：展示目标岗位 + 简历就绪状态 -->
+                <template v-else>
+                  <p class="text-xs text-gray-400 mt-1 truncate">
+                    {{ userStore.targetJob || '点击完善个人信息' }}
+                  </p>
+                  <div v-if="userStore.resumeText" class="flex items-center gap-1.5 mt-1">
+                    <div class="w-1.5 h-1.5 rounded-full bg-green-400 shadow-[0_0_6px_rgba(74,222,128,0.8)]"></div>
+                    <span class="text-xs text-green-400">简历已就绪</span>
+                  </div>
+                </template>
               </div>
 
 
@@ -1024,7 +1310,7 @@ onUnmounted(() => {
                 class="mt-2 px-2.5 py-1.5 rounded-lg border border-gray-500/20 bg-white/5 flex items-center gap-2"
               >
                 <FileText class="w-3.5 h-3.5 text-gray-300 flex-shrink-0" />
-                <span class="text-[10px] text-gray-300 truncate flex-1">
+                <span class="text-xs text-gray-300 truncate flex-1">
                   [个人文件] {{ knowledgeFileName }}
                 </span>
                 <button
@@ -1040,33 +1326,26 @@ onUnmounted(() => {
                 class="mt-2 px-2.5 py-1.5 rounded-lg system-knowledge-tag-sidebar flex items-center gap-2"
               >
                 <Sparkles class="w-3.5 h-3.5 text-emerald-300 flex-shrink-0" />
-                <span class="text-[10px] text-emerald-200 truncate flex-1 system-carousel-text" :class="{ 'carousel-fade-out': !carouselFade, 'carousel-fade-in': carouselFade }">{{ currentCarouselText }}</span>
+                <span class="text-xs text-emerald-200 truncate flex-1 system-carousel-text" :class="{ 'carousel-fade-out': !carouselFade, 'carousel-fade-in': carouselFade }">{{ currentCarouselText }}</span>
               </div>
 
               <div v-if="isKnowledgeUploading" class="mt-2 px-2.5 py-1.5 rounded-lg border border-cyan-400/20 bg-cyan-500/10 flex items-center gap-2">
                 <Loader2 class="w-3.5 h-3.5 animate-spin text-cyan-300" />
-                <span class="text-[10px] text-cyan-200">Knowledge indexing...</span>
+                <span class="text-xs text-cyan-200">Knowledge indexing...</span>
               </div>
 
-              <!-- 隐藏的全局文件输入 -->
-              <input
-                ref="globalFileInput"
-                type="file"
-                class="hidden"
-                :accept="ACCEPTED_EXTENSIONS"
-                @change="handleGlobalFileSelect"
-              />
+
             </div>
 
             <!-- 侧边栏底部署名 -->
             <div class="mt-auto pt-4 border-t border-white/5 pl-2 group/credit">
               <p class="text-xs text-gray-400 font-medium cursor-pointer relative">
                 Moyingjun
-                <span class="absolute left-0 bottom-full mb-2 px-2 py-1 bg-gray-800/90 backdrop-blur-sm text-[10px] text-gray-300 rounded-md opacity-0 group-hover/credit:opacity-100 transition-opacity duration-300 whitespace-nowrap pointer-events-none border border-white/10 shadow-lg">
+                <span class="absolute left-0 bottom-full mb-2 px-2 py-1 bg-gray-800/90 backdrop-blur-sm text-xs text-gray-300 rounded-md opacity-0 group-hover/credit:opacity-100 transition-opacity duration-300 whitespace-nowrap pointer-events-none border border-white/10 shadow-lg">
                   嘘...按 F12 看看？
                 </span>
               </p>
-              <p class="text-[10px] text-gray-600 mt-0.5">广东水利电力职业技术学院</p>
+              <p class="text-xs text-gray-500 mt-0.5">广东水利电力职业技术学院</p>
             </div>
           </div>
         </div>
@@ -1249,12 +1528,12 @@ onUnmounted(() => {
                     <div class="flex items-center justify-between mb-2">
                       <div class="flex items-center gap-2">
                         <span class="text-xs px-2 py-0.5 rounded-full border" :class="getCategoryColor(record.category)">{{ getCategoryLabel(record.category) }}</span>
-                        <span v-if="getDifficultyBadge(record) && getDifficultyBadgeConfig(getDifficultyBadge(record))" class="text-[10px] px-1.5 py-0.5 rounded-full border" :class="getDifficultyBadgeConfig(getDifficultyBadge(record)).class">{{ getDifficultyBadgeConfig(getDifficultyBadge(record)).label }}</span>
+                        <span v-if="getDifficultyBadge(record) && getDifficultyBadgeConfig(getDifficultyBadge(record))" class="text-xs px-1.5 py-0.5 rounded-full border" :class="getDifficultyBadgeConfig(getDifficultyBadge(record)).class">{{ getDifficultyBadgeConfig(getDifficultyBadge(record)).label }}</span>
                       </div>
-                      <span class="text-[10px] text-gray-600">{{ record.created_at }}</span>
+                      <span class="text-xs text-gray-500">{{ record.created_at }}</span>
                     </div>
                     <p class="text-xs text-gray-400 truncate">{{ record.user_input }}</p>
-                    <p v-if="record.ai_result" class="text-[11px] text-gray-600 truncate mt-1">{{ record.ai_result.substring(0, 60) }}...</p>
+                    <p v-if="record.ai_result" class="text-xs text-gray-500 truncate mt-1">{{ record.ai_result.substring(0, 60) }}...</p>
                     <div class="absolute right-3 bottom-3 flex items-center gap-2">
                       <button
                         @click.stop="toggleSaveRecord(record)"
@@ -1285,8 +1564,8 @@ onUnmounted(() => {
                     @click="userChatInput = action"
                     class="group px-3 py-1.5 rounded-lg border border-white/5 bg-white/[0.02] hover:bg-cyan-500/10 hover:border-cyan-500/30 transition-all duration-300 flex items-center gap-2"
                   >
-                    <span class="text-cyan-500/40 group-hover:text-cyan-400 font-mono text-[10px] transition-colors duration-300">&gt;&gt;</span>
-                    <span class="text-[11px] text-gray-400 group-hover:text-cyan-100 transition-colors duration-300">{{ action }}</span>
+                    <span class="text-cyan-500/40 group-hover:text-cyan-400 font-mono text-xs transition-colors duration-300">&gt;&gt;</span>
+                    <span class="text-xs text-gray-400 group-hover:text-cyan-100 transition-colors duration-300">{{ action }}</span>
                   </button>
                 </div>
               </div>
@@ -1333,29 +1612,29 @@ onUnmounted(() => {
                 <div class="bg-white/[0.015] backdrop-blur-xl border border-white/5 rounded-2xl p-4 shadow-[inset_0_0_20px_rgba(255,255,255,0.01)] transition-all duration-500 hover:-translate-y-1 hover:bg-white/[0.03] hover:border-purple-500/20 hover:shadow-[0_10px_30px_rgba(168,85,247,0.1)] group">
                   <div class="flex items-center justify-between mb-2">
                     <h3 class="text-xs font-semibold text-gray-300">系统状态</h3>
-                    <span class="text-[10px] text-gray-600">实时</span>
+                    <span class="text-xs text-gray-500">实时</span>
                   </div>
                   <div class="space-y-1.5">
                     <div class="flex items-center justify-between">
                       <div class="flex items-center gap-2">
                         <div class="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse shadow-[0_0_6px_rgba(16,185,129,0.8)]"></div>
-                        <span class="text-[11px] text-gray-300">DeepSeek V4</span>
+                        <span class="text-xs text-gray-300">DeepSeek V4</span>
                       </div>
-                      <span class="text-[10px] text-emerald-400">Online</span>
+                      <span class="text-xs text-emerald-400">Online</span>
                     </div>
                     <div class="flex items-center justify-between">
                       <div class="flex items-center gap-2">
                         <div class="w-1.5 h-1.5 rounded-full bg-gray-600"></div>
-                        <span class="text-[11px] text-gray-500">GPT-4o</span>
+                        <span class="text-xs text-gray-500">GPT-4o</span>
                       </div>
-                      <span class="text-[10px] text-gray-600">Standby</span>
+                      <span class="text-xs text-gray-500">Standby</span>
                     </div>
                     <div class="flex items-center justify-between">
                       <div class="flex items-center gap-2">
                         <div class="w-1.5 h-1.5 rounded-full bg-gray-600"></div>
-                        <span class="text-[11px] text-gray-500">GLM-4</span>
+                        <span class="text-xs text-gray-500">GLM-4</span>
                       </div>
-                      <span class="text-[10px] text-gray-600">Standby</span>
+                      <span class="text-xs text-gray-500">Standby</span>
                     </div>
                   </div>
                 </div>
@@ -1364,20 +1643,20 @@ onUnmounted(() => {
                 <div class="bg-white/[0.015] backdrop-blur-xl border border-white/5 rounded-2xl p-4 shadow-[inset_0_0_20px_rgba(255,255,255,0.01)] transition-all duration-500 hover:-translate-y-1 hover:bg-white/[0.03] hover:border-purple-500/20 hover:shadow-[0_10px_30px_rgba(168,85,247,0.1)] group">
                   <div class="flex items-center justify-between mb-2">
                     <h3 class="text-xs font-semibold text-gray-300">今日建议</h3>
-                    <span class="text-[10px] text-gray-600">3 条</span>
+                    <span class="text-xs text-gray-500">3 条</span>
                   </div>
                   <div class="space-y-1.5">
                     <div class="flex items-center gap-2 group/item cursor-default">
                       <div class="w-1.5 h-1.5 rounded-full bg-cyan-400/60 group-hover/item:shadow-[0_0_8px_rgba(34,211,238,0.8)] transition-all duration-300 flex-shrink-0"></div>
-                      <span class="text-[11px] text-gray-400">简历优化建议已就绪</span>
+                      <span class="text-xs text-gray-400">简历优化建议已就绪</span>
                     </div>
                     <div class="flex items-center gap-2 group/item cursor-default">
                       <div class="w-1.5 h-1.5 rounded-full bg-purple-400/60 group-hover/item:shadow-[0_0_8px_rgba(168,85,247,0.8)] transition-all duration-300 flex-shrink-0"></div>
-                      <span class="text-[11px] text-gray-400">专属院校政策更新 3 条</span>
+                      <span class="text-xs text-gray-400">专属院校政策更新 3 条</span>
                     </div>
                     <div class="flex items-center gap-2 group/item cursor-default">
                       <div class="w-1.5 h-1.5 rounded-full bg-amber-400/60 group-hover/item:shadow-[0_0_8px_rgba(251,191,36,0.8)] transition-all duration-300 flex-shrink-0"></div>
-                      <span class="text-[11px] text-gray-400">面试模拟热度 TOP1</span>
+                      <span class="text-xs text-gray-400">面试模拟热度 TOP1</span>
                     </div>
                   </div>
                 </div>
@@ -1386,36 +1665,52 @@ onUnmounted(() => {
                 <div class="bg-white/[0.015] backdrop-blur-xl border border-white/5 rounded-2xl p-4 shadow-[inset_0_0_20px_rgba(255,255,255,0.01)] flex-1 transition-all duration-500 hover:bg-white/[0.03] hover:border-cyan-500/20 hover:shadow-[0_10px_30px_rgba(34,211,238,0.1)] group flex flex-col">
                   <div class="flex items-center justify-between mb-4">
                     <div class="flex bg-black/20 rounded-lg p-1 border border-white/5 backdrop-blur-sm">
-                      <button @click="activeDataTab = 'resume'" :class="activeDataTab === 'resume' ? 'bg-purple-500/20 text-purple-300 border-purple-500/30' : 'text-gray-500 hover:text-gray-300 border-transparent'" class="px-2 py-1 rounded text-[10px] font-medium transition-all border">简历诊断</button>
-                      <button @click="activeDataTab = 'interview'" :class="activeDataTab === 'interview' ? 'bg-pink-500/20 text-pink-300 border-pink-500/30' : 'text-gray-500 hover:text-gray-300 border-transparent'" class="px-2 py-1 rounded text-[10px] font-medium transition-all border">面试评估</button>
-                      <button @click="activeDataTab = 'career'" :class="activeDataTab === 'career' ? 'bg-blue-500/20 text-blue-300 border-blue-500/30' : 'text-gray-500 hover:text-gray-300 border-transparent'" class="px-2 py-1 rounded text-[10px] font-medium transition-all border">综合规划</button>
+                      <button @click="activeDataTab = 'resume'" :class="activeDataTab === 'resume' ? 'bg-purple-500/20 text-purple-300 border-purple-500/30' : 'text-gray-500 hover:text-gray-300 border-transparent'" class="px-2 py-1 rounded text-xs font-medium transition-all border">简历诊断</button>
+                      <button @click="activeDataTab = 'interview'" :class="activeDataTab === 'interview' ? 'bg-pink-500/20 text-pink-300 border-pink-500/30' : 'text-gray-500 hover:text-gray-300 border-transparent'" class="px-2 py-1 rounded text-xs font-medium transition-all border">面试评估</button>
+                      <button @click="activeDataTab = 'career'" :class="activeDataTab === 'career' ? 'bg-blue-500/20 text-blue-300 border-blue-500/30' : 'text-gray-500 hover:text-gray-300 border-transparent'" class="px-2 py-1 rounded text-xs font-medium transition-all border">综合规划</button>
                     </div>
-                    <span class="text-[10px] text-cyan-500/70 cursor-pointer hover:text-cyan-400">历史档案 &gt;</span>
+                    <span class="text-xs text-cyan-500/70 cursor-pointer hover:text-cyan-400" @click="showDataSourceModal = true">数据面板设置 &gt;</span>
                   </div>
+
+                  <!-- 雷达图 fetch 失败提示：保留现有数据，不重置为零（Requirements 10.2） -->
+                  <transition name="widget-fade">
+                    <div
+                      v-if="radarFetchError"
+                      class="mb-3 flex items-center gap-2 px-3 py-2 rounded-lg border border-red-500/30 bg-red-500/10 text-xs text-red-300"
+                    >
+                      <span class="flex-shrink-0">⚠</span>
+                      <span class="flex-1">{{ radarFetchError }}</span>
+                      <button
+                        @click="radarFetchError = ''"
+                        class="flex-shrink-0 text-red-400/60 hover:text-red-300 transition-colors"
+                        aria-label="关闭错误提示"
+                      >✕</button>
+                    </div>
+                  </transition>
 
                   <div class="relative flex-1 overflow-hidden">
                     <transition name="widget-fade" mode="out-in">
                       <div v-if="activeDataTab === 'resume'" key="resume" class="flex flex-col">
                         <CyberRadarChart :chartData="radarData" style="height: 220px;" class="-mt-4 -mb-2" />
                         <div class="grid grid-cols-2 gap-x-4 gap-y-3">
-                          <div><div class="flex justify-between text-[9px] text-gray-500 mb-1"><span>技术能力</span><span class="text-purple-400">78%</span></div><div class="h-1 bg-white/5 rounded-full overflow-hidden"><div class="h-full bg-purple-500/60 animate-boot-bar" style="width: 78%"></div></div></div>
-                          <div><div class="flex justify-between text-[9px] text-gray-500 mb-1"><span>沟通表达</span><span class="text-cyan-400">65%</span></div><div class="h-1 bg-white/5 rounded-full overflow-hidden"><div class="h-full bg-cyan-500/60 animate-boot-bar" style="width: 65%"></div></div></div>
-                          <div><div class="flex justify-between text-[9px] text-gray-500 mb-1"><span>项目经验</span><span class="text-purple-400">82%</span></div><div class="h-1 bg-white/5 rounded-full overflow-hidden"><div class="h-full bg-purple-500/60 animate-boot-bar" style="width: 82%"></div></div></div>
-                          <div><div class="flex justify-between text-[9px] text-gray-500 mb-1"><span>学习能力</span><span class="text-cyan-400">90%</span></div><div class="h-1 bg-white/5 rounded-full overflow-hidden"><div class="h-full bg-cyan-500/60 animate-boot-bar" style="width: 90%"></div></div></div>
-                          <div><div class="flex justify-between text-[9px] text-gray-500 mb-1"><span>团队协作</span><span class="text-purple-400">72%</span></div><div class="h-1 bg-white/5 rounded-full overflow-hidden"><div class="h-full bg-purple-500/60 animate-boot-bar" style="width: 72%"></div></div></div>
-                          <div><div class="flex justify-between text-[9px] text-gray-500 mb-1"><span>职业规划</span><span class="text-cyan-400">68%</span></div><div class="h-1 bg-white/5 rounded-full overflow-hidden"><div class="h-full bg-cyan-500/60 animate-boot-bar" style="width: 68%"></div></div></div>
+                          <div><div class="flex justify-between text-xs text-gray-500 mb-1"><span>技术能力</span><span class="text-purple-400">{{ radarData.values[0] }}%</span></div><div class="h-1 bg-white/5 rounded-full overflow-hidden"><div class="h-full bg-purple-500/60 animate-boot-bar" :style="{ width: radarData.values[0] + '%' }"></div></div></div>
+                          <div><div class="flex justify-between text-xs text-gray-500 mb-1"><span>沟通表达</span><span class="text-cyan-400">{{ radarData.values[1] }}%</span></div><div class="h-1 bg-white/5 rounded-full overflow-hidden"><div class="h-full bg-cyan-500/60 animate-boot-bar" :style="{ width: radarData.values[1] + '%' }"></div></div></div>
+                          <div><div class="flex justify-between text-xs text-gray-500 mb-1"><span>项目经验</span><span class="text-purple-400">{{ radarData.values[2] }}%</span></div><div class="h-1 bg-white/5 rounded-full overflow-hidden"><div class="h-full bg-purple-500/60 animate-boot-bar" :style="{ width: radarData.values[2] + '%' }"></div></div></div>
+                          <div><div class="flex justify-between text-xs text-gray-500 mb-1"><span>学习能力</span><span class="text-cyan-400">{{ radarData.values[3] }}%</span></div><div class="h-1 bg-white/5 rounded-full overflow-hidden"><div class="h-full bg-cyan-500/60 animate-boot-bar" :style="{ width: radarData.values[3] + '%' }"></div></div></div>
+                          <div><div class="flex justify-between text-xs text-gray-500 mb-1"><span>团队协作</span><span class="text-purple-400">{{ radarData.values[4] }}%</span></div><div class="h-1 bg-white/5 rounded-full overflow-hidden"><div class="h-full bg-purple-500/60 animate-boot-bar" :style="{ width: radarData.values[4] + '%' }"></div></div></div>
+                          <div><div class="flex justify-between text-xs text-gray-500 mb-1"><span>职业规划</span><span class="text-cyan-400">{{ radarData.values[5] }}%</span></div><div class="h-1 bg-white/5 rounded-full overflow-hidden"><div class="h-full bg-cyan-500/60 animate-boot-bar" :style="{ width: radarData.values[5] + '%' }"></div></div></div>
                         </div>
                       </div>
                       
                       <div v-else-if="activeDataTab === 'interview'" key="interview" class="flex flex-col">
                         <CyberRadarChart :chartData="radarData" style="height: 220px;" class="-mt-4 -mb-2" />
                         <div class="grid grid-cols-2 gap-x-4 gap-y-3">
-                          <div><div class="flex justify-between text-[9px] text-gray-500 mb-1"><span>技术能力</span><span class="text-pink-400">85%</span></div><div class="h-1 bg-white/5 rounded-full overflow-hidden"><div class="h-full bg-pink-500/60 animate-boot-bar" style="width: 85%"></div></div></div>
-                          <div><div class="flex justify-between text-[9px] text-gray-500 mb-1"><span>沟通表达</span><span class="text-pink-400">60%</span></div><div class="h-1 bg-white/5 rounded-full overflow-hidden"><div class="h-full bg-pink-500/60 animate-boot-bar" style="width: 60%"></div></div></div>
-                          <div><div class="flex justify-between text-[9px] text-gray-500 mb-1"><span>项目经验</span><span class="text-pink-400">75%</span></div><div class="h-1 bg-white/5 rounded-full overflow-hidden"><div class="h-full bg-pink-500/60 animate-boot-bar" style="width: 75%"></div></div></div>
-                          <div><div class="flex justify-between text-[9px] text-gray-500 mb-1"><span>学习能力</span><span class="text-pink-400">92%</span></div><div class="h-1 bg-white/5 rounded-full overflow-hidden"><div class="h-full bg-pink-500/60 animate-boot-bar" style="width: 92%"></div></div></div>
-                          <div><div class="flex justify-between text-[9px] text-gray-500 mb-1"><span>团队协作</span><span class="text-pink-400">70%</span></div><div class="h-1 bg-white/5 rounded-full overflow-hidden"><div class="h-full bg-pink-500/60 animate-boot-bar" style="width: 70%"></div></div></div>
-                          <div><div class="flex justify-between text-[9px] text-gray-500 mb-1"><span>职业规划</span><span class="text-pink-400">55%</span></div><div class="h-1 bg-white/5 rounded-full overflow-hidden"><div class="h-full bg-pink-500/60 animate-boot-bar" style="width: 55%"></div></div></div>
+                          <div><div class="flex justify-between text-xs text-gray-500 mb-1"><span>技术能力</span><span class="text-pink-400">{{ radarData.values[0] }}%</span></div><div class="h-1 bg-white/5 rounded-full overflow-hidden"><div class="h-full bg-pink-500/60 animate-boot-bar" :style="{ width: radarData.values[0] + '%' }"></div></div></div>
+                          <div><div class="flex justify-between text-xs text-gray-500 mb-1"><span>沟通表达</span><span class="text-pink-400">{{ radarData.values[1] }}%</span></div><div class="h-1 bg-white/5 rounded-full overflow-hidden"><div class="h-full bg-pink-500/60 animate-boot-bar" :style="{ width: radarData.values[1] + '%' }"></div></div></div>
+                          <div><div class="flex justify-between text-xs text-gray-500 mb-1"><span>项目经验</span><span class="text-pink-400">{{ radarData.values[2] }}%</span></div><div class="h-1 bg-white/5 rounded-full overflow-hidden"><div class="h-full bg-pink-500/60 animate-boot-bar" :style="{ width: radarData.values[2] + '%' }"></div></div></div>
+                          <div><div class="flex justify-between text-xs text-gray-500 mb-1"><span>学习能力</span><span class="text-pink-400">{{ radarData.values[3] }}%</span></div><div class="h-1 bg-white/5 rounded-full overflow-hidden"><div class="h-full bg-pink-500/60 animate-boot-bar" :style="{ width: radarData.values[3] + '%' }"></div></div></div>
+                          <div><div class="flex justify-between text-xs text-gray-500 mb-1"><span>团队协作</span><span class="text-pink-400">{{ radarData.values[4] }}%</span></div><div class="h-1 bg-white/5 rounded-full overflow-hidden"><div class="h-full bg-pink-500/60 animate-boot-bar" :style="{ width: radarData.values[4] + '%' }"></div></div></div>
+                          <div><div class="flex justify-between text-xs text-gray-500 mb-1"><span>职业规划</span><span class="text-pink-400">{{ radarData.values[5] }}%</span></div><div class="h-1 bg-white/5 rounded-full overflow-hidden"><div class="h-full bg-pink-500/60 animate-boot-bar" :style="{ width: radarData.values[5] + '%' }"></div></div></div>
                         </div>
                       </div>
 
@@ -1429,18 +1724,30 @@ onUnmounted(() => {
                 <!-- 卡片 4：智能预测看板 (骨架版) -->
                 <div class="bg-white/[0.015] backdrop-blur-xl border border-white/5 rounded-2xl p-4 shadow-[inset_0_0_20px_rgba(255,255,255,0.01)] transition-all duration-500 hover:-translate-y-1 hover:bg-white/[0.03] hover:border-purple-500/20 hover:shadow-[0_10px_30px_rgba(168,85,247,0.1)] group">
                   <div class="flex items-center justify-between mb-3">
-                    <h3 class="text-xs font-semibold text-gray-300">智能预测</h3>
+                    <div class="flex items-center gap-2 min-w-0">
+                      <h3 class="text-xs font-semibold text-gray-300 shrink-0">智能预测</h3>
+                      <!-- 目标志愿：有值时显示徽章，无值时显示占位提示（Requirements 15.1, 15.2, 15.3） -->
+                      <span
+                        v-if="targetGoalDisplay"
+                        class="text-xs px-2 py-0.5 rounded-full bg-indigo-500/15 border border-indigo-500/25 text-indigo-300 font-medium truncate max-w-[140px]"
+                        :title="targetGoalDisplay"
+                      >🎯 {{ targetGoalDisplay }}</span>
+                      <span
+                        v-else
+                        class="text-xs text-gray-600 italic"
+                      >设置目标志愿</span>
+                    </div>
                     <div class="flex items-center gap-1.5 bg-indigo-500/10 backdrop-blur-sm border border-indigo-500/20 rounded-full px-2.5 py-1 shadow-[0_0_8px_rgba(99,102,241,0.1)]">
                       <div class="w-1.5 h-1.5 rounded-full bg-indigo-400 animate-pulse shadow-[0_0_6px_rgba(129,140,248,0.8)]"></div>
-                      <span class="text-[10px] text-indigo-300/80 font-mono">AI 计算中</span>
+                      <span class="text-xs text-indigo-300/80 font-mono">AI 计算中</span>
                     </div>
                   </div>
                   <div class="space-y-2.5">
                     <!-- 冲 -->
                     <div class="bg-rose-500/5 border border-rose-500/10 rounded-xl p-3 transition-all duration-300 hover:bg-rose-500/10 cursor-default">
                       <div class="flex items-center gap-2 mb-2">
-                        <span class="text-[10px] px-1.5 py-0.5 rounded bg-rose-500/20 text-rose-300 font-semibold tracking-wider shadow-[0_0_6px_rgba(244,63,94,0.3)]">冲</span>
-                        <span class="text-[10px] text-gray-600">胜率 30%-50%</span>
+                        <span class="text-xs px-1.5 py-0.5 rounded bg-rose-500/20 text-rose-300 font-semibold tracking-wider shadow-[0_0_6px_rgba(244,63,94,0.3)]">冲</span>
+                        <span class="text-xs text-gray-500">胜率 30%-50%</span>
                       </div>
                       <div class="flex gap-2">
                         <div class="h-6 w-full bg-white/5 border border-white/5 rounded backdrop-blur-sm animate-pulse"></div>
@@ -1451,8 +1758,8 @@ onUnmounted(() => {
                     <!-- 稳 -->
                     <div class="bg-blue-500/5 border border-blue-500/10 rounded-xl p-3 transition-all duration-300 hover:bg-blue-500/10 cursor-default">
                       <div class="flex items-center gap-2 mb-2">
-                        <span class="text-[10px] px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-300 font-semibold tracking-wider shadow-[0_0_6px_rgba(59,130,246,0.3)]">稳</span>
-                        <span class="text-[10px] text-gray-600">胜率 60%-80%</span>
+                        <span class="text-xs px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-300 font-semibold tracking-wider shadow-[0_0_6px_rgba(59,130,246,0.3)]">稳</span>
+                        <span class="text-xs text-gray-500">胜率 60%-80%</span>
                       </div>
                       <div class="flex gap-2">
                         <div class="h-6 w-full bg-white/5 border border-white/5 rounded backdrop-blur-sm animate-pulse" style="animation-delay: 0.3s;"></div>
@@ -1463,8 +1770,8 @@ onUnmounted(() => {
                     <!-- 保 -->
                     <div class="bg-emerald-500/5 border border-emerald-500/10 rounded-xl p-3 transition-all duration-300 hover:bg-emerald-500/10 cursor-default">
                       <div class="flex items-center gap-2 mb-2">
-                        <span class="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 font-semibold tracking-wider shadow-[0_0_6px_rgba(16,185,129,0.3)]">保</span>
-                        <span class="text-[10px] text-gray-600">胜率 95%以上</span>
+                        <span class="text-xs px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 font-semibold tracking-wider shadow-[0_0_6px_rgba(16,185,129,0.3)]">保</span>
+                        <span class="text-xs text-gray-500">胜率 95%以上</span>
                       </div>
                       <div class="flex gap-2">
                         <div class="h-6 w-full bg-white/5 border border-white/5 rounded backdrop-blur-sm animate-pulse" style="animation-delay: 0.6s;"></div>
@@ -1532,7 +1839,7 @@ onUnmounted(() => {
 
               <div class="flex items-center gap-2 mt-2">
                 <Sparkles class="w-3 h-3 text-cyan-500/50" />
-                <span class="text-[10px] text-gray-600">AI 职场领航员 · 附件仅作本轮对话上下文</span>
+                <span class="text-xs text-gray-500">AI 职场领航员 · 附件仅作本轮对话上下文</span>
               </div>
             </div>
           </div>
@@ -1665,6 +1972,30 @@ onUnmounted(() => {
         </div>
       </div>
     </div>
+
+    <!-- SetupModal 挂载 -->
+    <SetupModal
+      v-if="showSetupModal"
+      @close="showSetupModal = false"
+      @complete="handleSetupComplete"
+    />
+
+    <!-- DataSourceModal 挂载（数据面板设置，与 SetupModal 解耦） -->
+    <DataSourceModal
+      :visible="showDataSourceModal"
+      :historyRecords="historyRecords"
+      :activeTab="activeDataTab"
+      @close="showDataSourceModal = false"
+      @select="(record) => { userStore.setPinnedId(activeDataTab.value, record.id); showDataSourceModal = false }"
+    />
+
+    <!-- ChatPreviewModal 挂载：预览 agent_ 类别的历史对话（Requirements 13.1, 13.5, 13.6） -->
+    <ChatPreviewModal
+      :visible="showChatPreviewModal"
+      :recordId="chatPreviewRecordId"
+      @load-context="handleChatPreviewLoadContext"
+      @close="handleChatPreviewClose"
+    />
   </div>
 </template>
 

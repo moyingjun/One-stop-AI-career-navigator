@@ -4,6 +4,11 @@ import { useRouter, useRoute } from 'vue-router'
 import { ArrowLeft, Send, UserCircle, Cpu, Loader2, Shield, AlertTriangle, X, Sprout, Briefcase, Flame } from 'lucide-vue-next'
 import { marked } from 'marked'
 import CyberGlassCard from './components/CyberGlassCard.vue'
+import { streamInterviewChat } from '@/services/llm_service.js'
+import { getAuthHeaders } from '@/services/authService.js'
+import { useUserStore } from '@/stores/userStore'
+
+const userStore = useUserStore()
 
 const generateUUID = () => {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
@@ -276,7 +281,9 @@ const initInterview = async () => {
   if (recordId) {
     isRestoring.value = true
     try {
-      const res = await fetch(`${API_BASE_URL.replace('/api', '')}/api/history/${recordId}`)
+      const res = await fetch(`${API_BASE_URL.replace('/api', '')}/api/history/${recordId}`, {
+        headers: { 'Content-Type': 'application/json', ...getAuthHeaders() }
+      })
       if (res.ok) {
         const data = await res.json()
         if (data.success && data.data) {
@@ -338,14 +345,11 @@ const initInterview = async () => {
   }
 
   const name = localStorage.getItem('candidate_name') || ''
-  const role = localStorage.getItem('target_role') || ''
-  const resume = localStorage.getItem('resume_text') || ''
-  const jd = localStorage.getItem('current_interview_jd') || localStorage.getItem('jd_content') || ''
+  targetRole.value = userStore.targetJob || localStorage.getItem('target_role') || localStorage.getItem('target_job') || ''
+  resumeText.value = userStore.resumeText || localStorage.getItem('resume_text') || ''
+  interviewJd.value = userStore.jobDescription || localStorage.getItem('job_description') || localStorage.getItem('current_interview_jd') || localStorage.getItem('jd_content') || ''
 
   candidateName.value = name
-  targetRole.value = role
-  resumeText.value = resume
-  interviewJd.value = jd
 
   showDifficultyModal.value = true
 }
@@ -363,11 +367,12 @@ const startInterviewWithDifficulty = async () => {
   try {
     const response = await fetch(CHAT_API_URL, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
       body: JSON.stringify({
         user_query: `面试官您好，我是候选人${name || '未知'}，应聘岗位是${role || '未指定'}。请您直接根据我的简历开始向我提问。`,
         history: [],
         resume_text: resume,
+        target_job: role,
         jd_text: jd,
         difficulty: interviewDifficulty.value
       })
@@ -396,29 +401,39 @@ const sendMessage = async () => {
   isLoading.value = true
   isAiSpeaking.value = true
 
-  try {
-    const history = messages.value.map(msg => ({ role: msg.role, content: msg.content }))
+  // 推入占位 AI 消息，供 onChunk 回调逐步追加内容（打字机效果）
+  const aiMsg = { role: 'ai', content: '', timestamp: new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }), isNew: true }
+  messages.value.push(aiMsg)
 
-    const response = await fetch(CHAT_API_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
+  try {
+    const history = messages.value
+      .slice(0, -1)  // 排除刚推入的占位消息
+      .map(msg => ({ role: msg.role, content: msg.content }))
+
+    await streamInterviewChat(
+      '/interview/chat',
+      {
         user_query: userMessage,
         history,
         resume_text: resumeText.value,
+        target_job: targetRole.value,
         jd_text: interviewJd.value,
         difficulty: interviewDifficulty.value
-      })
-    })
+      },
+      (chunk) => {
+        // onChunk: 追加内容片段到占位消息
+        aiMsg.content += chunk
+        scrollToBottom()
+      },
+      (errMsg) => {
+        // onError: 将错误信息追加到占位消息（内联展示，不弹窗）
+        aiMsg.content += errMsg
+        scrollToBottom()
+      }
+    )
 
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}`)
-    }
-
-    const data = await response.json()
-    let reply = data.reply || '请继续。'
-
-    const scoreMatch = reply.match(/\[SCORE_UPDATE\](\{[\s\S]*?\})\[\/SCORE_UPDATE\]/)
+    // 流结束后，从完整内容中提取 [SCORE_UPDATE] 标签并更新雷达图
+    const scoreMatch = aiMsg.content.match(/\[SCORE_UPDATE\](\{[\s\S]*?\})\[\/SCORE_UPDATE\]/)
     if (scoreMatch) {
       try {
         const liveScores = JSON.parse(scoreMatch[1])
@@ -427,12 +442,12 @@ const sendMessage = async () => {
           radarScores.value = { ...radarScores.value, ...liveScores }
         }
       } catch {}
-      reply = reply.replace(/\[SCORE_UPDATE\]\{[\s\S]*?\}\[\/SCORE_UPDATE\]/g, '').trim()
+      // 从显示内容中移除评分标签（用户不可见）
+      aiMsg.content = aiMsg.content.replace(/\[SCORE_UPDATE\]\{[\s\S]*?\}\[\/SCORE_UPDATE\]/g, '').trim()
     }
 
-    addMessage('ai', reply)
-
-    if (reply.includes('[WARNING]')) {
+    // 检测 WARNING 标记，累计 strike 计数
+    if (aiMsg.content.includes('[WARNING]')) {
       strikeCount.value++
       if (strikeCount.value >= 3) {
         strikeTerminated.value = true
@@ -444,7 +459,7 @@ const sendMessage = async () => {
     }
   } catch (error) {
     console.error('发送消息失败:', error)
-    addMessage('ai', '😵 导师正在开小差，请重新点击发送哦~')
+    aiMsg.content += '😵 导师正在开小差，请重新点击发送哦~'
   } finally {
     isLoading.value = false
     isAiSpeaking.value = false
@@ -529,7 +544,7 @@ const endInterview = async () => {
   try {
     const response = await fetch(`${API_BASE_URL}/interview/evaluate`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
       body: JSON.stringify({
         user_query: "请根据对话记录生成 JSON 评估报告",
         history: messages.value,
@@ -557,6 +572,29 @@ const endInterview = async () => {
       }
       mentorComment.value = resData.data.comment || '无评价。'
       
+      // 保存历史记录（失败不阻断 UI 流程）
+      try {
+        await fetch(`${API_BASE_URL}/history`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+          body: JSON.stringify({
+            category: `interview_${interviewDifficulty.value}`,
+            user_input: `面试候选人：${candidateName.value}，岗位：${targetRole.value}`,
+            ai_result: mentorComment.value,
+            scores: JSON.stringify(radarScores.value),
+            chat_history: JSON.stringify(messages.value.map(m => ({ role: m.role, content: m.content }))),
+            extra_data: JSON.stringify({
+              resume_text: resumeText.value,
+              target_role: targetRole.value,
+              jd_text: interviewJd.value,
+              difficulty: interviewDifficulty.value
+            })
+          })
+        })
+      } catch (saveErr) {
+        console.error('保存历史记录失败:', saveErr)
+      }
+
       setTimeout(() => {
         showMatrixModal.value = false
         showResultModal.value = true
@@ -696,6 +734,12 @@ onUnmounted(() => {
             <component :is="themeIcon" class="w-5 h-5" :class="themeConfig.text" />
             <h2 class="text-sm font-bold" :class="themeConfig.text">候选人档案</h2>
           </div>
+          <!-- 求职意向优先展示块：有 targetRole 时显示在简历内容上方 -->
+          <div v-if="targetRole" class="mb-3 px-3 py-2 rounded-lg border" :class="themeConfig.borderLight">
+            <p class="text-[10px] text-gray-500 uppercase tracking-wider mb-0.5">求职意向</p>
+            <p class="text-sm font-semibold" :class="themeConfig.text">{{ targetRole }}</p>
+          </div>
+
           <div class="animate-scan rounded-xl border p-4 max-h-[calc(100vh-500px)] overflow-y-auto backdrop-blur-xl shadow-[inset_0_1px_1px_rgba(255,255,255,0.1)] transition-all duration-500 hover:border-current hover:shadow-[0_0_30px_currentColor]" :class="isResumeValid ? ['bg-white/[0.02]', themeConfig.borderLight] : 'bg-amber-500/5 border-amber-500/20'">
             <template v-if="isResumeValid">
               <div class="text-gray-300 text-sm leading-relaxed whitespace-pre-wrap" v-html="formattedResumeHtml"></div>
@@ -902,7 +946,7 @@ onUnmounted(() => {
                   <span class="text-purple-400 font-bold text-lg">🔥</span>
                 </div>
                 <div>
-                  <h3 class="text-base font-semibold text-white mb-1">P8 压力面</h3>
+                  <h3 class="text-base font-semibold text-white mb-1">P8 压力面试</h3>
                   <p class="text-xs text-gray-400 leading-relaxed">适合高级开发者。高难度问题 + 压力测试，犀利追问，P8 大佬审视体验</p>
                 </div>
               </button>

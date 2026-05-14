@@ -1,6 +1,7 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
+import { vAutoAnimate } from '@formkit/auto-animate/vue'
 import {
   ArrowLeft,
   Bot,
@@ -14,6 +15,7 @@ import {
   Trash2,
   X
 } from 'lucide-vue-next'
+import CustomDropdown from '@/components/CustomDropdown.vue'
 
 const router = useRouter()
 
@@ -24,6 +26,17 @@ const historyRecords = ref([])
 const isLoading = ref(true)
 const searchQuery = ref('')
 const filterCategory = ref('all')
+const filterSaved = ref('all')
+
+/** 类型过滤选项列表，供 CustomDropdown 使用 Requirements: 12.1, 12.2, 12.3, 12.4 */
+const categoryFilterOptions = [
+  { value: 'all', label: '全部类型' },
+  { value: 'resume_diagnosis', label: '简历诊断' },
+  { value: 'interview', label: '面试评估' },
+  { value: 'career_planning', label: '职业规划' },
+  { value: 'general_chat', label: '职场助理' },
+  { value: 'agent_', label: 'Agent 对话' }
+]
 const showClearConfirm = ref(false)
 const isClearing = ref(false)
 const busyRecordIds = ref(new Set())
@@ -45,15 +58,28 @@ const loadHistory = async () => {
 const filteredRecords = computed(() => {
   let records = historyRecords.value
 
-  if (filterCategory.value !== 'all') {
-    records = records.filter((record) => record.category === filterCategory.value)
+  // 收藏状态过滤
+  if (filterSaved.value === 'saved') {
+    records = records.filter(r => r.is_saved === 1 || r.is_saved === true)
   }
 
+  // 类型过滤：interview_ 和 agent_ 前缀类型使用 startsWith 匹配，其余精确匹配
+  if (filterCategory.value !== 'all') {
+    if (filterCategory.value === 'interview') {
+      records = records.filter(r => r.category?.startsWith('interview'))
+    } else if (filterCategory.value === 'agent_') {
+      records = records.filter(r => r.category?.startsWith('agent_'))
+    } else {
+      records = records.filter(r => r.category === filterCategory.value)
+    }
+  }
+
+  // 搜索过滤（保留原有逻辑）
   if (searchQuery.value.trim()) {
     const query = searchQuery.value.toLowerCase()
-    records = records.filter((record) =>
-      String(record.user_input || '').toLowerCase().includes(query) ||
-      String(record.ai_result || '').toLowerCase().includes(query)
+    records = records.filter(r =>
+      String(r.user_input || '').toLowerCase().includes(query) ||
+      String(r.ai_result || '').toLowerCase().includes(query)
     )
   }
 
@@ -90,6 +116,9 @@ const goToRecord = (record) => {
   if (record.category === 'resume_diagnosis') router.push(`/resume-diagnosis?id=${record.id}`)
   else if (record.category?.startsWith?.('interview')) router.push(`/interview?id=${record.id}`)
   else if (record.category === 'career_planning') router.push(`/career-planning?id=${record.id}`)
+  // 新增：Agent 对话 + 通用聊天 → Dashboard 恢复上下文
+  else if (record.category?.startsWith?.('agent_') || record.category === 'general_chat')
+    router.push(`/dashboard?chat_id=${record.id}`)
 }
 
 const markBusy = (recordId, busy) => {
@@ -179,6 +208,31 @@ onMounted(loadHistory)
           </div>
 
           <div class="flex flex-wrap items-center gap-3">
+            <!-- Segmented Control 收藏过滤 -->
+            <div class="flex items-center gap-1 p-1 rounded-lg bg-white/5 backdrop-blur-sm border border-white/10">
+              <button
+                @click="filterSaved = 'all'"
+                :class="[
+                  'px-3 py-1.5 rounded-md text-sm font-medium transition-all duration-200',
+                  filterSaved === 'all'
+                    ? 'bg-purple-500/20 text-purple-300 shadow-[0_0_10px_rgba(168,85,247,0.3)] border border-purple-500/30'
+                    : 'text-gray-400 hover:text-gray-300 hover:bg-white/5'
+                ]"
+              >
+                全部记录
+              </button>
+              <button
+                @click="filterSaved = 'saved'"
+                :class="[
+                  'px-3 py-1.5 rounded-md text-sm font-medium transition-all duration-200',
+                  filterSaved === 'saved'
+                    ? 'bg-purple-500/20 text-purple-300 shadow-[0_0_10px_rgba(168,85,247,0.3)] border border-purple-500/30'
+                    : 'text-gray-400 hover:text-gray-300 hover:bg-white/5'
+                ]"
+              >
+                🌟 仅看收藏
+              </button>
+            </div>
             <div class="relative">
               <Search class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-500" />
               <input
@@ -188,16 +242,14 @@ onMounted(loadHistory)
                 class="bg-white/5 border border-white/10 rounded-lg py-2 pl-9 pr-4 text-sm text-gray-200 placeholder-gray-500 focus:outline-none focus:border-purple-500/50 w-48 md:w-64 transition-all duration-300"
               />
             </div>
-            <select
-              v-model="filterCategory"
-              class="bg-white/5 border border-white/10 rounded-lg py-2 px-3 text-sm text-gray-300 focus:outline-none focus:border-purple-500/50 transition-all duration-300"
-            >
-              <option value="all">全部类型</option>
-              <option value="resume_diagnosis">简历诊断</option>
-              <option value="interview_evaluate">面试评估</option>
-              <option value="career_planning">职业规划</option>
-              <option value="general_chat">职场助理</option>
-            </select>
+            <!-- 类型过滤下拉：使用 CustomDropdown 替换原生 select Requirements: 11.9, 12.1-12.4 -->
+            <div class="w-44">
+              <CustomDropdown
+                v-model="filterCategory"
+                :options="categoryFilterOptions"
+                placeholder="全部类型"
+              />
+            </div>
             <button
               v-if="historyRecords.length > 0"
               @click="showClearConfirm = true"
@@ -217,11 +269,13 @@ onMounted(loadHistory)
           </div>
 
           <div v-else-if="filteredRecords.length === 0" class="flex flex-col items-center justify-center h-64 text-center">
-            <History class="w-12 h-12 text-gray-600 mb-4" />
-            <p class="text-gray-500">暂无历史记录</p>
+            <component :is="filterSaved === 'saved' ? Star : History" class="w-12 h-12 text-gray-600 mb-4" />
+            <p class="text-gray-500">
+              {{ filterSaved === 'saved' ? '暂无收藏记录，去收藏一些对话吧 🌟' : '暂无历史记录' }}
+            </p>
           </div>
 
-          <div v-else class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          <div v-else v-auto-animate class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             <div
               v-for="record in filteredRecords"
               :key="record.id"
@@ -231,7 +285,7 @@ onMounted(loadHistory)
               <div class="flex items-center justify-between mb-3">
                 <div class="flex items-center gap-2 min-w-0">
                   <component :is="getCategoryIcon(record.category)" class="w-4 h-4 flex-shrink-0" :class="getCategoryColor(record.category).split(' ')[0]" />
-                  <span class="text-xs px-2 py-0.5 rounded-full border truncate" :class="getCategoryColor(record.category)">{{ getCategoryLabel(record.category) }}</span>
+                  <span class="text-xs px-2 py-0.5 rounded-full border truncate font-bold" :class="getCategoryColor(record.category)">{{ getCategoryLabel(record.category) }}</span>
                 </div>
                 <span class="text-[10px] text-gray-600 flex-shrink-0 ml-2">{{ record.created_at }}</span>
               </div>

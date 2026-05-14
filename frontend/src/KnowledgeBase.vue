@@ -4,7 +4,6 @@ import { useRouter } from 'vue-router'
 import { ArrowLeft, Upload, FolderOpen, Loader2, Trash2, FileText, Image, File } from 'lucide-vue-next'
 import CyberGlassCard from '@/components/CyberGlassCard.vue'
 import { ACCEPTED_EXTENSIONS, validateFile, getFileType } from '@/utils/fileConstants.js'
-import { parseFile } from '@/utils/ocrHelper.js'
 import { useKnowledgeBaseStore } from '@/stores/knowledgeBaseStore.js'
 
 const router = useRouter()
@@ -12,6 +11,14 @@ const store = useKnowledgeBaseStore()
 
 // Icon component map for dynamic rendering
 const iconMap = { FileText, Image, File }
+
+// KnowledgeBase 页面专用文件大小限制：10MB
+const KB_MAX_FILE_SIZE = 10 * 1024 * 1024
+
+// 后端 API 基础路径
+const API_BASE_URL = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
+  ? 'http://127.0.0.1:8000/api'
+  : '/api'
 
 // Sorted files list (newest first by createdAt)
 const sortedFiles = computed(() => {
@@ -55,12 +62,26 @@ function handleDragLeave(event) {
   isDragging.value = false
 }
 
+/**
+ * KnowledgeBase 页面专用文件校验（10MB 限制）
+ * @param {File} file
+ * @returns {{ valid: boolean, error: string | null }}
+ */
+function validateKBFile(file) {
+  const baseValidation = validateFile(file)
+  if (!baseValidation.valid) return baseValidation
+  if (file.size > KB_MAX_FILE_SIZE) {
+    return { valid: false, error: '文件大小超过限制 (最大 10MB)' }
+  }
+  return { valid: true, error: null }
+}
+
 function handleFileDrop(event) {
   event.preventDefault()
   isDragging.value = false
   const droppedFiles = Array.from(event.dataTransfer.files)
   for (const file of droppedFiles) {
-    const validation = validateFile(file)
+    const validation = validateKBFile(file)
     if (validation.valid) {
       handleFileUpload(file)
     } else {
@@ -72,7 +93,7 @@ function handleFileDrop(event) {
 function handleFileSelect(event) {
   const selectedFiles = Array.from(event.target.files)
   for (const file of selectedFiles) {
-    const validation = validateFile(file)
+    const validation = validateKBFile(file)
     if (validation.valid) {
       handleFileUpload(file)
     } else {
@@ -88,14 +109,14 @@ function triggerFileInput() {
 }
 
 /**
- * 文件上传 & OCR 解析核心逻辑
- * 1. 校验文件合法性
+ * 文件上传核心逻辑 — 调用后端 POST /api/knowledge/upload
+ * 1. 校验文件合法性（格式 + 10MB 限制）
  * 2. 创建 FileItem 并加入 Store（status: 'parsing'）
- * 3. 调用 parseFile 进行 OCR 解析
- * 4. 成功/失败后更新 Store 状态
+ * 3. 通过 FormData 将文件发送至后端知识库上传接口
+ * 4. 成功时更新文件状态为 'completed'，失败时显示错误提示并标记 'failed'
  */
 async function handleFileUpload(file) {
-  const validation = validateFile(file)
+  const validation = validateKBFile(file)
   if (!validation.valid) {
     showError(validation.error)
     return
@@ -114,10 +135,42 @@ async function handleFileUpload(file) {
   store.addFile(fileItem)
 
   try {
-    const text = await parseFile(file)
-    store.updateFileStatus(fileItem.id, 'completed', text)
+    const formData = new FormData()
+    formData.append('file', file)
+
+    const controller = new AbortController()
+    const timeoutId = setTimeout(() => controller.abort(), 30000) // 30 秒超时
+
+    const response = await fetch(`${API_BASE_URL}/knowledge/upload`, {
+      method: 'POST',
+      body: formData,
+      signal: controller.signal
+    })
+
+    clearTimeout(timeoutId)
+
+    if (!response.ok) {
+      const errBody = await response.json().catch(() => ({}))
+      const errorMsg = errBody.detail || `上传失败 (HTTP ${response.status})`
+      store.updateFileStatus(fileItem.id, 'failed', '', errorMsg)
+      showError(`${file.name}: ${errorMsg}`)
+      return
+    }
+
+    const data = await response.json()
+    if (data.success && data.knowledge_id) {
+      store.updateFileStatus(fileItem.id, 'completed', '')
+    } else {
+      const errorMsg = data.message || '上传返回异常'
+      store.updateFileStatus(fileItem.id, 'failed', '', errorMsg)
+      showError(`${file.name}: ${errorMsg}`)
+    }
   } catch (error) {
-    store.updateFileStatus(fileItem.id, 'failed', '', error.message)
+    const errorMsg = error.name === 'AbortError'
+      ? '上传超时，请检查网络后重试'
+      : (error.message || '网络错误，请重试')
+    store.updateFileStatus(fileItem.id, 'failed', '', errorMsg)
+    showError(`${file.name}: ${errorMsg}`)
   }
 }
 </script>

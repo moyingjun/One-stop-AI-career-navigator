@@ -34,6 +34,9 @@ export function handleSetupSubmit(candidateName, resumeText) {
   if (trimmedResume.length < 20) {
     resumeError = '简历内容至少需要 20 个字符'
     hasError = true
+  } else if (resumeText.length > 10000) {
+    resumeError = '简历内容不能超过 10000 个字符'
+    hasError = true
   }
 
   if (hasError) {

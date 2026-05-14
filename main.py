@@ -8,6 +8,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from Router import jobResume, resumeDiagnosis, interview, careerPlan, ocr, history_router
 from Router import careerPlan
+from Router import auth
 from database import init_db
 from pydantic import BaseModel
 from typing import Optional
@@ -30,6 +31,7 @@ app.include_router(ocr.router, prefix="/api/ocr", tags=["OCR"])
 app.include_router(agent_dispatcher.router)
 app.include_router(rag_service.router)
 app.include_router(history_router.router)
+app.include_router(auth.router)
 
 @app.on_event("startup")
 async def startup():

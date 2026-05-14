@@ -5,10 +5,11 @@ from typing import List, Optional
 
 import httpx
 from dotenv import load_dotenv
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
+from Router.dependencies import get_optional_user
 from Service.rag_service import SYSTEM_ZHANGXUEFENG_KNOWLEDGE_ID, build_context_block
 
 
@@ -42,8 +43,10 @@ class AgentChatRequest(BaseModel):
     knowledge_id: Optional[str] = None
     history: List[ChatMessage] = Field(default_factory=list)
     resume_text: Optional[str] = ""
+    target_job: Optional[str] = ""
     jd_text: Optional[str] = ""
     top_k: Optional[int] = 4
+    user_id: Optional[int] = None
 
 
 AGENT_LABELS = {
@@ -207,6 +210,9 @@ def build_user_prompt(request: AgentChatRequest, agent_type: AgentType, context_
     if request.resume_text and request.resume_text.strip():
         sections.append(f"【用户简历/个人背景】\n{request.resume_text.strip()[:4000]}")
 
+    if request.target_job and request.target_job.strip():
+        sections.append(f"【求职意向/目标岗位】\n{request.target_job.strip()}")
+
     if request.jd_text and request.jd_text.strip():
         sections.append(f"【目标岗位/JD】\n{request.jd_text.strip()[:3000]}")
 
@@ -360,6 +366,7 @@ async def stream_llm_response(request: AgentChatRequest):
                     "has_jd": bool(request.jd_text),
                 },
                 chat_history=[message.model_dump() for message in request.history],
+                user_id=request.user_id,
             )
         except Exception as db_exc:
             print(f"[Agent Dispatcher] 对话历史写入失败: {db_exc}")
@@ -367,8 +374,10 @@ async def stream_llm_response(request: AgentChatRequest):
 
 
 @router.post("/chat")
-async def agent_chat(request: AgentChatRequest):
-    """Multi-Agent 统一聊天入口，面向 Dashboard LUI。"""
+async def agent_chat(request: AgentChatRequest, current_user_id: Optional[int] = Depends(get_optional_user)):
+    """Multi-Agent 统一聊天入口，面向 Dashboard LUI。支持游客访问（user_id 为 None）和已登录用户（user_id 为正整数）。"""
+    # 将鉴权层解析出的 user_id 注入请求对象，供 stream_llm_response 写入历史记录
+    request.user_id = current_user_id
     return StreamingResponse(
         stream_llm_response(request),
         media_type="text/event-stream",

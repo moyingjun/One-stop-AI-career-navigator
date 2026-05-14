@@ -7,6 +7,9 @@ import { parseFile } from '@/utils/ocrHelper.js'
 import { ACCEPTED_EXTENSIONS, validateFile } from '@/utils/fileConstants.js'
 import CyberRadarChart from '@/components/CyberRadarChart.vue'
 import CyberGlassCard from './components/CyberGlassCard.vue'
+import { getAuthHeaders } from '@/services/authService.js'
+import { useUserStore } from '@/stores/userStore'
+const userStore = useUserStore()
 
 const isLocalDev = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
 const API_BASE_URL = isLocalDev ? 'http://127.0.0.1:8000/api' : '/api'
@@ -137,7 +140,7 @@ const startDiagnosis = async () => {
   try {
     const response = await fetch(`${API_BASE_URL}/resume/diagnose`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
       body: JSON.stringify({
         resume_text: resumeText.value,
         target_role: targetRole.value,
@@ -219,7 +222,9 @@ const initResume = async () => {
   if (recordId) {
     isRestoring.value = true
     try {
-      const res = await fetch(`${API_BASE_URL.replace('/api', '')}/api/history/${recordId}`)
+      const res = await fetch(`${API_BASE_URL.replace('/api', '')}/api/history/${recordId}`, {
+        headers: { ...getAuthHeaders() }
+      })
       if (res.ok) {
         const data = await res.json()
         if (data.success && data.data) {
@@ -271,8 +276,19 @@ const initResume = async () => {
     resumeText.value = globalResume
     uploadedFileName.value = '已加载全局简历'
   }
-  const globalRole = localStorage.getItem('target_role')
-  if (globalRole) targetRole.value = globalRole
+
+  // 优先读 userStore，降级兼容 target_role / target_job 两个键名
+  targetRole.value = userStore.targetJob
+    || localStorage.getItem('target_role')
+    || localStorage.getItem('target_job')
+    || ''
+
+  // 补全 jdText 读取（原先完全缺失），多键名降级策略与 PremiumInterview 保持一致
+  jdText.value = userStore.jobDescription
+    || localStorage.getItem('job_description')
+    || localStorage.getItem('current_interview_jd')
+    || localStorage.getItem('jd_content')
+    || ''
 }
 
 onMounted(() => { initResume() })
