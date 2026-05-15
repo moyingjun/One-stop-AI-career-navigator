@@ -91,13 +91,13 @@ async def request_email_code(email: str, db: AsyncSession) -> None:
     user_result = await db.execute(select(User).where(User.email == email))
     user: User | None = user_result.scalar_one_or_none()
 
-    # 🚨 资源盗刷拦截门：已完成注册的正式用户禁止再次触发发信流程
+    # 🚨 致命熔断：已完成注册的正式用户禁止再次触发发信流程
     # 判定条件：is_verified=True 且 password_hash 非空（排除占位 User）
-    # 目的：在 Celery 任务入队之前就一脚踹走，零邮件额度消耗
+    # 此检查必须在 send_verification_email.delay() 之前执行，零邮件额度消耗
     if user is not None and user.is_verified and user.password_hash:
         raise HTTPException(
             status_code=400,
-            detail="该邮箱已注册，请直接前往登录",
+            detail="该邮箱已注册，请直接登录",
         )
 
     # ── 步骤 1b：60 秒冷却检查（针对未注册邮箱的频繁发信防刷）──

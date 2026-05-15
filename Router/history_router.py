@@ -56,6 +56,7 @@ def _assert_record_ownership(record: dict, current_user_id: int) -> None:
 @router.get("")
 async def get_history(
     limit: int = 10,
+    has_scores: bool = False,
     current_user_id: int = Depends(get_current_user),
 ):
     """
@@ -63,8 +64,17 @@ async def get_history(
 
     使用 get_recent_records_by_user 强制附加 WHERE user_id = ? 隔离约束，
     确保不同用户之间的数据完全隔离（Requirements 4.3）。
+
+    参数：
+        limit      — 返回条数上限（默认 10）
+        has_scores — 若为 True，只返回 scores 字段非空（非 '{}'）的记录，
+                     用于 Dashboard 雷达图数据源查询
     """
-    records = get_recent_records_by_user(user_id=current_user_id, limit=limit)
+    records = get_recent_records_by_user(
+        user_id=current_user_id,
+        limit=limit,
+        has_scores=has_scores if has_scores else None,
+    )
     return {"success": True, "records": records}
 
 
