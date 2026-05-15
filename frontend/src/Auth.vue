@@ -3,27 +3,29 @@
  * Auth.vue — 注册 / 登录双 Tab 表单（邮箱验证码注册体系）
  *
  * 注册流程：
- *   1. 输入邮箱 → 点击"发送验证码"（先获取 Turnstile token）
- *   2. 输入验证码 + 密码 → 点击"创建账号"
- *   3. 注册成功后自动登录并跳转 /dashboard
+ *   1. 输入邮箱 → 点击"发送验证码" → 弹出 Turnstile 人机验证 Modal
+ *   2. Turnstile 回调拿到 token → 自动关闭 Modal → 请求后端发送验证码
+ *   3. 输入验证码 + 密码 → 点击"创建账号"
  *
  * 登录流程：
  *   1. 输入邮箱 + 密码 → 点击"登录"
  *   2. 成功后跳转 /dashboard
  *
- * Turnstile 集成：
- *   - 使用 MutationObserver 等待 #turnstile-container 节点出现，彻底解决路由动画/v-if 延迟问题
- *   - 本地未配置 VITE_TURNSTILE_SITE_KEY 时自动回退到 Cloudflare 官方测试 Key（永远返回成功）
- *   - SDK 通过 ?onload=onTurnstileLoad 回调触发渲染，避免 script.onload 与 SDK 初始化的竞态
+ * Turnstile 集成（斩首方案）：
+ *   - 不在 onMounted 初始化，彻底避免"容器不存在"问题
+ *   - 用户点击"发送验证码"时弹出 Modal，Modal 内含 #turnstile-container
+ *   - Modal 打开后 nextTick 确保容器已渲染，再调用 turnstile.render()
+ *   - Turnstile callback 拿到 token → 自动关闭 Modal → 发送验证码
+ *   - 本地未配置 VITE_TURNSTILE_SITE_KEY 时回退到官方测试 Key（永远成功）
  */
-import { ref, reactive, onMounted, onUnmounted } from 'vue'
+import { ref, reactive, nextTick, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { sendCode, registerWithCode, loginUser } from '@/services/authService'
 import { useUserStore } from '@/stores/userStore'
 import CyberGlassCard from '@/components/CyberGlassCard.vue'
 import {
   Mail, Lock, ShieldCheck, LogIn, UserPlus,
-  Loader2, X, AlertCircle, Send, CheckCircle2
+  Loader2, X, AlertCircle, Send, CheckCircle2, ShieldAlert
 } from 'lucide-vue-next'
 
 const router = useRouter()
@@ -37,7 +39,6 @@ const activeTab = ref('login')
 const switchTab = (tab) => {
   activeTab.value = tab
   dismissToast()
-  // 切换 Tab 时重置验证码发送状态
   codeSent.value = false
   countdown.value = 0
 }
@@ -56,9 +57,9 @@ const registerForm = reactive({
 // ─────────────────────────────────────────────
 // 验证码发送状态
 // ─────────────────────────────────────────────
-const codeSent = ref(false)       // 是否已发送验证码
-const isSendingCode = ref(false)  // 发送中
-const countdown = ref(0)          // 冷却倒计时（秒）
+const codeSent = ref(false)
+const isSendingCode = ref(false)
+const countdown = ref(0)
 let countdownTimer = null
 
 const startCountdown = (seconds = 60) => {
@@ -73,106 +74,106 @@ const startCountdown = (seconds = 60) => {
 }
 
 // ─────────────────────────────────────────────
-// Cloudflare Turnstile
+// Cloudflare Turnstile — 斩首方案
+// 渲染时机绑定在"发送验证码"按钮点击事件上，
+// 而非 onMounted，彻底消除容器不存在的问题。
 // ─────────────────────────────────────────────
 const turnstileToken = ref('')
 const turnstileWidgetId = ref(null)
-const turnstileContainerId = 'turnstile-container'
+const showTurnstileModal = ref(false)  // 控制人机验证 Modal 的显示
+
+// SDK 只需加载一次，用此标志防止重复注入 script 标签
+let sdkLoaded = false
 
 /**
- * 获取 Turnstile token（统一走真实 widget，本地使用测试 Key 秒绿）
+ * 确保 Turnstile SDK 已加载。
+ * 若已加载则直接 resolve，否则动态注入 script 并等待 onload。
  */
-const getTurnstileToken = () => turnstileToken.value || ''
-
-/**
- * 重置 Turnstile widget（发送后需要重置以获取新 token）
- */
-const resetTurnstile = () => {
-  try {
-    if (window.turnstile && turnstileWidgetId.value !== null) {
-      window.turnstile.reset(turnstileWidgetId.value)
-      turnstileToken.value = ''
-    }
-  } catch { /* 静默处理 */ }
-}
-
-/**
- * 等待指定 CSS 选择器对应的 DOM 节点出现。
- * 先做一次同步检查，若不存在则启动 MutationObserver 持续监听，
- * 直到节点出现或超时（默认 3 秒）。
- * 适用于路由动画、父级 v-if 等导致节点延迟渲染的场景。
- *
- * @param {string} selector - CSS 选择器，如 '#turnstile-container'
- * @param {number} timeout  - 超时毫秒数，默认 3000
- * @returns {Promise<Element>}
- */
-const waitForElement = (selector, timeout = 3000) => {
+const ensureSdkLoaded = () => {
   return new Promise((resolve, reject) => {
-    // 节点已存在，直接返回
-    const existing = document.querySelector(selector)
-    if (existing) return resolve(existing)
-
-    // 启动 MutationObserver，监听整棵 DOM 树的子节点变化
-    const observer = new MutationObserver((_mutations, obs) => {
-      const el = document.querySelector(selector)
-      if (el) {
-        obs.disconnect()
-        resolve(el)
-      }
-    })
-    observer.observe(document.body, { childList: true, subtree: true })
-
-    // 超时保护：避免无限等待
-    setTimeout(() => {
-      observer.disconnect()
-      reject(new Error(`[Auth] 等待元素 ${selector} 超时（${timeout}ms）`))
-    }, timeout)
+    if (window.turnstile) { resolve(); return }
+    if (sdkLoaded) {
+      // script 已注入但 SDK 还未初始化，轮询等待（最多 5 秒）
+      let waited = 0
+      const poll = setInterval(() => {
+        waited += 100
+        if (window.turnstile) { clearInterval(poll); resolve() }
+        else if (waited >= 5000) { clearInterval(poll); reject(new Error('Turnstile SDK 加载超时')) }
+      }, 100)
+      return
+    }
+    sdkLoaded = true
+    const script = document.createElement('script')
+    script.src = 'https://challenges.cloudflare.com/turnstile/v0/api.js'
+    script.async = true
+    script.defer = true
+    script.onload = resolve
+    script.onerror = () => reject(new Error('Turnstile SDK 加载失败'))
+    document.head.appendChild(script)
   })
 }
 
-onMounted(async () => {
-  // 优先读取环境变量；本地未配置时回退到 Cloudflare 官方测试 Key（永远返回成功）
+/**
+ * 打开人机验证 Modal 并渲染 Turnstile widget。
+ * 此时 #turnstile-modal-container 由 v-if="showTurnstileModal" 保证已存在。
+ */
+const openTurnstileModal = async () => {
+  // 先显示 Modal，让 Vue 把容器节点渲染到 DOM
+  showTurnstileModal.value = true
+
+  // 等待 Vue 完成本次渲染（此时容器节点 100% 存在）
+  await nextTick()
+
   const siteKey = import.meta.env.VITE_TURNSTILE_SITE_KEY || '1x00000000000000000000AA'
+  const container = document.getElementById('turnstile-modal-container')
+
+  if (!container) {
+    // 理论上不会走到这里，但保留兜底日志
+    console.error('[Auth] #turnstile-modal-container 未找到，请检查模板')
+    showTurnstileModal.value = false
+    return
+  }
 
   try {
-    // 不依赖 nextTick，用 MutationObserver 主动等待容器节点出现（最多 3 秒）
-    const container = await waitForElement(`#${turnstileContainerId}`)
-
-    /**
-     * 执行实际的 widget 渲染，直接传入 DOM 节点（比选择器字符串更可靠）
-     */
-    const renderWidget = () => {
-      if (!window.turnstile) return
-      turnstileWidgetId.value = window.turnstile.render(container, {
-        sitekey: siteKey,
-        callback: (token) => { turnstileToken.value = token },
-        'expired-callback': () => { turnstileToken.value = '' },
-        'error-callback': () => { turnstileToken.value = '' },
-        theme: 'dark'
-      })
-    }
-
-    if (window.turnstile) {
-      // SDK 已就绪（如通过 index.html 预加载），直接渲染
-      renderWidget()
-    } else {
-      // SDK 尚未加载：注册全局回调，并动态注入脚本（URL 带 ?onload= 参数）
-      window.onTurnstileLoad = renderWidget
-      const script = document.createElement('script')
-      script.src = 'https://challenges.cloudflare.com/turnstile/v0/api.js?onload=onTurnstileLoad'
-      script.async = true
-      script.defer = true
-      script.onerror = () => console.error('[Auth] Turnstile SDK 加载失败')
-      document.head.appendChild(script)
-    }
-  } catch (error) {
-    console.error('[Auth] Turnstile 初始化失败:', error.message)
+    await ensureSdkLoaded()
+  } catch (err) {
+    console.error('[Auth]', err.message)
+    showTurnstileModal.value = false
+    showToast('人机验证组件加载失败，请检查网络后重试')
+    return
   }
-})
 
-onUnmounted(() => {
-  if (countdownTimer) clearInterval(countdownTimer)
-})
+  // 若之前渲染过 widget，先销毁再重建（避免重复渲染报错）
+  if (turnstileWidgetId.value !== null) {
+    try { window.turnstile.remove(turnstileWidgetId.value) } catch { /* 静默 */ }
+    turnstileWidgetId.value = null
+  }
+
+  turnstileToken.value = ''
+  turnstileWidgetId.value = window.turnstile.render(container, {
+    sitekey: siteKey,
+    theme: 'dark',
+    callback: (token) => {
+      // 拿到 token → 关闭 Modal → 继续发送验证码流程
+      turnstileToken.value = token
+      showTurnstileModal.value = false
+      doSendCode(token)
+    },
+    'expired-callback': () => { turnstileToken.value = '' },
+    'error-callback': () => {
+      turnstileToken.value = ''
+      showToast('人机验证失败，请重试')
+    }
+  })
+}
+
+/**
+ * 关闭人机验证 Modal（用户手动关闭，不发送验证码）
+ */
+const closeTurnstileModal = () => {
+  showTurnstileModal.value = false
+  isSendingCode.value = false
+}
 
 // ─────────────────────────────────────────────
 // 加载状态
@@ -214,8 +215,13 @@ const validatePassword = (password) => {
 }
 
 // ─────────────────────────────────────────────
-// 发送验证码
+// 发送验证码（两步：先弹 Turnstile Modal，再发请求）
 // ─────────────────────────────────────────────
+
+/**
+ * 第一步：校验邮箱 → 弹出 Turnstile Modal
+ * Turnstile callback 会自动调用 doSendCode(token)
+ */
 const handleSendCode = async () => {
   const emailError = validateEmail(registerForm.email)
   if (emailError) { showToast(emailError); return }
@@ -225,19 +231,24 @@ const handleSendCode = async () => {
     return
   }
 
-  const token = getTurnstileToken()
-  if (!token) {
-    showToast('请先完成人机验证')
-    return
-  }
-
   isSendingCode.value = true
+  await openTurnstileModal()
+  // 注意：isSendingCode 会在 doSendCode 的 finally 里重置
+  // 若用户手动关闭 Modal，closeTurnstileModal 会重置它
+}
+
+/**
+ * 第二步：拿到 Turnstile token 后，真正请求后端发送验证码
+ * 由 Turnstile callback 自动触发，不由用户直接调用
+ *
+ * @param {string} token - Turnstile 返回的验证 token
+ */
+const doSendCode = async (token) => {
   try {
     await sendCode(registerForm.email.trim(), token)
     codeSent.value = true
     startCountdown(60)
     showToast('验证码已发送，请查收邮件', 'success')
-    resetTurnstile()
   } catch (error) {
     showToast(error.message || '验证码发送失败，请稍后重试')
   } finally {
@@ -265,7 +276,6 @@ const handleRegister = async () => {
       registerForm.password,
       registerForm.code.trim()
     )
-    // 注册成功：持久化 token 并跳转
     userStore.login(data)
     showToast('注册成功，欢迎加入！', 'success')
     setTimeout(() => router.push('/dashboard'), 800)
@@ -289,7 +299,6 @@ const handleLogin = async () => {
   isLoading.value = true
   try {
     const data = await loginUser(loginForm.email.trim(), loginForm.password)
-    // 登录成功：持久化 token 并跳转
     userStore.login(data)
     router.push('/dashboard')
   } catch (error) {
@@ -299,11 +308,14 @@ const handleLogin = async () => {
   }
 }
 
-// 键盘 Enter 提交
 const handleKeyEnter = () => {
   if (activeTab.value === 'login') handleLogin()
   else handleRegister()
 }
+
+onUnmounted(() => {
+  if (countdownTimer) clearInterval(countdownTimer)
+})
 </script>
 
 <template>
@@ -339,6 +351,60 @@ const handleKeyEnter = () => {
                 @click="dismissToast" aria-label="关闭提示">
           <X class="w-4 h-4" />
         </button>
+      </div>
+    </Transition>
+
+    <!-- ══════════════════════════════════════════
+         Turnstile 人机验证 Modal
+         v-if 保证：Modal 打开时容器节点 100% 存在，
+         nextTick 后立即调用 turnstile.render()
+    ══════════════════════════════════════════ -->
+    <Transition name="modal-fade">
+      <div
+        v-if="showTurnstileModal"
+        class="fixed inset-0 z-[60] flex items-center justify-center p-4"
+        role="dialog"
+        aria-modal="true"
+        aria-label="人机验证"
+        @click.self="closeTurnstileModal"
+      >
+        <!-- 遮罩 -->
+        <div class="absolute inset-0 bg-black/70 backdrop-blur-sm"></div>
+
+        <!-- 弹窗主体 -->
+        <div class="relative z-10 w-full max-w-sm rounded-2xl border border-white/10 bg-gray-950/95 shadow-[0_0_60px_rgba(139,92,246,0.2)] p-6 space-y-4">
+          <!-- 标题栏 -->
+          <div class="flex items-center justify-between">
+            <div class="flex items-center gap-2">
+              <ShieldAlert class="w-5 h-5 text-cyan-400" />
+              <span class="text-sm font-semibold text-white">人机身份验证</span>
+            </div>
+            <button
+              class="text-gray-500 hover:text-gray-300 transition-colors focus:outline-none rounded"
+              aria-label="关闭验证窗口"
+              @click="closeTurnstileModal"
+            >
+              <X class="w-4 h-4" />
+            </button>
+          </div>
+
+          <p class="text-xs text-gray-500 leading-relaxed">
+            为保护账号安全，请完成下方验证。验证通过后将自动发送验证码。
+          </p>
+
+          <!-- Turnstile 挂载点 —— 此时由 v-if 保证节点已存在 -->
+          <div
+            id="turnstile-modal-container"
+            style="min-height: 65px; display: flex; justify-content: center; align-items: center;"
+          >
+            <!-- Turnstile widget 将被注入此处 -->
+            <Loader2 class="w-5 h-5 text-gray-600 animate-spin" />
+          </div>
+
+          <p class="text-[11px] text-gray-600 text-center">
+            由 Cloudflare Turnstile 提供保护 · 验证通过后自动继续
+          </p>
+        </div>
       </div>
     </Transition>
 
@@ -446,7 +512,7 @@ const handleKeyEnter = () => {
                     {{ countdown > 0 ? `${countdown}s` : (codeSent ? '重新发送' : '发送验证码') }}
                   </button>
                 </div>
-                <!-- 极客风安全通道提示（验证码发送后显示） -->
+                <!-- 验证码发送后的安全提示 -->
                 <Transition name="hint-fade">
                   <p v-if="codeSent" class="flex items-start gap-1.5 text-[11px] leading-relaxed mt-2 px-1">
                     <span class="flex-shrink-0 mt-px" aria-hidden="true">⚠️</span>
@@ -458,9 +524,6 @@ const handleKeyEnter = () => {
                   </p>
                 </Transition>
               </div>
-
-              <!-- Turnstile widget（始终渲染容器，开发环境使用测试 Key 秒绿） -->
-              <div id="turnstile-container" style="margin: 15px 0; display: flex; justify-content: center;"></div>
 
               <!-- 验证码输入 -->
               <div class="space-y-1.5">
@@ -474,7 +537,6 @@ const handleKeyEnter = () => {
                     class="auth-input w-full pl-10 pr-4 py-3 rounded-xl bg-white/5 border border-white/10 text-white placeholder-gray-600 text-sm focus:outline-none focus:border-cyan-500/60 focus:bg-white/8 focus:shadow-[0_0_0_3px_rgba(6,182,212,0.15)] transition-all duration-200 tracking-widest"
                     :disabled="isLoading" @keydown.enter.prevent="handleKeyEnter" />
                 </div>
-                <!-- 白名单建议提示 -->
                 <p class="flex items-start gap-1.5 text-[11px] text-gray-600 leading-relaxed px-1 pt-0.5">
                   <span class="flex-shrink-0 mt-px" aria-hidden="true">💡</span>
                   <span>
@@ -545,6 +607,7 @@ const handleKeyEnter = () => {
   transition: background-color 5000s ease-in-out 0s;
 }
 
+/* Toast 动画 */
 .toast-enter-active, .toast-leave-active {
   transition: opacity 0.25s ease, transform 0.25s ease;
 }
@@ -553,17 +616,37 @@ const handleKeyEnter = () => {
   transform: translateX(-50%) translateY(-12px);
 }
 
+/* Tab 切换动画 */
 .tab-fade-enter-active, .tab-fade-leave-active {
   transition: opacity 0.18s ease, transform 0.18s ease;
 }
 .tab-fade-enter-from { opacity: 0; transform: translateY(6px); }
 .tab-fade-leave-to   { opacity: 0; transform: translateY(-6px); }
 
+/* 提示文字动画 */
 .hint-fade-enter-active, .hint-fade-leave-active {
-  transition: opacity 0.3s ease, transform 0.3s ease, max-height 0.3s ease;
+  transition: opacity 0.3s ease, transform 0.3s ease;
 }
 .hint-fade-enter-from, .hint-fade-leave-to {
   opacity: 0;
   transform: translateY(-4px);
+}
+
+/* Turnstile Modal 动画 */
+.modal-fade-enter-active, .modal-fade-leave-active {
+  transition: opacity 0.2s ease;
+}
+.modal-fade-enter-from, .modal-fade-leave-to {
+  opacity: 0;
+}
+.modal-fade-enter-active .relative,
+.modal-fade-leave-active .relative {
+  transition: transform 0.2s ease;
+}
+.modal-fade-enter-from .relative {
+  transform: scale(0.95) translateY(8px);
+}
+.modal-fade-leave-to .relative {
+  transform: scale(0.95) translateY(8px);
 }
 </style>
