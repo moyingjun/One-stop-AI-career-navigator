@@ -15,7 +15,7 @@
  *   - VITE_DEV_MODE=true 时注入 "mock_token"，跳过真实组件渲染
  *   - 生产环境加载 Cloudflare Turnstile SDK，渲染 widget 获取真实 token
  */
-import { ref, reactive, onMounted, onUnmounted } from 'vue'
+import { ref, reactive, onMounted, onUnmounted, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 import { sendCode, registerWithCode, loginUser } from '@/services/authService'
 import { useUserStore } from '@/stores/userStore'
@@ -106,32 +106,53 @@ const resetTurnstile = () => {
   } catch { /* 静默处理 */ }
 }
 
-onMounted(() => {
+onMounted(async () => {
   if (IS_DEV_MODE) return
 
-  // 生产环境：动态加载 Turnstile SDK 并渲染 widget
+  // 生产环境：等待 Vue 彻底完成 DOM 渲染后再操作
+  await nextTick()
+
+  // 确认容器节点已存在
+  const container = document.getElementById(turnstileContainerId)
+  if (!container) {
+    console.error(`[Auth] Turnstile 容器 #${turnstileContainerId} 未找到，请检查模板`)
+    return
+  }
+
   const siteKey = import.meta.env.VITE_TURNSTILE_SITE_KEY
   if (!siteKey) {
     console.warn('[Auth] VITE_TURNSTILE_SITE_KEY 未配置，Turnstile 将不可用')
     return
   }
 
+  /**
+   * 执行实际的 widget 渲染
+   * 此时 DOM 节点和 SDK 均已就绪
+   */
+  const renderWidget = () => {
+    if (!window.turnstile) return
+    turnstileWidgetId.value = window.turnstile.render(`#${turnstileContainerId}`, {
+      sitekey: siteKey,
+      callback: (token) => { turnstileToken.value = token },
+      'expired-callback': () => { turnstileToken.value = '' },
+      'error-callback': () => { turnstileToken.value = '' },
+      theme: 'dark'
+    })
+  }
+
+  // 如果 SDK 已经通过其他方式加载（如 index.html script 标签），直接渲染
+  if (window.turnstile) {
+    renderWidget()
+    return
+  }
+
+  // 否则动态注入 SDK 脚本，等 onload 后再渲染
   const script = document.createElement('script')
   script.src = 'https://challenges.cloudflare.com/turnstile/v0/api.js'
   script.async = true
   script.defer = true
-  script.onload = () => {
-    // SDK 加载完成后渲染 widget
-    if (window.turnstile) {
-      turnstileWidgetId.value = window.turnstile.render(`#${turnstileContainerId}`, {
-        sitekey: siteKey,
-        callback: (token) => { turnstileToken.value = token },
-        'expired-callback': () => { turnstileToken.value = '' },
-        'error-callback': () => { turnstileToken.value = '' },
-        theme: 'dark'
-      })
-    }
-  }
+  script.onload = renderWidget
+  script.onerror = () => console.error('[Auth] Turnstile SDK 加载失败')
   document.head.appendChild(script)
 })
 
@@ -425,7 +446,7 @@ const handleKeyEnter = () => {
               </div>
 
               <!-- Turnstile widget（生产环境） -->
-              <div v-if="!IS_DEV_MODE" :id="turnstileContainerId" class="flex justify-center"></div>
+              <div v-if="!IS_DEV_MODE" id="turnstile-container" style="margin: 15px 0; display: flex; justify-content: center;"></div>
 
               <!-- 验证码输入 -->
               <div class="space-y-1.5">
