@@ -29,11 +29,6 @@ const router = useRouter()
 const userStore = useUserStore()
 
 // ─────────────────────────────────────────────
-// 开发模式检测
-// ─────────────────────────────────────────────
-const IS_DEV_MODE = import.meta.env.VITE_DEV_MODE === 'true' || import.meta.env.DEV
-
-// ─────────────────────────────────────────────
 // Tab 状态：'login' | 'register'
 // ─────────────────────────────────────────────
 const activeTab = ref('login')
@@ -79,25 +74,19 @@ const startCountdown = (seconds = 60) => {
 // ─────────────────────────────────────────────
 // Cloudflare Turnstile
 // ─────────────────────────────────────────────
-const turnstileToken = ref(IS_DEV_MODE ? 'mock_token' : '')
+const turnstileToken = ref('')
 const turnstileWidgetId = ref(null)
 const turnstileContainerId = 'turnstile-container'
 
 /**
- * 获取 Turnstile token
- * 开发模式：直接返回 'mock_token'
- * 生产模式：从已渲染的 widget 读取 token
+ * 获取 Turnstile token（统一走真实 widget，本地使用测试 Key 秒绿）
  */
-const getTurnstileToken = () => {
-  if (IS_DEV_MODE) return 'mock_token'
-  return turnstileToken.value || ''
-}
+const getTurnstileToken = () => turnstileToken.value || ''
 
 /**
  * 重置 Turnstile widget（发送后需要重置以获取新 token）
  */
 const resetTurnstile = () => {
-  if (IS_DEV_MODE) return
   try {
     if (window.turnstile && turnstileWidgetId.value !== null) {
       window.turnstile.reset(turnstileWidgetId.value)
@@ -107,9 +96,7 @@ const resetTurnstile = () => {
 }
 
 onMounted(async () => {
-  if (IS_DEV_MODE) return
-
-  // 生产环境：等待 Vue 彻底完成 DOM 渲染后再操作
+  // 等待 Vue 彻底完成 DOM 渲染
   await nextTick()
 
   // 确认容器节点已存在
@@ -119,11 +106,8 @@ onMounted(async () => {
     return
   }
 
-  const siteKey = import.meta.env.VITE_TURNSTILE_SITE_KEY
-  if (!siteKey) {
-    console.warn('[Auth] VITE_TURNSTILE_SITE_KEY 未配置，Turnstile 将不可用')
-    return
-  }
+  // 优先读取环境变量；本地未配置时回退到 Cloudflare 官方测试 Key（永远返回成功）
+  const siteKey = import.meta.env.VITE_TURNSTILE_SITE_KEY || '1x00000000000000000000AA'
 
   /**
    * 执行实际的 widget 渲染
@@ -212,7 +196,7 @@ const handleSendCode = async () => {
   }
 
   const token = getTurnstileToken()
-  if (!token && !IS_DEV_MODE) {
+  if (!token) {
     showToast('请先完成人机验证')
     return
   }
@@ -445,8 +429,8 @@ const handleKeyEnter = () => {
                 </Transition>
               </div>
 
-              <!-- Turnstile widget（生产环境） -->
-              <div v-if="!IS_DEV_MODE" id="turnstile-container" style="margin: 15px 0; display: flex; justify-content: center;"></div>
+              <!-- Turnstile widget（始终渲染容器，开发环境使用测试 Key 秒绿） -->
+              <div id="turnstile-container" style="margin: 15px 0; display: flex; justify-content: center;"></div>
 
               <!-- 验证码输入 -->
               <div class="space-y-1.5">
