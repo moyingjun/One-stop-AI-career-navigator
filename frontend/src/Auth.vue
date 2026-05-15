@@ -12,10 +12,11 @@
  *   2. 成功后跳转 /dashboard
  *
  * Turnstile 集成：
- *   - VITE_DEV_MODE=true 时注入 "mock_token"，跳过真实组件渲染
- *   - 生产环境加载 Cloudflare Turnstile SDK，渲染 widget 获取真实 token
+ *   - 使用 MutationObserver 等待 #turnstile-container 节点出现，彻底解决路由动画/v-if 延迟问题
+ *   - 本地未配置 VITE_TURNSTILE_SITE_KEY 时自动回退到 Cloudflare 官方测试 Key（永远返回成功）
+ *   - SDK 通过 ?onload=onTurnstileLoad 回调触发渲染，避免 script.onload 与 SDK 初始化的竞态
  */
-import { ref, reactive, onMounted, onUnmounted, nextTick } from 'vue'
+import { ref, reactive, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { sendCode, registerWithCode, loginUser } from '@/services/authService'
 import { useUserStore } from '@/stores/userStore'
@@ -95,49 +96,78 @@ const resetTurnstile = () => {
   } catch { /* 静默处理 */ }
 }
 
+/**
+ * 等待指定 CSS 选择器对应的 DOM 节点出现。
+ * 先做一次同步检查，若不存在则启动 MutationObserver 持续监听，
+ * 直到节点出现或超时（默认 3 秒）。
+ * 适用于路由动画、父级 v-if 等导致节点延迟渲染的场景。
+ *
+ * @param {string} selector - CSS 选择器，如 '#turnstile-container'
+ * @param {number} timeout  - 超时毫秒数，默认 3000
+ * @returns {Promise<Element>}
+ */
+const waitForElement = (selector, timeout = 3000) => {
+  return new Promise((resolve, reject) => {
+    // 节点已存在，直接返回
+    const existing = document.querySelector(selector)
+    if (existing) return resolve(existing)
+
+    // 启动 MutationObserver，监听整棵 DOM 树的子节点变化
+    const observer = new MutationObserver((_mutations, obs) => {
+      const el = document.querySelector(selector)
+      if (el) {
+        obs.disconnect()
+        resolve(el)
+      }
+    })
+    observer.observe(document.body, { childList: true, subtree: true })
+
+    // 超时保护：避免无限等待
+    setTimeout(() => {
+      observer.disconnect()
+      reject(new Error(`[Auth] 等待元素 ${selector} 超时（${timeout}ms）`))
+    }, timeout)
+  })
+}
+
 onMounted(async () => {
-  // 等待 Vue 彻底完成 DOM 渲染
-  await nextTick()
-
-  // 确认容器节点已存在
-  const container = document.getElementById(turnstileContainerId)
-  if (!container) {
-    console.error(`[Auth] Turnstile 容器 #${turnstileContainerId} 未找到，请检查模板`)
-    return
-  }
-
   // 优先读取环境变量；本地未配置时回退到 Cloudflare 官方测试 Key（永远返回成功）
   const siteKey = import.meta.env.VITE_TURNSTILE_SITE_KEY || '1x00000000000000000000AA'
 
-  /**
-   * 执行实际的 widget 渲染
-   * 此时 DOM 节点和 SDK 均已就绪
-   */
-  const renderWidget = () => {
-    if (!window.turnstile) return
-    turnstileWidgetId.value = window.turnstile.render(`#${turnstileContainerId}`, {
-      sitekey: siteKey,
-      callback: (token) => { turnstileToken.value = token },
-      'expired-callback': () => { turnstileToken.value = '' },
-      'error-callback': () => { turnstileToken.value = '' },
-      theme: 'dark'
-    })
-  }
+  try {
+    // 不依赖 nextTick，用 MutationObserver 主动等待容器节点出现（最多 3 秒）
+    const container = await waitForElement(`#${turnstileContainerId}`)
 
-  // 如果 SDK 已经通过其他方式加载（如 index.html script 标签），直接渲染
-  if (window.turnstile) {
-    renderWidget()
-    return
-  }
+    /**
+     * 执行实际的 widget 渲染，直接传入 DOM 节点（比选择器字符串更可靠）
+     */
+    const renderWidget = () => {
+      if (!window.turnstile) return
+      turnstileWidgetId.value = window.turnstile.render(container, {
+        sitekey: siteKey,
+        callback: (token) => { turnstileToken.value = token },
+        'expired-callback': () => { turnstileToken.value = '' },
+        'error-callback': () => { turnstileToken.value = '' },
+        theme: 'dark'
+      })
+    }
 
-  // 否则动态注入 SDK 脚本，等 onload 后再渲染
-  const script = document.createElement('script')
-  script.src = 'https://challenges.cloudflare.com/turnstile/v0/api.js'
-  script.async = true
-  script.defer = true
-  script.onload = renderWidget
-  script.onerror = () => console.error('[Auth] Turnstile SDK 加载失败')
-  document.head.appendChild(script)
+    if (window.turnstile) {
+      // SDK 已就绪（如通过 index.html 预加载），直接渲染
+      renderWidget()
+    } else {
+      // SDK 尚未加载：注册全局回调，并动态注入脚本（URL 带 ?onload= 参数）
+      window.onTurnstileLoad = renderWidget
+      const script = document.createElement('script')
+      script.src = 'https://challenges.cloudflare.com/turnstile/v0/api.js?onload=onTurnstileLoad'
+      script.async = true
+      script.defer = true
+      script.onerror = () => console.error('[Auth] Turnstile SDK 加载失败')
+      document.head.appendChild(script)
+    }
+  } catch (error) {
+    console.error('[Auth] Turnstile 初始化失败:', error.message)
+  }
 })
 
 onUnmounted(() => {
