@@ -119,7 +119,12 @@ def get_recent_records(limit: int = 10) -> list:
 
 
 def get_recent_records_by_user(user_id: int, limit: int = 10, **filters) -> list:
-    """按 user_id 隔离查询历史记录（多租户安全约束）。"""
+    """按 user_id 隔离查询历史记录（多租户安全约束）。
+
+    支持的 filters：
+        category   — 精确匹配 category 字段
+        has_scores — 若为 True，只返回 scores 字段非空（非 '{}'）的记录
+    """
     conn = get_db()
     sql = "SELECT * FROM history_records WHERE user_id = ?"
     params: list = [user_id]
@@ -127,6 +132,9 @@ def get_recent_records_by_user(user_id: int, limit: int = 10, **filters) -> list
     if category is not None:
         sql += " AND category = ?"
         params.append(category)
+    # has_scores=True：过滤掉 scores 为空 JSON 对象的记录
+    if filters.get("has_scores"):
+        sql += " AND scores IS NOT NULL AND scores != '{}' AND scores != '\"{}\"'"
     sql += " ORDER BY id DESC LIMIT ?"
     params.append(limit)
     rows = conn.execute(sql, params).fetchall()

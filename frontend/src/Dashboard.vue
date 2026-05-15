@@ -48,8 +48,59 @@ const isLocalDev = window.location.hostname === 'localhost' || window.location.h
 const API_BASE_URL = isLocalDev ? 'http://127.0.0.1:8000/api' : '/api'
 
 const historyRecords = ref([])
+const isHistoryLoading = ref(true)
+
+// 新手启航舱卡片配置（静态数据，不依赖任何响应式数据源）
+// Requirements: 7.1, 7.2, 7.3, 7.4, 8.3
+const onboardingCards = [
+  {
+    id: 'resume',
+    emoji: '📄',
+    title: '简历诊断',
+    subtitle: 'Resume Scanner',
+    desc: '深度解析过往经历，精准对齐目标岗位。找出致命失分项并提供重构建议，让你的简历一击必中。',
+    action: '立即诊断',
+    path: '/resume-diagnosis',
+    locked: false,
+    themeColor: 'purple',
+  },
+  {
+    id: 'interview',
+    emoji: '🎙️',
+    title: '模拟面试',
+    subtitle: 'Combat Simulator',
+    desc: '沉浸式 AI 语音实战对练。模拟真实业务场景与高频拷问，生成多维度能力雷达，彻底消除实战恐慌。',
+    action: '开启实战',
+    path: '/interview',
+    locked: false,
+    themeColor: 'pink',
+  },
+  {
+    id: 'career',
+    emoji: '🗺️',
+    title: '职业规划',
+    subtitle: 'Career Compass',
+    desc: '基于个人特质与行业真实大数据，打破信息壁垒，为你定制科学、清晰的长线职场发展路径。',
+    action: '生成路线',
+    path: '/career-planning',
+    locked: false,
+    themeColor: 'blue',
+  },
+  {
+    id: 'education',
+    emoji: '🎓',
+    title: '升学与避坑',
+    subtitle: 'Academic Radar',
+    desc: '专插本、考研真实数据导航。帮你平衡繁重的课业规划与升学抉择，绕开前人踩过的坑。',
+    action: '模块构筑中...',
+    path: null,
+    locked: true,
+    themeColor: 'emerald',
+  },
+]
 
 const loadHistory = async () => {
+  isHistoryLoading.value = true
   try {
     const res = await fetch(`${API_BASE_URL}/history?limit=2`, {
       headers: { ...getAuthHeaders() }
@@ -57,8 +108,16 @@ const loadHistory = async () => {
     if (res.ok) {
       const data = await res.json()
       historyRecords.value = data.records || []
+    } else {
+      // 非 2xx 响应：保持 historyRecords 为空数组
+      historyRecords.value = []
     }
-  } catch {}
+  } catch {
+    // 网络错误：保持 historyRecords 为空数组
+    historyRecords.value = []
+  } finally {
+    isHistoryLoading.value = false
+  }
 }
 
 const getCategoryLabel = (cat) => {
@@ -1502,76 +1561,189 @@ onUnmounted(() => {
                 </div>
               </div>
 
-              <!-- 继续上次模块 -->
-              <div v-if="historyRecords.length > 0" class="rounded-[28px] border border-white/10 bg-white/[0.03] backdrop-blur-xl p-5 animate-fade-in-up animation-delay-500">
-                <div class="mb-4 flex items-center justify-between">
-                  <div>
-                    <h2 class="text-base font-semibold text-gray-200 text-left flex items-center gap-2">
-                      <History class="w-4 h-4 text-purple-400" />
-                      继续上次
-                    </h2>
-                    <p class="text-xs text-gray-500 mt-0.5">最近的 AI 职业咨询记录</p>
+              <!-- 继续上次模块（含零数据态 OnboardingPanel 与加载占位） -->
+              <transition name="onboarding-fade" mode="out-in">
+                <!-- 加载中：显示骨架占位 -->
+                <div
+                  v-if="isHistoryLoading"
+                  key="loading"
+                  class="rounded-[28px] border border-white/10 bg-white/[0.03] backdrop-blur-xl p-5"
+                >
+                  <div class="mb-4 flex items-center justify-between">
+                    <div class="flex flex-col gap-2">
+                      <div class="h-4 w-24 rounded-md bg-white/10 animate-pulse"></div>
+                      <div class="h-3 w-40 rounded-md bg-white/5 animate-pulse"></div>
+                    </div>
+                    <div class="h-3 w-16 rounded-md bg-white/5 animate-pulse"></div>
                   </div>
-                  <button
-                    @click="router.push('/history-archive')"
-                    class="text-xs text-purple-400 hover:text-purple-300 transition-colors duration-300 flex items-center gap-1"
-                  >
-                    查看全部
-                    <ChevronRight class="w-4 h-4" />
-                  </button>
+                  <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <div class="h-24 rounded-2xl bg-white/[0.015] border border-white/5 animate-pulse"></div>
+                    <div class="h-24 rounded-2xl bg-white/[0.015] border border-white/5 animate-pulse"></div>
+                  </div>
                 </div>
-                <div class="grid grid-cols-1 md:grid-cols-2 gap-3 mb-4">
-                  <div
-                    v-for="record in historyRecords"
-                    :key="record.id"
-                    class="relative overflow-hidden bg-white/[0.015] backdrop-blur-md border border-white/5 rounded-2xl p-4 pb-10 cursor-pointer transition-all duration-500 group hover:-translate-y-1 hover:bg-white/[0.03] hover:border-purple-500/30 hover:shadow-[0_10px_30px_rgba(168,85,247,0.15)] text-left"
-                    @click="goToHistory(record)"
-                  >
-                    <div class="absolute bottom-0 left-0 w-full h-[2px] bg-gradient-to-r from-transparent via-purple-500/50 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500"></div>
-                    <div class="flex items-center justify-between mb-2">
-                      <div class="flex items-center gap-2">
-                        <span class="text-xs px-2 py-0.5 rounded-full border" :class="getCategoryColor(record.category)">{{ getCategoryLabel(record.category) }}</span>
-                        <span v-if="getDifficultyBadge(record) && getDifficultyBadgeConfig(getDifficultyBadge(record))" class="text-xs px-1.5 py-0.5 rounded-full border" :class="getDifficultyBadgeConfig(getDifficultyBadge(record)).class">{{ getDifficultyBadgeConfig(getDifficultyBadge(record)).label }}</span>
+
+                <!-- 零数据态：新手启航舱 OnboardingPanel -->
+                <div
+                  v-else-if="historyRecords.length === 0"
+                  key="onboarding"
+                  class="rounded-[28px] border border-white/10 bg-white/[0.03] backdrop-blur-xl p-5 animate-fade-in-up animation-delay-500"
+                >
+                  <!-- 全局引导语 -->
+                  <div class="border-l-2 border-purple-500/50 pl-3 mb-4">
+                    <p class="text-xs text-gray-400">系统初始化完成。欢迎登舰，新同学。四大核心引擎已就绪，请选择你的首个突破口进行全息扫描。</p>
+                  </div>
+
+                  <!-- 引导卡片网格 -->
+                  <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
+                    <div v-for="card in onboardingCards" :key="card.id">
+
+                      <!-- 激活卡片 -->
+                      <div
+                        v-if="!card.locked"
+                        class="rounded-2xl border bg-white/[0.02] backdrop-blur-md p-4 flex flex-col gap-3 transition-all duration-300 hover:-translate-y-1"
+                        :class="{
+                          'border-purple-500/40': card.themeColor === 'purple',
+                          'border-pink-500/40': card.themeColor === 'pink',
+                          'border-blue-500/40': card.themeColor === 'blue',
+                          'hover:shadow-[0_8px_24px_rgba(168,85,247,0.2)]': card.themeColor === 'purple',
+                          'hover:shadow-[0_8px_24px_rgba(236,72,153,0.2)]': card.themeColor === 'pink',
+                          'hover:shadow-[0_8px_24px_rgba(59,130,246,0.2)]': card.themeColor === 'blue',
+                        }"
+                      >
+                        <!-- Emoji 图标区域 -->
+                        <div class="w-10 h-10 rounded-xl flex items-center justify-center text-xl"
+                             :class="{
+                               'bg-purple-500/20': card.themeColor === 'purple',
+                               'bg-pink-500/20': card.themeColor === 'pink',
+                               'bg-blue-500/20': card.themeColor === 'blue',
+                             }">
+                          {{ card.emoji }}
+                        </div>
+                        <!-- 标题行 -->
+                        <div>
+                          <h3 class="text-sm font-bold text-white">{{ card.title }}</h3>
+                          <p class="text-xs text-gray-500">{{ card.subtitle }}</p>
+                        </div>
+                        <!-- 描述文本 -->
+                        <p class="text-xs text-gray-400 leading-relaxed line-clamp-3">{{ card.desc }}</p>
+                        <!-- 操作按钮 -->
+                        <button
+                          class="mt-auto w-full py-1.5 px-3 rounded-lg text-xs font-medium transition-all duration-200"
+                          :class="{
+                            'text-purple-300 bg-purple-500/20 hover:bg-purple-500/30': card.themeColor === 'purple',
+                            'text-pink-300 bg-pink-500/20 hover:bg-pink-500/30': card.themeColor === 'pink',
+                            'text-blue-300 bg-blue-500/20 hover:bg-blue-500/30': card.themeColor === 'blue',
+                          }"
+                          @click="router.push(card.path)"
+                        >
+                          {{ card.action }}
+                        </button>
                       </div>
-                      <span class="text-xs text-gray-500">{{ record.created_at }}</span>
-                    </div>
-                    <p class="text-xs text-gray-400 truncate">{{ record.user_input }}</p>
-                    <p v-if="record.ai_result" class="text-xs text-gray-500 truncate mt-1">{{ record.ai_result.substring(0, 60) }}...</p>
-                    <div class="absolute right-3 bottom-3 flex items-center gap-2">
-                      <button
-                        @click.stop="toggleSaveRecord(record)"
-                        class="w-7 h-7 rounded-full border backdrop-blur flex items-center justify-center transition-all duration-300"
-                        :class="record.is_saved
-                          ? 'border-amber-300/50 bg-amber-400/10 text-amber-300 shadow-[0_0_14px_rgba(251,191,36,0.2)]'
-                          : 'border-white/10 bg-black/20 text-gray-500 hover:text-amber-300 hover:border-amber-300/40 hover:bg-amber-400/10'"
-                        title="保存/取消保存"
+
+                      <!-- 锁定卡片 -->
+                      <div
+                        v-else
+                        class="rounded-2xl border border-emerald-500/40 bg-white/[0.02] backdrop-blur-md p-4 flex flex-col gap-3 opacity-60 cursor-not-allowed"
                       >
-                        <Star class="w-3 h-3" :fill="record.is_saved ? 'currentColor' : 'none'" />
-                      </button>
-                      <button
-                        @click.stop="deleteHistoryRecord(record)"
-                        class="w-7 h-7 rounded-full border border-white/10 bg-black/20 text-gray-500 backdrop-blur flex items-center justify-center hover:text-red-300 hover:border-red-400/40 hover:bg-red-500/10 transition-all duration-300"
-                        title="删除记录"
-                      >
-                        <Trash2 class="w-3 h-3" />
-                      </button>
+                        <!-- Emoji 图标区域 -->
+                        <div class="w-10 h-10 rounded-xl flex items-center justify-center text-xl bg-emerald-500/10">
+                          {{ card.emoji }}
+                        </div>
+                        <!-- 标题行 -->
+                        <div>
+                          <h3 class="text-sm font-bold text-white">{{ card.title }}</h3>
+                          <p class="text-xs text-gray-500">{{ card.subtitle }}</p>
+                        </div>
+                        <!-- 描述文本 -->
+                        <p class="text-xs text-gray-400 leading-relaxed line-clamp-3">{{ card.desc }}</p>
+                        <!-- 锁定按钮：@click.prevent 阻止默认行为，showToastMsg 反馈用户，不触发 router.push -->
+                        <button
+                          class="mt-auto w-full py-1.5 px-3 rounded-lg text-xs font-medium border border-emerald-500/20 bg-emerald-500/5 text-emerald-500/50 animate-pulse cursor-not-allowed"
+                          @click.prevent="showToastMsg('该模块正在开发中，敬请期待！', 3000)"
+                        >
+                          模块构筑中... Coming Soon
+                        </button>
+                      </div>
+
                     </div>
                   </div>
                 </div>
-                
-                <!-- 快捷问题 chips 收拢在历史记录下方 -->
-                <div class="flex flex-wrap gap-2 pt-4 border-t border-white/5">
-                  <button
-                    v-for="action in quickActions"
-                    :key="action"
-                    @click="userChatInput = action"
-                    class="group px-3 py-1.5 rounded-lg border border-white/5 bg-white/[0.02] hover:bg-cyan-500/10 hover:border-cyan-500/30 transition-all duration-300 flex items-center gap-2"
-                  >
-                    <span class="text-cyan-500/40 group-hover:text-cyan-400 font-mono text-xs transition-colors duration-300">&gt;&gt;</span>
-                    <span class="text-xs text-gray-400 group-hover:text-cyan-100 transition-colors duration-300">{{ action }}</span>
-                  </button>
+
+                <!-- 有数据态：继续上次 HistoryPanel -->
+                <div
+                  v-else
+                  key="history"
+                  class="rounded-[28px] border border-white/10 bg-white/[0.03] backdrop-blur-xl p-5 animate-fade-in-up animation-delay-500"
+                >
+                  <div class="mb-4 flex items-center justify-between">
+                    <div>
+                      <h2 class="text-base font-semibold text-gray-200 text-left flex items-center gap-2">
+                        <History class="w-4 h-4 text-purple-400" />
+                        继续上次
+                      </h2>
+                      <p class="text-xs text-gray-500 mt-0.5">最近的 AI 职业咨询记录</p>
+                    </div>
+                    <button
+                      @click="router.push('/history-archive')"
+                      class="text-xs text-purple-400 hover:text-purple-300 transition-colors duration-300 flex items-center gap-1"
+                    >
+                      查看全部
+                      <ChevronRight class="w-4 h-4" />
+                    </button>
+                  </div>
+                  <div class="grid grid-cols-1 md:grid-cols-2 gap-3 mb-4">
+                    <div
+                      v-for="record in historyRecords"
+                      :key="record.id"
+                      class="relative overflow-hidden bg-white/[0.015] backdrop-blur-md border border-white/5 rounded-2xl p-4 pb-10 cursor-pointer transition-all duration-500 group hover:-translate-y-1 hover:bg-white/[0.03] hover:border-purple-500/30 hover:shadow-[0_10px_30px_rgba(168,85,247,0.15)] text-left"
+                      @click="goToHistory(record)"
+                    >
+                      <div class="absolute bottom-0 left-0 w-full h-[2px] bg-gradient-to-r from-transparent via-purple-500/50 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500"></div>
+                      <div class="flex items-center justify-between mb-2">
+                        <div class="flex items-center gap-2">
+                          <span class="text-xs px-2 py-0.5 rounded-full border" :class="getCategoryColor(record.category)">{{ getCategoryLabel(record.category) }}</span>
+                          <span v-if="getDifficultyBadge(record) && getDifficultyBadgeConfig(getDifficultyBadge(record))" class="text-xs px-1.5 py-0.5 rounded-full border" :class="getDifficultyBadgeConfig(getDifficultyBadge(record)).class">{{ getDifficultyBadgeConfig(getDifficultyBadge(record)).label }}</span>
+                        </div>
+                        <span class="text-xs text-gray-500">{{ record.created_at }}</span>
+                      </div>
+                      <p class="text-xs text-gray-400 truncate">{{ record.user_input }}</p>
+                      <p v-if="record.ai_result" class="text-xs text-gray-500 truncate mt-1">{{ record.ai_result.substring(0, 60) }}...</p>
+                      <div class="absolute right-3 bottom-3 flex items-center gap-2">
+                        <button
+                          @click.stop="toggleSaveRecord(record)"
+                          class="w-7 h-7 rounded-full border backdrop-blur flex items-center justify-center transition-all duration-300"
+                          :class="record.is_saved
+                            ? 'border-amber-300/50 bg-amber-400/10 text-amber-300 shadow-[0_0_14px_rgba(251,191,36,0.2)]'
+                            : 'border-white/10 bg-black/20 text-gray-500 hover:text-amber-300 hover:border-amber-300/40 hover:bg-amber-400/10'"
+                          title="保存/取消保存"
+                        >
+                          <Star class="w-3 h-3" :fill="record.is_saved ? 'currentColor' : 'none'" />
+                        </button>
+                        <button
+                          @click.stop="deleteHistoryRecord(record)"
+                          class="w-7 h-7 rounded-full border border-white/10 bg-black/20 text-gray-500 backdrop-blur flex items-center justify-center hover:text-red-300 hover:border-red-400/40 hover:bg-red-500/10 transition-all duration-300"
+                          title="删除记录"
+                        >
+                          <Trash2 class="w-3 h-3" />
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+
+                  <!-- 快捷问题 chips 收拢在历史记录下方 -->
+                  <div class="flex flex-wrap gap-2 pt-4 border-t border-white/5">
+                    <button
+                      v-for="action in quickActions"
+                      :key="action"
+                      @click="userChatInput = action"
+                      class="group px-3 py-1.5 rounded-lg border border-white/5 bg-white/[0.02] hover:bg-cyan-500/10 hover:border-cyan-500/30 transition-all duration-300 flex items-center gap-2"
+                    >
+                      <span class="text-cyan-500/40 group-hover:text-cyan-400 font-mono text-xs transition-colors duration-300">&gt;&gt;</span>
+                      <span class="text-xs text-gray-400 group-hover:text-cyan-100 transition-colors duration-300">{{ action }}</span>
+                    </button>
+                  </div>
                 </div>
-              </div>
+              </transition>
 
 
 
@@ -2047,6 +2219,18 @@ onUnmounted(() => {
 .toast-slide-leave-to {
   opacity: 0;
   transform: translate(-50%, -12px);
+}
+
+/* 继续上次区块：空态 ↔ 有数据 切换过渡（Requirements 6.1, 6.2, 6.3） */
+.onboarding-fade-enter-active,
+.onboarding-fade-leave-active {
+  transition: opacity 0.4s ease, transform 0.4s ease;
+}
+
+.onboarding-fade-enter-from,
+.onboarding-fade-leave-to {
+  opacity: 0;
+  transform: translateY(8px);
 }
 
 .modal-fade-enter-active,
