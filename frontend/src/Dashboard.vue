@@ -51,7 +51,7 @@ const historyRecords = ref([])
 
 const loadHistory = async () => {
   try {
-    const res = await fetch(`${API_BASE_URL.replace('/api', '')}/api/history?limit=2`, {
+    const res = await fetch(`${API_BASE_URL}/history?limit=2`, {
       headers: { ...getAuthHeaders() }
     })
     if (res.ok) {

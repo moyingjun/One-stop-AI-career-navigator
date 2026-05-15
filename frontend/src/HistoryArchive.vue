@@ -16,6 +16,7 @@ import {
   X
 } from 'lucide-vue-next'
 import CustomDropdown from '@/components/CustomDropdown.vue'
+import { getAuthHeaders } from '@/services/authService.js'
 
 const router = useRouter()
 
@@ -44,7 +45,9 @@ const busyRecordIds = ref(new Set())
 const loadHistory = async () => {
   isLoading.value = true
   try {
-    const res = await fetch(`${API_BASE_URL}/history?limit=100`)
+    const res = await fetch(`${API_BASE_URL}/history?limit=100`, {
+      headers: { ...getAuthHeaders() }
+    })
     if (!res.ok) throw new Error(`HTTP ${res.status}`)
     const data = await res.json()
     historyRecords.value = data.records || []
@@ -131,7 +134,10 @@ const markBusy = (recordId, busy) => {
 const deleteHistoryRecord = async (record) => {
   markBusy(record.id, true)
   try {
-    const res = await fetch(`${API_BASE_URL}/history/${record.id}`, { method: 'DELETE' })
+    const res = await fetch(`${API_BASE_URL}/history/${record.id}`, {
+      method: 'DELETE',
+      headers: { ...getAuthHeaders() }
+    })
     if (!res.ok) throw new Error(`HTTP ${res.status}`)
     historyRecords.value = historyRecords.value.filter((item) => item.id !== record.id)
   } catch (err) {
@@ -147,7 +153,7 @@ const toggleSaveRecord = async (record) => {
   try {
     const res = await fetch(`${API_BASE_URL}/history/${record.id}/save`, {
       method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
       body: JSON.stringify({ is_saved: nextSaved })
     })
     if (!res.ok) throw new Error(`HTTP ${res.status}`)
@@ -164,7 +170,10 @@ const toggleSaveRecord = async (record) => {
 const clearAllHistory = async () => {
   isClearing.value = true
   try {
-    const res = await fetch(`${API_BASE_URL}/history/clear`, { method: 'DELETE' })
+    const res = await fetch(`${API_BASE_URL}/history/clear`, {
+      method: 'DELETE',
+      headers: { ...getAuthHeaders() }
+    })
     if (!res.ok) throw new Error(`HTTP ${res.status}`)
     historyRecords.value = []
     showClearConfirm.value = false
