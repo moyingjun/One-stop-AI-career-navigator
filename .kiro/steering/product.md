@@ -1,43 +1,25 @@
----
-inclusion: always
----
+# 产品概览
 
-# Product Overview
+一站式AI职业生涯导航员 (One-stop AI Career Navigator) —— 一个面向中国求职者及学生的AI驱动型职业指导平台。
 
-One-stop AI Career Navigator (一站式AI职业生涯导航员) is an AI-powered career guidance platform targeting IT job seekers in the Chinese market. It combines LLM-driven coaching, RAG-backed domain knowledge, and a streamlined UX to guide users from resume review through interview prep to career planning.
+## 核心功能
 
-## Core Features
+- **简历诊断**：上传简历并进行AI分析与反馈（基于STAR法则及职位描述匹配度）
+- **模拟面试**：支持三种难度（温和/标准/P8压力），含实时评分与追问环节
+- **职业规划**：基于用户背景提供个性化的职业发展路径建议
+- **高考/升学顾问**：提供大学专业选择及升学报考指导（采用"张雪峰"人设风格）
+- **多智能体对话**：统一的LUI（语言用户界面）控制台，自动将用户查询分发至相应的专业AI智能体
+- **RAG知识库**：整合系统内置知识（如"张雪峰"语料库）及用户上传文档，提供基于上下文的精准解答
+- **历史与收藏**：提供持久化的对话历史记录，支持保存及收藏功能
 
-- **Resume Diagnosis**: Upload PDF/DOCX resumes → AI parses, scores, and returns structured improvement feedback
-- **Mock Interview**: AI-driven interview simulation with real-time SSE streaming responses
-- **Career Planning**: Personalized career path recommendations derived from the user's profile and goals
-- **Knowledge Base (RAG)**: Domain expertise store (张雪峰-style career advice) used to ground all AI responses
-- **History & Saved Chats**: Persistent SQLite record of all AI interactions; users can save/bookmark sessions
-- **Dashboard**: Central hub displaying user profile summary and quick-access entry points to all features
+## 目标用户
 
-## User Flow & Access Model
+- IT行业求职者（简历优化、面试备考）
+- 中国高中生及家长（大学专业选择、升学报考决策）
+- 寻求专业指导的跨行转职者
 
-- **Guest mode**: Landing page is publicly accessible; no login required
-- **Setup gate**: Users must complete a one-time profile setup before accessing personalized features (Dashboard, Interview, Career Plan, Resume Diagnosis)
-- **Route guards** in `router/index.js` enforce the setup gate — do not replicate this logic inside page components
+## 语言规范
 
-## AI Response Conventions
-
-- All AI-generated text must be in **Simplified Chinese**
-- Tone: professional career-coaching voice, warm but authoritative (modeled on 张雪峰's style)
-- Streaming responses use SSE (`event: reply` / `data: {payload}`) — never buffer and return all at once
-- RAG context from `data/system_knowledge/` must be injected into prompts where relevant
-
-## UI / UX Design Language
-
-- Visual theme: **Dark Cyberpunk + Glassmorphism** — dark backgrounds, neon accent colors, frosted-glass card surfaces
-- All reusable card surfaces use `CyberGlassCard.vue`; do not inline equivalent styles in page components
-- Charts use `CyberRadarChart.vue` (ECharts 6 + vue-echarts); maintain consistent color palette across all chart instances
-- Responsive and mobile-friendly; test layouts at both desktop and mobile breakpoints
-
-## Feature Boundaries & Conventions
-
-- Resume parsing happens **client-side** (mammoth for DOCX, pdfjs-dist for PDF) before sending text to the backend
-- OCR fallback for scanned PDFs uses the Tencent Cloud OCR SDK via the `/api/ocr` endpoint
-- History records are stored in SQLite (`history.db`) through `database.py` — no ORM, raw `sqlite3`
-- Each feature domain (resume, interview, career plan, knowledge base) has its own Router file and Service file; do not cross-wire them
+- 所有面向用户的内容均使用**简体中文**
+- 代码注释及文档字符串（Docstrings）中，凡涉及业务逻辑描述的部分应使用中文
+- 变量名及代码标识符统一使用英文

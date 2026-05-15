@@ -1,32 +1,36 @@
-from fastapi import APIRouter, Request, status, Cookie, Depends, HTTPException, UploadFile, File, Form
-from fastapi.responses import RedirectResponse, JSONResponse
-from fastapi.encoders import jsonable_encoder
-from typing import List, Dict, Any, Optional
-import asyncio
-from Router.models import uploadBody
-from Service import service
+"""
+Router/jobResume.py — 简历文件上传路由（遗留端点）
 
+此端点为早期版本遗留，当前前端已改为客户端解析（mammoth/pdfjs-dist）。
+保留此路由以维持向后兼容，待后续评估是否正式废弃。
+"""
 
-router = APIRouter(
-    tags=["jobResume"],
-    prefix="/jobResume"
-)
+from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from fastapi.responses import JSONResponse
+
+router = APIRouter(tags=["jobResume"], prefix="/jobResume")
 
 
 @router.post("/uploadJobResume")
-async def uploadJobResume(
-    # 彻底抛弃 body，直接独立接收字符串
-    userId: str = Form(..., description="用户的唯一ID"), 
-    ResumeFile: UploadFile = File(..., description="上传的简历文档或面试录音")
+async def upload_job_resume(
+    userId: str = Form(..., description="用户的唯一ID"),
+    ResumeFile: UploadFile = File(..., description="上传的简历文档或面试录音"),
 ):
+    """
+    简历文件上传端点（遗留）。
+
+    当前返回占位响应，实际解析逻辑已迁移至前端（客户端解析）。
+    后续可接入 Service/Utils/pdf_parser.py 实现服务端解析。
+    """
     try:
-        # 直接把 userId 和文件扔给后厨处理
-        result = await service.handle(userId, ResumeFile)
-        return JSONResponse(content=result)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-
-
-
+        filename = ResumeFile.filename or ""
+        return JSONResponse(content={
+            "code": 200,
+            "data": {
+                "msg": "文件接收成功（服务端解析功能待实现）",
+                "userId": userId,
+                "filename": filename,
+            }
+        })
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))

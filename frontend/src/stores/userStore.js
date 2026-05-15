@@ -1,11 +1,64 @@
 import { defineStore } from 'pinia'
 
+// ─────────────────────────────────────────────
+// JWT 工具函数（不依赖任何外部库）
+// ─────────────────────────────────────────────
+
+/**
+ * 解析 JWT Payload（Base64URL 解码），失败时返回 null
+ * @param {string} token
+ * @returns {object|null}
+ */
+function parseJwtPayload(token) {
+  try {
+    const parts = token.split('.')
+    if (parts.length !== 3) return null
+    // Base64URL → Base64 → JSON
+    const base64 = parts[1].replace(/-/g, '+').replace(/_/g, '/')
+    const json = decodeURIComponent(
+      atob(base64)
+        .split('')
+        .map((c) => '%' + c.charCodeAt(0).toString(16).padStart(2, '0'))
+        .join('')
+    )
+    return JSON.parse(json)
+  } catch {
+    return null
+  }
+}
+
+/**
+ * 判断 JWT token 是否已过期或即将过期（提前 60 秒视为过期）
+ * @param {string|null} token
+ * @returns {boolean} true = 已过期或无效
+ */
+function isTokenExpired(token) {
+  if (!token || token.trim().length === 0) return true
+  const payload = parseJwtPayload(token)
+  if (!payload || typeof payload.exp !== 'number') return true
+  // 提前 60 秒判定过期，给刷新留出窗口
+  const nowSeconds = Math.floor(Date.now() / 1000)
+  return nowSeconds >= payload.exp - 60
+}
+
 /**
  * 用户基础信息 Store
- * 管理用户身份、雷达图数据、面板布局等全局用户数据
+ *
+ * 管理：
+ *   - 鉴权状态（token、userId、email）
+ *   - 用户画像（姓名、简历、目标岗位等）
+ *   - 雷达图数据
+ *   - 面板布局配置
+ *   - 置顶记录 ID
  */
 export const useUserStore = defineStore('user', {
   state: () => ({
+    // ── 鉴权状态 ──────────────────────────────
+    token: localStorage.getItem('token') || null,
+    userId: localStorage.getItem('user_id') ? Number(localStorage.getItem('user_id')) : null,
+    email: localStorage.getItem('user_email') || null,
+
+    // ── 用户画像 ──────────────────────────────
     candidateName: '',
     resumeText: '',
 
@@ -71,9 +124,24 @@ export const useUserStore = defineStore('user', {
     },
 
     /**
+     * 当前 token 是否已过期（或不存在）
+     * 基于 JWT Payload 的 exp 字段判断，提前 60 秒视为过期
+     * @returns {boolean}
+     */
+    isExpired: (state) => isTokenExpired(state.token),
+
+    /**
+     * 是否已登录（有 token 且未过期）
+     * @returns {boolean}
+     */
+    isLoggedIn: (state) => {
+      return Boolean(state.token) && !isTokenExpired(state.token)
+    },
+
+    /**
      * 根据 tab 名称返回对应的置顶记录 ID
      * @param {string} tab - 'resume' | 'interview' | 'career'
-     * @returns {number|null} 对应的置顶 ID，未知 tab 返回 null
+     * @returns {number|null}
      */
     getPinnedIdByTab: (state) => (tab) => {
       if (tab === 'resume') return state.pinnedResumeId
@@ -84,6 +152,70 @@ export const useUserStore = defineStore('user', {
   },
 
   actions: {
+    /**
+     * 登录成功后调用：持久化 token、userId、email 到 state 和 localStorage
+     * @param {{ access_token: string, user_id: number, email: string }} authData
+     */
+    login(authData) {
+      this.token = authData.access_token
+      this.userId = authData.user_id
+      this.email = authData.email
+
+      try {
+        localStorage.setItem('token', authData.access_token)
+        localStorage.setItem('user_id', String(authData.user_id))
+        localStorage.setItem('user_email', authData.email || '')
+      } catch {
+        // localStorage 写入失败时静默处理（隐私模式或存储已满）
+      }
+    },
+
+    /**
+     * 登出：清除 token、userId、email，重置用户画像
+     * 不负责路由跳转，由调用方决定跳转目标
+     */
+    logout() {
+      this.token = null
+      this.userId = null
+      this.email = null
+
+      // 重置用户画像
+      this.candidateName = ''
+      this.resumeText = ''
+      this.targetJob = ''
+      this.jobDescription = ''
+      this.activeMode = 'job'
+      this.examType = ''
+      this.estimatedScore = ''
+      this.examRank = ''
+      this.targetSchool = ''
+      this.targetGoal = ''
+      this.pinnedResumeId = null
+      this.pinnedInterviewId = null
+      this.pinnedCareerId = null
+
+      try {
+        localStorage.removeItem('token')
+        localStorage.removeItem('user_id')
+        localStorage.removeItem('user_email')
+        localStorage.removeItem('candidate_name')
+        localStorage.removeItem('resume_text')
+        localStorage.removeItem('active_mode')
+        localStorage.removeItem('target_job')
+        localStorage.removeItem('job_description')
+        localStorage.removeItem('exam_type')
+        localStorage.removeItem('estimated_score')
+        localStorage.removeItem('exam_rank')
+        localStorage.removeItem('target_school')
+        localStorage.removeItem('target_goal')
+        localStorage.removeItem('pinned_resume_id')
+        localStorage.removeItem('pinned_interview_id')
+        localStorage.removeItem('pinned_career_id')
+      } catch {
+        // localStorage 清除失败时静默处理
+      }
+    },
+
     /** 更新所有用户画像字段，并同步持久化到 localStorage */
     updateUserProfile(payload) {
       this.candidateName = payload.candidateName || ''
@@ -97,7 +229,6 @@ export const useUserStore = defineStore('user', {
       this.targetSchool = payload.targetSchool || ''
       this.targetGoal = payload.targetGoal || ''
 
-      // 同步写入 localStorage，失败时静默处理（隐私模式或存储已满）
       try {
         localStorage.setItem('candidate_name', this.candidateName)
         localStorage.setItem('resume_text', this.resumeText)
@@ -110,7 +241,7 @@ export const useUserStore = defineStore('user', {
         localStorage.setItem('target_school', this.targetSchool)
         localStorage.setItem('target_goal', this.targetGoal)
       } catch {
-        // localStorage 写入失败时不抛出异常，Store 内存状态仍正常可用
+        // localStorage 写入失败时不抛出异常
       }
     },
 
@@ -152,40 +283,28 @@ export const useUserStore = defineStore('user', {
 
     /**
      * 设置指定 tab 的置顶记录 ID，并同步写入 localStorage
-     * @param {string} tab - 'resume' | 'interview' | 'career'
-     * @param {number|null} recordId - 记录 ID，null 表示取消置顶
      */
     setPinnedId(tab, recordId) {
-      // tab 与 state 字段及 localStorage 键名的映射关系
       const tabConfig = {
         resume:    { field: 'pinnedResumeId',    storageKey: 'pinned_resume_id' },
         interview: { field: 'pinnedInterviewId', storageKey: 'pinned_interview_id' },
         career:    { field: 'pinnedCareerId',    storageKey: 'pinned_career_id' }
       }
-
       const config = tabConfig[tab]
-      // 未知 tab 值时静默忽略，不修改任何状态
       if (!config) return
-
       this[config.field] = recordId
-
       try {
         if (recordId !== null) {
-          // recordId 非 null 时写入 localStorage
           localStorage.setItem(config.storageKey, String(recordId))
         } else {
-          // recordId 为 null 时移除对应 localStorage 键
           localStorage.removeItem(config.storageKey)
         }
       } catch {
-        // localStorage 操作失败时静默处理，Store 内存状态仍正常可用
+        // 静默处理
       }
     },
 
-    /**
-     * 从 localStorage 读取三个置顶 ID 并恢复到 state
-     * 键不存在或解析失败时保持 null；整个函数用 try/catch 包裹，异常时静默处理
-     */
+    /** 从 localStorage 读取三个置顶 ID 并恢复到 state */
     loadPinnedIds() {
       try {
         const parseId = (raw) => {
@@ -193,12 +312,11 @@ export const useUserStore = defineStore('user', {
           const parsed = parseInt(raw, 10)
           return isNaN(parsed) ? null : parsed
         }
-
         this.pinnedResumeId    = parseId(localStorage.getItem('pinned_resume_id'))
         this.pinnedInterviewId = parseId(localStorage.getItem('pinned_interview_id'))
         this.pinnedCareerId    = parseId(localStorage.getItem('pinned_career_id'))
       } catch {
-        // localStorage 读取失败时静默处理，保持 state 中的 null 值
+        // 静默处理
       }
     }
   }

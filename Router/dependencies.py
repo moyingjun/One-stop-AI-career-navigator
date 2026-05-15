@@ -8,7 +8,6 @@ Router/dependencies.py — FastAPI 依赖注入：JWT 鉴权中间件
 对应 Requirements 3.1, 3.2, 3.3, 3.5, 3.6
 """
 
-import os
 from typing import Optional
 
 from fastapi import Depends, HTTPException
@@ -16,13 +15,13 @@ from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError, jwt
 from jose.exceptions import ExpiredSignatureError
 
-# ─────────────────────────────────────────────
-# JWT 配置（与 Router/auth.py 保持一致）
-# ─────────────────────────────────────────────
+from Settings.config import JWT_ALGORITHM, JWT_SECRET_KEY
 
-# 从环境变量读取密钥（由 main.py 的 load_dotenv() 预先加载）
-_JWT_SECRET_KEY: str = os.environ.get("JWT_SECRET_KEY", "")
-_JWT_ALGORITHM: str = "HS256"
+# ─────────────────────────────────────────────
+# JWT 配置（从 Settings/config.py 统一读取）
+# ─────────────────────────────────────────────
+_JWT_SECRET_KEY: str = JWT_SECRET_KEY
+_JWT_ALGORITHM: str = JWT_ALGORITHM
 
 # ─────────────────────────────────────────────
 # OAuth2 scheme 定义
