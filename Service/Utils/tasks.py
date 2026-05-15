@@ -61,6 +61,9 @@ def send_verification_email(self, email: str, code: str) -> dict:
 <html lang="zh-CN">
 <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>验证码 — One-stop AI Navigator</title></head>
 <body style="margin: 0; padding: 0; background-color: #050505; font-family: 'Helvetica Neue', Arial, sans-serif;">
+  <!-- Gmail 预览文本欺骗片段：对用户不可见，但 Gmail 扫描时优先读取此段，
+       能有效中和后续大段 CSS 带来的"广告嫌疑"，提升事务性邮件评分 -->
+  <div style="display: none; max-height: 0px; overflow: hidden; opacity: 0;">这是您的安全登录凭证，包含一次性验证码，请查收并妥善保管。</div>
   <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color: #0A0A10; padding: 30px 16px;">
     <tr>
       <td align="center">
@@ -103,7 +106,7 @@ def send_verification_email(self, email: str, code: str) -> dict:
               <!-- 正文 -->
               <p style="color: #F3F4F6; font-size: 15px; font-weight: 500; margin: 0 0 10px 0;">尊敬的 {email} 用户，您好：</p>
               <p style="color: #9CA3AF; font-size: 14px; line-height: 1.7; margin: 0 0 28px 0;">
-                您正在登录 <span style="color: #00D2FF; font-weight: 600;">One-stop AI Navigator</span>，请使用下方的 6 位安全动态密钥验证您的身份。该密钥将在
+                您正在登录 <span style="color: #00D2FF; font-weight: 600;">onestopainav.com</span>，请使用下方的 6 位安全动态密钥验证您的身份。该密钥将在
                 <span style="color: #00D2FF; font-weight: 700;">5 分钟</span>后失效。
               </p>
 

@@ -16,7 +16,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from database import (
-    clear_all_records,
+    clear_records_by_user,
     delete_record,
     get_recent_records_by_user,
     get_record_by_id,
@@ -75,16 +75,16 @@ async def get_saved_history(
     """
     获取当前用户的已保存历史记录。
 
-    注意：get_saved_records 目前未按 user_id 过滤，此处通过客户端过滤
-    保证只返回属于当前用户的已保存记录（向后兼容存量 NULL user_id 记录）。
+    🚨 多租户铁律：从 JWT Token 中提取 user_id，只返回属于当前用户的记录。
+    向后兼容：user_id 为 NULL 的存量记录也允许访问。
     """
-    all_saved = get_saved_records()
-    # 过滤：只返回属于当前用户或 user_id 为 NULL 的存量记录
-    records = [
-        r for r in all_saved
-        if r.get("user_id") is None or r.get("user_id") == current_user_id
-    ]
-    return {"success": True, "records": records}
+    records = get_recent_records_by_user(
+        user_id=current_user_id,
+        limit=200,  # 已保存记录上限
+    )
+    # 进一步过滤：只返回 is_saved=True 的记录
+    saved = [r for r in records if r.get("is_saved")]
+    return {"success": True, "records": saved}
 
 
 @router.delete("/clear")
@@ -94,10 +94,9 @@ async def clear_history(
     """
     清空当前用户的所有历史记录。
 
-    注意：clear_all_records 目前清空全表，此处保留原有行为以维持兼容性。
-    后续可升级为按 user_id 删除。
+    🚨 多租户铁律：只清空当前用户（由 JWT 解析）的记录，绝不清空全表。
     """
-    deleted_count = clear_all_records()
+    deleted_count = clear_records_by_user(user_id=current_user_id)
     return {"success": True, "deleted_count": deleted_count}
 
 

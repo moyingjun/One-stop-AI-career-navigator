@@ -411,6 +411,17 @@ const handleKeyEnter = () => {
                     {{ countdown > 0 ? `${countdown}s` : (codeSent ? '重新发送' : '发送验证码') }}
                   </button>
                 </div>
+                <!-- 极客风安全通道提示（验证码发送后显示） -->
+                <Transition name="hint-fade">
+                  <p v-if="codeSent" class="flex items-start gap-1.5 text-[11px] leading-relaxed mt-2 px-1">
+                    <span class="flex-shrink-0 mt-px" aria-hidden="true">⚠️</span>
+                    <span class="text-amber-400/80">
+                      验证码已通过专属加密通道发送。由于本站邮件安全评级较高，部分邮箱（如 Gmail）可能将其归档至
+                      <span class="font-semibold text-amber-300">【广告邮件】</span>或
+                      <span class="font-semibold text-amber-300">【垃圾箱】</span>，请注意查收。
+                    </span>
+                  </p>
+                </Transition>
               </div>
 
               <!-- Turnstile widget（生产环境） -->
@@ -428,6 +439,15 @@ const handleKeyEnter = () => {
                     class="auth-input w-full pl-10 pr-4 py-3 rounded-xl bg-white/5 border border-white/10 text-white placeholder-gray-600 text-sm focus:outline-none focus:border-cyan-500/60 focus:bg-white/8 focus:shadow-[0_0_0_3px_rgba(6,182,212,0.15)] transition-all duration-200 tracking-widest"
                     :disabled="isLoading" @keydown.enter.prevent="handleKeyEnter" />
                 </div>
+                <!-- 白名单建议提示 -->
+                <p class="flex items-start gap-1.5 text-[11px] text-gray-600 leading-relaxed px-1 pt-0.5">
+                  <span class="flex-shrink-0 mt-px" aria-hidden="true">💡</span>
+                  <span>
+                    Tip: 建议将
+                    <span class="text-cyan-500/80 font-mono select-all">noreply@onestopainav.com</span>
+                    加入邮箱白名单，以确保未来顺利接收系统通知。
+                  </span>
+                </p>
               </div>
 
               <!-- 密码 -->
@@ -503,4 +523,12 @@ const handleKeyEnter = () => {
 }
 .tab-fade-enter-from { opacity: 0; transform: translateY(6px); }
 .tab-fade-leave-to   { opacity: 0; transform: translateY(-6px); }
+
+.hint-fade-enter-active, .hint-fade-leave-active {
+  transition: opacity 0.3s ease, transform 0.3s ease, max-height 0.3s ease;
+}
+.hint-fade-enter-from, .hint-fade-leave-to {
+  opacity: 0;
+  transform: translateY(-4px);
+}
 </style>

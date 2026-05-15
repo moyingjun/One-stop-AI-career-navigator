@@ -87,19 +87,21 @@ async def request_email_code(email: str, db: AsyncSession) -> None:
     """
     now = _utc_now()
 
-    # ── 步骤 1：冷却检查（查最近一条该邮箱的 EmailLog）──
-    result = await db.execute(
-        select(EmailLog)
-        .where(EmailLog.email_type == "verify_email")
-        # EmailLog 没有 email 字段，通过 join User 或直接在 EmailLog 加 email 字段
-        # 当前模型 EmailLog 无 email 字段，改为：查询该邮箱对应 User 的最近 EmailLog
-        # 若 User 不存在（注册前），则无冷却记录，直接放行
-    )
-    # 注：EmailLog 当前无 email 字段，冷却检查需通过 User 关联
-    # 若用户已存在，通过 User 查冷却；若用户不存在，无冷却限制
+    # ── 步骤 1：查询该邮箱对应的 User（后续冷却检查和拦截均依赖此结果）──
     user_result = await db.execute(select(User).where(User.email == email))
     user: User | None = user_result.scalar_one_or_none()
 
+    # 🚨 资源盗刷拦截门：已完成注册的正式用户禁止再次触发发信流程
+    # 判定条件：is_verified=True 且 password_hash 非空（排除占位 User）
+    # 目的：在 Celery 任务入队之前就一脚踹走，零邮件额度消耗
+    if user is not None and user.is_verified and user.password_hash:
+        raise HTTPException(
+            status_code=400,
+            detail="该邮箱已注册，请直接前往登录",
+        )
+
+    # ── 步骤 1b：60 秒冷却检查（针对未注册邮箱的频繁发信防刷）──
+    # 此处 user 若存在，必为 is_verified=False 的占位 User（已被上方拦截过滤）
     if user is not None and user.last_email_sent_at is not None:
         last_sent = _ensure_tz(user.last_email_sent_at)
         elapsed = (now - last_sent).total_seconds()

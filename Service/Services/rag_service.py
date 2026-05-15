@@ -478,38 +478,12 @@ def init_system_knowledge_sync() -> None:
 @router.post("/upload")
 async def upload_knowledge_legacy(file: UploadFile = File(...)):
     """
-    旧版知识库上传端点（无鉴权，兼容旧前端代码）。
-    新代码请使用 Router/knowledge_base.py 中的带鉴权版本。
+    旧版知识库上传端点（已废弃）。
+
+    🚨 安全加固：此端点已停用，返回 410 Gone。
+    请使用带鉴权的新端点：POST /api/kb/upload
     """
-    from Service.Utils.databases.db import AsyncSessionLocal
-
-    if not file.filename:
-        raise HTTPException(status_code=400, detail="文件名不能为空")
-
-    max_bytes = _MAX_UPLOAD_MB * 1024 * 1024
-    content = await file.read()
-    if not content:
-        raise HTTPException(status_code=400, detail="上传文件为空")
-    if len(content) > max_bytes:
-        raise HTTPException(status_code=413, detail=f"文件过大，请上传 {_MAX_UPLOAD_MB}MB 以内的文件")
-
-    try:
-        async with AsyncSessionLocal() as db:
-            result = await ingest_file(
-                filename=file.filename,
-                content=content,
-                user_id=None,  # 旧接口无鉴权，写入全局共享库
-                db=db,
-            )
-        return {
-            "success": True,
-            "knowledge_id": result["source_name"],
-            "filename": result["source_name"],
-            "chunk_count": result["chunk_count"],
-            "mode": "semantic+keyword",
-            "message": "知识库文件上传成功",
-        }
-    except HTTPException:
-        raise
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"上传失败: {exc}") from exc
+    raise HTTPException(
+        status_code=410,
+        detail="此端点已废弃，请使用 POST /api/kb/upload（需登录）",
+    )

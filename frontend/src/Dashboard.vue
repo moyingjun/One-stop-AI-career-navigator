@@ -15,6 +15,7 @@ import CyberRadarChart from '@/components/CyberRadarChart.vue'
 import SetupModal from '@/components/SetupModal.vue'
 import DataSourceModal from '@/components/DataSourceModal.vue'
 import ChatPreviewModal from '@/components/ChatPreviewModal.vue'
+import KnowledgePanel from '@/components/KnowledgePanel.vue'
 
 import { Bot, Bookmark, FileText, MessageSquare, Folder, Settings, Clock, Puzzle, Plus, Search, Paperclip, MoreHorizontal, ChevronDown, ChevronLeft, ChevronRight, Upload, CheckCircle, X, Loader2, History, Send, Sparkles, Mic, GraduationCap, Star, Trash2 }
   from 'lucide-vue-next'
@@ -162,6 +163,8 @@ const isKnowledgeUploading = ref(false)
 const showSetupModal = ref(false)
 // DataSourceModal 弹窗控制（数据面板设置，与 SetupModal 解耦）
 const showDataSourceModal = ref(false)
+// KnowledgePanel 悬浮面板控制
+const showKnowledgePanel = ref(false)
 
 const handleSetupComplete = () => {
   showSetupModal.value = false
@@ -572,7 +575,7 @@ const handleSidebarItemClick = (item, menu) => {
   }
 
   if (item.label === '文件管理') {
-    router.push('/files')
+    showKnowledgePanel.value = true
     return
   }
 
@@ -1996,6 +1999,9 @@ onUnmounted(() => {
       @load-context="handleChatPreviewLoadContext"
       @close="handleChatPreviewClose"
     />
+
+    <!-- KnowledgePanel 悬浮面板：知识库资产背包 -->
+    <KnowledgePanel v-model="showKnowledgePanel" />
   </div>
 </template>
 

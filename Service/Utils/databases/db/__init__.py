@@ -126,6 +126,12 @@ def clear_all_records(*args, **kwargs):
     return _fn(*args, **kwargs)
 
 
+def clear_records_by_user(*args, **kwargs):
+    """按 user_id 清空指定用户的历史记录（多租户安全版本）。"""
+    from .history_db import clear_records_by_user as _fn
+    return _fn(*args, **kwargs)
+
+
 def toggle_save_record(*args, **kwargs):
     from .history_db import toggle_save_record as _fn
     return _fn(*args, **kwargs)
@@ -160,6 +166,7 @@ __all__ = [
     "get_record_by_id",
     "delete_record",
     "clear_all_records",
+    "clear_records_by_user",
     "toggle_save_record",
     "get_saved_records",
     "create_user",

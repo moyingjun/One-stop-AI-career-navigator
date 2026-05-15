@@ -165,6 +165,22 @@ def clear_all_records() -> int:
     return deleted_count
 
 
+def clear_records_by_user(user_id: int) -> int:
+    """
+    清空指定用户的所有历史记录（多租户安全版本）。
+
+    🚨 铁律：只删除 user_id = :user_id 的记录，绝不清空全表。
+    """
+    conn = get_db()
+    cursor = conn.execute(
+        "DELETE FROM history_records WHERE user_id = ?", (user_id,)
+    )
+    deleted_count = cursor.rowcount
+    conn.commit()
+    conn.close()
+    return deleted_count
+
+
 def toggle_save_record(record_id: int, is_saved: bool) -> Optional[dict]:
     conn = get_db()
     cursor = conn.execute(

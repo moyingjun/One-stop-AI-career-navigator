@@ -5,6 +5,7 @@ import { ArrowLeft, Upload, FolderOpen, Loader2, Trash2, FileText, Image, File }
 import CyberGlassCard from '@/components/CyberGlassCard.vue'
 import { ACCEPTED_EXTENSIONS, validateFile, getFileType } from '@/utils/fileConstants.js'
 import { useKnowledgeBaseStore } from '@/stores/knowledgeBaseStore.js'
+import { uploadFile as kbUploadFile, getKnowledgeList, deleteKnowledgeSource } from '@/services/kbService.js'
 
 const router = useRouter()
 const store = useKnowledgeBaseStore()
@@ -14,11 +15,6 @@ const iconMap = { FileText, Image, File }
 
 // KnowledgeBase 页面专用文件大小限制：10MB
 const KB_MAX_FILE_SIZE = 10 * 1024 * 1024
-
-// 后端 API 基础路径
-const API_BASE_URL = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
-  ? 'http://127.0.0.1:8000/api'
-  : '/api'
 
 // Sorted files list (newest first by createdAt)
 const sortedFiles = computed(() => {
@@ -109,10 +105,10 @@ function triggerFileInput() {
 }
 
 /**
- * 文件上传核心逻辑 — 调用后端 POST /api/knowledge/upload
+ * 文件上传核心逻辑 — 调用后端 POST /api/kb/upload（带 JWT 鉴权）
  * 1. 校验文件合法性（格式 + 10MB 限制）
  * 2. 创建 FileItem 并加入 Store（status: 'parsing'）
- * 3. 通过 FormData 将文件发送至后端知识库上传接口
+ * 3. 通过 kbService.uploadFile() 将文件发送至带鉴权的知识库上传接口
  * 4. 成功时更新文件状态为 'completed'，失败时显示错误提示并标记 'failed'
  */
 async function handleFileUpload(file) {
@@ -135,30 +131,8 @@ async function handleFileUpload(file) {
   store.addFile(fileItem)
 
   try {
-    const formData = new FormData()
-    formData.append('file', file)
-
-    const controller = new AbortController()
-    const timeoutId = setTimeout(() => controller.abort(), 30000) // 30 秒超时
-
-    const response = await fetch(`${API_BASE_URL}/knowledge/upload`, {
-      method: 'POST',
-      body: formData,
-      signal: controller.signal
-    })
-
-    clearTimeout(timeoutId)
-
-    if (!response.ok) {
-      const errBody = await response.json().catch(() => ({}))
-      const errorMsg = errBody.detail || `上传失败 (HTTP ${response.status})`
-      store.updateFileStatus(fileItem.id, 'failed', '', errorMsg)
-      showError(`${file.name}: ${errorMsg}`)
-      return
-    }
-
-    const data = await response.json()
-    if (data.success && data.knowledge_id) {
+    const data = await kbUploadFile(file)
+    if (data.success) {
       store.updateFileStatus(fileItem.id, 'completed', '')
     } else {
       const errorMsg = data.message || '上传返回异常'
@@ -166,9 +140,7 @@ async function handleFileUpload(file) {
       showError(`${file.name}: ${errorMsg}`)
     }
   } catch (error) {
-    const errorMsg = error.name === 'AbortError'
-      ? '上传超时，请检查网络后重试'
-      : (error.message || '网络错误，请重试')
+    const errorMsg = error.message || '网络错误，请重试'
     store.updateFileStatus(fileItem.id, 'failed', '', errorMsg)
     showError(`${file.name}: ${errorMsg}`)
   }
