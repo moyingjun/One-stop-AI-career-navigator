@@ -833,9 +833,9 @@ onUnmounted(() => {
                 v-model="userInput"
                 @keydown="handleEnter"
                 placeholder="输入你的回答...（Enter 发送，Shift+Enter 换行）"
-                rows="4"
+                rows="3"
                 :disabled="isLoading || strikeTerminated"
-                class="w-full rounded-xl px-4 py-3 text-sm resize-none focus:outline-none backdrop-blur-xl shadow-[inset_0_1px_1px_rgba(255,255,255,0.1)] transition-all duration-300 bg-black/60 text-gray-200 placeholder-gray-500 focus:ring-2 disabled:opacity-50 disabled:cursor-not-allowed border min-h-[110px]"
+                class="interview-textarea w-full rounded-xl px-4 py-2.5 text-sm resize-none focus:outline-none backdrop-blur-xl shadow-[inset_0_1px_1px_rgba(255,255,255,0.1)] transition-all duration-300 bg-black/60 text-gray-200 placeholder-gray-500 focus:ring-2 disabled:opacity-50 disabled:cursor-not-allowed border"
                 :class="[themeConfig.borderLight, 'focus:' + themeConfig.border, 'focus:ring-' + themeConfig.primary + '/20']"
                 data-test="message-input"
               ></textarea>
@@ -922,8 +922,8 @@ onUnmounted(() => {
                 </div>
               </div>
 
-              <!-- 对话气泡流 -->
-              <div ref="messagesContainer" class="messages-stream rounded-xl border bg-black/30 backdrop-blur-xl p-3 md:p-5 space-y-4 max-h-[55dvh] overflow-y-auto" :class="themeConfig.borderLight">
+              <!-- 对话气泡流（独立滚动容器：bounded height + overscroll-contain，避免冒泡到外层） -->
+              <div ref="messagesContainer" class="messages-stream rounded-xl border bg-black/30 backdrop-blur-xl p-3 md:p-4" :class="themeConfig.borderLight">
                 <!-- 训练舱待命空态：仅在还没消息时短暂出现，提升"训练舱"叙事 -->
                 <div v-if="messages.length === 0 && !isLoading" class="py-8 text-center">
                   <div class="inline-flex items-center gap-2 px-3 py-1.5 rounded-full border border-white/10 bg-white/[0.03] text-[11px] text-gray-400 font-mono uppercase tracking-wider">
@@ -936,13 +936,13 @@ onUnmounted(() => {
                 <div
                   v-for="(msg, index) in messages"
                   :key="index"
-                  class="flex items-start gap-3 message-enter"
+                  class="msg-row flex items-start gap-2.5 message-enter"
                   :class="msg.role === 'user' ? 'flex-row-reverse' : 'flex-row'"
                   data-test="chat-bubble"
                 >
-                  <!-- 头像 -->
-                  <div class="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 border transition-all duration-300 relative" :class="msg.role === 'user' ? 'bg-white/10 border-white/20' : [themeConfig.bg, themeConfig.border + '/30']">
-                    <component :is="msg.role === 'user' ? UserCircle : Cpu" class="w-4 h-4" :class="msg.role === 'user' ? 'text-gray-300' : themeConfig.text" />
+                  <!-- 头像（紧凑尺寸，避免大块空白） -->
+                  <div class="msg-avatar w-7 h-7 rounded-full flex items-center justify-center flex-shrink-0 border transition-all duration-300 relative" :class="msg.role === 'user' ? 'bg-white/10 border-white/20' : [themeConfig.bg, themeConfig.border + '/30']">
+                    <component :is="msg.role === 'user' ? UserCircle : Cpu" class="w-3.5 h-3.5" :class="msg.role === 'user' ? 'text-gray-300' : themeConfig.text" />
                     <div v-if="msg.role === 'ai' && index === messages.length - 1 && isAiSpeaking" class="absolute -right-1 -top-1 flex items-center gap-0.5">
                       <div class="voice-bar-mini voice-bar-1"></div>
                       <div class="voice-bar-mini voice-bar-2"></div>
@@ -950,33 +950,33 @@ onUnmounted(() => {
                     </div>
                   </div>
 
-                  <!-- 消息气泡 -->
+                  <!-- 消息气泡（紧凑内边距） -->
                   <div
-                    class="max-w-[90%] md:max-w-[70%] rounded-2xl px-4 py-3 relative overflow-hidden transition-all duration-300"
+                    class="msg-bubble max-w-[90%] md:max-w-[72%] rounded-2xl px-3.5 py-2 relative overflow-hidden transition-all duration-300"
                     :class="[
                       msg.role === 'user' ? 'bg-white/10 border border-white/20 text-gray-200 shadow-[inset_0_1px_1px_rgba(255,255,255,0.1)]' : 'bg-white/[0.03] border text-gray-200 shadow-[inset_0_1px_1px_rgba(255,255,255,0.1)]',
                       msg.role === 'ai' ? themeConfig.borderLight : '',
                       getEmotionClass(msg.content)
                     ]"
                   >
-                    <div v-if="msg.role === 'ai'" class="absolute left-0 top-3 bottom-3 w-[2px] rounded-full" :class="themeConfig.bg.replace('/20', '')"></div>
+                    <div v-if="msg.role === 'ai'" class="absolute left-0 top-2 bottom-2 w-[2px] rounded-full" :class="themeConfig.bg.replace('/20', '')"></div>
 
                     <!-- 情绪图标 -->
-                    <div v-if="msg.role === 'ai' && getEmotionIcon(msg.content)" class="pl-3 mb-1 text-lg">{{ getEmotionIcon(msg.content) }}</div>
+                    <div v-if="msg.role === 'ai' && getEmotionIcon(msg.content)" class="pl-3 mb-0.5 text-base">{{ getEmotionIcon(msg.content) }}</div>
 
                     <div v-if="msg.role === 'ai'" class="markdown-body chat-markdown pl-3 inline" :class="{ 'typewriter-effect': msg.isNew }">
                       <span v-html="marked.parse(cleanMessage(msg.content))"></span>
                       <span v-if="index === messages.length - 1 && isAiSpeaking" class="geek-cursor">█</span>
                     </div>
                     <p v-else class="text-sm leading-relaxed whitespace-pre-wrap">{{ msg.content }}</p>
-                    <p class="text-[10px] text-gray-500 mt-1.5 text-right" :class="msg.role === 'ai' ? 'pl-3' : ''">{{ msg.timestamp }}</p>
+                    <p class="text-[10px] text-gray-500 mt-1 text-right" :class="msg.role === 'ai' ? 'pl-3' : ''">{{ msg.timestamp }}</p>
                   </div>
                 </div>
 
-                <!-- Loading 动画 -->
-                <div v-if="isLoading" class="flex items-start gap-3 message-enter" data-test="loading-indicator">
-                  <div class="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 border relative" :class="[themeConfig.bg, themeConfig.border + '/30']">
-                    <Loader2 class="w-4 h-4 animate-spin" :class="themeConfig.text" />
+                <!-- Loading 动画（收紧高度，避免巨大空白） -->
+                <div v-if="isLoading" class="msg-row flex items-start gap-2.5 message-enter" data-test="loading-indicator">
+                  <div class="msg-avatar w-7 h-7 rounded-full flex items-center justify-center flex-shrink-0 border relative" :class="[themeConfig.bg, themeConfig.border + '/30']">
+                    <Loader2 class="w-3.5 h-3.5 animate-spin" :class="themeConfig.text" />
                     <div class="absolute -right-1 -top-1 flex items-center gap-0.5">
                       <div class="voice-bar voice-bar-1"></div>
                       <div class="voice-bar voice-bar-2"></div>
@@ -984,22 +984,22 @@ onUnmounted(() => {
                       <div class="voice-bar voice-bar-4"></div>
                     </div>
                   </div>
-                  <div class="rounded-2xl px-5 py-3 border backdrop-blur-xl shadow-[inset_0_1px_1px_rgba(255,255,255,0.1)]" :class="['bg-white/[0.03]', themeConfig.borderLight]">
+                  <div class="rounded-2xl px-3.5 py-1.5 border backdrop-blur-xl shadow-[inset_0_1px_1px_rgba(255,255,255,0.1)] inline-flex items-center" :class="['bg-white/[0.03]', themeConfig.borderLight]">
                     <component v-if="StreamingLoaderComp" :is="StreamingLoaderComp" />
                     <div v-else class="flex items-center gap-1.5">
-                      <div class="w-2 h-2 rounded-full animate-bounce" :class="themeConfig.bg.replace('/20', '')" style="animation-delay: 0s;"></div>
-                      <div class="w-2 h-2 rounded-full animate-bounce" :class="themeConfig.bg.replace('/20', '')" style="animation-delay: 0.2s;"></div>
-                      <div class="w-2 h-2 rounded-full animate-bounce" :class="themeConfig.bg.replace('/20', '')" style="animation-delay: 0.4s;"></div>
+                      <div class="w-1.5 h-1.5 rounded-full animate-bounce" :class="themeConfig.bg.replace('/20', '')" style="animation-delay: 0s;"></div>
+                      <div class="w-1.5 h-1.5 rounded-full animate-bounce" :class="themeConfig.bg.replace('/20', '')" style="animation-delay: 0.2s;"></div>
+                      <div class="w-1.5 h-1.5 rounded-full animate-bounce" :class="themeConfig.bg.replace('/20', '')" style="animation-delay: 0.4s;"></div>
                     </div>
                   </div>
                 </div>
 
                 <!-- 错误透传区（onError 收到的 message 直接渲染，不做包装） -->
-                <div v-if="evaluateError" class="flex items-start gap-3 message-enter" data-test="error-display">
-                  <div class="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 border bg-amber-500/15 border-amber-500/40">
-                    <AlertTriangle class="w-4 h-4 text-amber-400" />
+                <div v-if="evaluateError" class="msg-row flex items-start gap-2.5 message-enter" data-test="error-display">
+                  <div class="msg-avatar w-7 h-7 rounded-full flex items-center justify-center flex-shrink-0 border bg-amber-500/15 border-amber-500/40">
+                    <AlertTriangle class="w-3.5 h-3.5 text-amber-400" />
                   </div>
-                  <div class="rounded-2xl px-4 py-3 border border-amber-500/30 bg-amber-500/5 text-sm text-amber-200 leading-relaxed">{{ evaluateError }}</div>
+                  <div class="rounded-2xl px-3.5 py-2 border border-amber-500/30 bg-amber-500/5 text-sm text-amber-200 leading-relaxed">{{ evaluateError }}</div>
                 </div>
               </div>
 
@@ -1432,5 +1432,51 @@ onUnmounted(() => {
   border-top-left-radius: 12px;
   border-top-right-radius: 12px;
   pointer-events: none;
+}
+
+/* ── 对话流：独立滚动容器 ─────────────────────────────────
+   1080p 同屏目标：消息流约占 38–44vh，输入框、发送、结束按钮同屏可见。
+   - 容器自身设定 max-height，超出时只在容器内滚动；
+   - overscroll-behavior: contain 阻止滚轮冒泡到外层页面；
+   - 行间距压缩约 25%（原 space-y-4 → 0.625rem）。
+*/
+.messages-stream {
+  /* 紧凑滚动容器：bounded height + 内部独立滚动 */
+  max-height: clamp(260px, 42vh, 460px);
+  min-height: 220px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  scroll-behavior: smooth;
+}
+/* 用 CSS 间距替代 Tailwind 的 space-y-4，降低 25%~30% */
+.messages-stream > .msg-row + .msg-row,
+.messages-stream > * + .msg-row,
+.messages-stream > .msg-row + * {
+  margin-top: 0.625rem;
+}
+
+/* 消息气泡：行高与段落 margin 一并收紧，避免纵向占用过大 */
+.msg-bubble {
+  line-height: 1.55;
+}
+.msg-bubble :deep(p) {
+  margin: 0.2em 0;
+}
+.msg-bubble :deep(ul),
+.msg-bubble :deep(ol) {
+  margin: 0.25em 0;
+}
+
+/* AI 头像缩小后的居中保护，避免与首段文字基线错位 */
+.msg-avatar {
+  margin-top: 2px;
+}
+
+/* 输入框：保持单屏布局优先，软上限避免被用户拖得过高 */
+.interview-textarea {
+  min-height: 84px;
+  max-height: 160px;
 }
 </style>
