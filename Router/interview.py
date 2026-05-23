@@ -33,6 +33,7 @@ async def interview_chat(request: ChatRequest):
             jd_text=request.jd_text or "",
             target_job=request.target_job or "",
             difficulty=request.difficulty or "standard",
+            provider_id=request.provider_id,
         ),
         media_type="text/event-stream",
         headers={
@@ -48,17 +49,14 @@ async def evaluate_interview_endpoint(
     request: EvaluateRequest,
     current_user_id: Optional[int] = Depends(get_optional_user),
 ):
-    """
-    面试评估端点 — 非流式，返回六维评分 JSON。
-
-    读取完整面试对话历史，调用 Service 层生成评分。
-    """
+    """面试评估端点 — 非流式，返回六维评分 JSON。"""
     result = await evaluate_interview(
         history=request.history,
         resume_text=request.resume_text or "",
         jd_text=request.jd_text or "",
         difficulty=request.difficulty or "standard",
         user_id=current_user_id,
+        provider_id=request.provider_id,
     )
 
     if result:

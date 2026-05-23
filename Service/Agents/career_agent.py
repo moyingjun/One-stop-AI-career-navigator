@@ -109,17 +109,18 @@ class CareerSuggestAgent(BaseAgent):
         )
         return [{"role": "user", "content": merged}]
 
-    async def get_suggestions(self, resume_text: str) -> List[str]:
+    async def get_suggestions(self, resume_text: str, provider_id: Optional[str] = None) -> List[str]:
         """
         生成职业推荐问题列表。
 
         参数：
             resume_text — 候选人简历文本
+            provider_id — LLM Provider 切换
 
         返回：
             包含 4 个推荐问题的字符串列表；生成失败时返回默认兜底列表
         """
-        raw = await self.complete(resume_text=resume_text)
+        raw = await self.complete(resume_text=resume_text, provider_id=provider_id)
         if not raw:
             return DEFAULT_SUGGESTIONS
 

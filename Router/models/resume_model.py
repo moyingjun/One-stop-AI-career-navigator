@@ -10,3 +10,4 @@ class ResumeDiagnoseRequest(BaseModel):
     target_role: Optional[str] = ""
     jd_text: Optional[str] = ""
     user_id: Optional[int] = None
+    provider_id: Optional[str] = None  # LLM Provider 切换

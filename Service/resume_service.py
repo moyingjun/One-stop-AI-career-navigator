@@ -17,6 +17,7 @@ async def diagnose_resume_stream(
     target_role: str = "",
     jd_text: str = "",
     user_id: Optional[int] = None,
+    provider_id: Optional[str] = None,
 ) -> AsyncGenerator[str, None]:
     """
     简历诊断流式生成器。
@@ -26,14 +27,13 @@ async def diagnose_resume_stream(
         target_role — 目标岗位名称
         jd_text     — 岗位描述（可为空）
         user_id     — 当前用户 ID（游客为 None）
-
-    Yields:
-        str — SSE 格式字符串（reply / error / done 事件）
+        provider_id — LLM Provider 切换（mimo / deepseek / None=默认）
     """
     async for chunk in _resume_agent.stream(
         resume_text=resume_text,
         target_role=target_role,
         jd_text=jd_text,
         user_id=user_id,
+        provider_id=provider_id,
     ):
         yield chunk

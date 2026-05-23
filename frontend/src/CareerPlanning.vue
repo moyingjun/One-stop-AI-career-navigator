@@ -6,11 +6,14 @@ import { marked } from 'marked'
 import FeaturePageShell from './components/FeaturePageShell.vue'
 import ActionDock from './components/ActionDock.vue'
 import SidebarEducationPlaceholder from './components/SidebarEducationPlaceholder.vue'
+import GlobalProviderSwitcher from './components/GlobalProviderSwitcher.vue'
 import { showToast, resolveLoader } from '@/utils/uiFallbacks.js'
 import { upsertSession, generateSessionId } from '@/services/historyClient.js'
 import { useUserStore } from '@/stores/userStore'
+import { useLlmProviderStore } from '@/stores/llmProviderStore'
 
 const userStore = useUserStore()
+const llmProviderStore = useLlmProviderStore()
 
 const isLocalDev = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
 const API_BASE_URL = isLocalDev ? 'http://127.0.0.1:8000/api' : '/api'
@@ -174,7 +177,8 @@ const generatePlan = async () => {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         resume_text: resumeText.value,
-        user_confusion: userConfusion.value
+        user_confusion: userConfusion.value,
+        provider_id: llmProviderStore.getCurrentProviderId() || undefined
       })
     })
 
@@ -350,9 +354,8 @@ onUnmounted(() => {})
                     </p>
                   </div>
                 </div>
-                <div class="flex items-center gap-2 text-xs text-green-400 font-mono">
-                  <span class="w-2 h-2 bg-green-500 rounded-full animate-pulse shadow-[0_0_8px_rgba(34,197,94,0.8)]"></span>
-                  System Online
+                <div class="flex items-center gap-2">
+                  <GlobalProviderSwitcher :compact="true" placement="bottom-right" />
                 </div>
               </div>
               <!-- 三阶段徽章：路线图 / 阶段目标 / 能力缺口 -->

@@ -12,6 +12,7 @@ class ChatRequest(BaseModel):
     jd_text: Optional[str] = ""
     difficulty: Optional[str] = "standard"
     target_job: Optional[str] = ""
+    provider_id: Optional[str] = None  # LLM Provider 切换
 
 
 class EvaluateRequest(BaseModel):
@@ -22,3 +23,4 @@ class EvaluateRequest(BaseModel):
     jd_text: Optional[str] = ""
     difficulty: Optional[str] = "standard"
     user_id: Optional[int] = None
+    provider_id: Optional[str] = None  # LLM Provider 切换

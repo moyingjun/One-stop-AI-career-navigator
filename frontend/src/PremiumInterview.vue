@@ -9,13 +9,16 @@ import MetricCard from './components/MetricCard.vue'
 import SidebarEducationPlaceholder from './components/SidebarEducationPlaceholder.vue'
 import BaseModal from './components/BaseModal.vue'
 import CyberRadarChart from './components/CyberRadarChart.vue'
+import GlobalProviderSwitcher from './components/GlobalProviderSwitcher.vue'
 import { streamInterviewChat } from '@/services/llm_service.js'
 import { getAuthHeaders } from '@/services/authService.js'
 import { showToast, resolveLoader } from '@/utils/uiFallbacks'
 import { upsertSession } from '@/services/historyClient.js'
 import { useUserStore } from '@/stores/userStore'
+import { useLlmProviderStore } from '@/stores/llmProviderStore'
 
 const userStore = useUserStore()
+const llmProviderStore = useLlmProviderStore()
 
 const generateUUID = () => {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
@@ -440,7 +443,8 @@ const startInterviewWithDifficulty = async () => {
         resume_text: resume,
         target_job: role,
         jd_text: jd,
-        difficulty: interviewDifficulty.value
+        difficulty: interviewDifficulty.value,
+        provider_id: llmProviderStore.getCurrentProviderId() || undefined
       })
     })
 
@@ -484,7 +488,8 @@ const sendMessage = async () => {
         resume_text: resumeText.value,
         target_job: targetRole.value,
         jd_text: interviewJd.value,
-        difficulty: interviewDifficulty.value
+        difficulty: interviewDifficulty.value,
+        provider_id: llmProviderStore.getCurrentProviderId() || undefined
       },
       (chunk) => {
         // onChunk: 追加内容片段到占位消息
@@ -614,7 +619,8 @@ const endInterview = async () => {
       body: JSON.stringify({
         user_query: "请根据对话记录生成 JSON 评估报告",
         history: messages.value,
-        difficulty: interviewDifficulty.value
+        difficulty: interviewDifficulty.value,
+        provider_id: llmProviderStore.getCurrentProviderId() || undefined
       })
     })
 
@@ -875,8 +881,11 @@ onUnmounted(() => {
                   </div>
                 </div>
                 <div class="flex items-center gap-2 flex-shrink-0">
-                  <div class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse shadow-[0_0_8px_rgba(16,185,129,0.8)]"></div>
-                  <span class="text-[10px] md:text-xs font-mono font-semibold tracking-wider" :class="isAiSpeaking ? themeConfig.text : 'text-emerald-400'">{{ isAiSpeaking ? 'Thinking...' : 'DeepSeek V4 Online' }}</span>
+                  <GlobalProviderSwitcher
+                    :compact="true"
+                    placement="bottom-right"
+                    :status-override="isAiSpeaking ? 'Thinking...' : ''"
+                  />
                 </div>
               </div>
 

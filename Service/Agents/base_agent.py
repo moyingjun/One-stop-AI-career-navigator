@@ -42,14 +42,15 @@ class BaseAgent:
         """
         流式调用 LLM，yield SSE 格式的字符串。
 
-        调用 build_messages() 构建消息，通过 llm_client.stream_chat() 获取增量片段，
-        将每个片段包装为 SSE reply 事件后 yield 给调用方。
-
-        流结束时发送 done 事件；发生异常时发送 error 事件。
+        provider_id 通过 kwargs 透传：业务参数中如有 provider_id 字段则用于
+        切换 LLM Provider；其余 kwargs 仍传给 build_messages() 用于构建 Prompt。
 
         Yields:
             str — SSE 格式字符串（reply / error / done 事件）
         """
+        # 提取 provider_id（不传给 build_messages，避免 Prompt 受影响）
+        provider_id = kwargs.get("provider_id")
+
         messages = self.build_messages(**kwargs)
         full_text = ""
 
@@ -59,6 +60,7 @@ class BaseAgent:
                 temperature=self.temperature,
                 max_tokens=self.max_tokens,
                 timeout=self.stream_timeout,
+                provider_id=provider_id,
             ):
                 full_text += content_chunk
                 yield sse_reply(content_chunk)
@@ -98,19 +100,16 @@ class BaseAgent:
         """
         非流式调用 LLM，返回完整回复字符串。
 
-        参数：
-            **kwargs — 传递给 build_messages() 的业务参数
-
-        返回：
-            str  — 模型完整回复
-            None — 调用失败时
+        provider_id 通过 kwargs 透传，用于切换 Provider。
         """
+        provider_id = kwargs.get("provider_id")
         messages = self.build_messages(**kwargs)
         try:
             return await complete_chat(
                 messages,
                 temperature=self.temperature,
                 max_tokens=self.max_tokens,
+                provider_id=provider_id,
             )
         except LLMClientError as exc:
             print(f"[{self.__class__.__name__}] 非流式调用失败: {exc}")

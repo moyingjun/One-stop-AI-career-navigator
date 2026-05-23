@@ -35,6 +35,7 @@ async def diagnose_resume(
                 target_role=request.target_role or "",
                 jd_text=request.jd_text or "",
                 user_id=current_user_id,
+                provider_id=request.provider_id,
             ),
             media_type="text/event-stream",
             headers={

@@ -73,6 +73,7 @@ async def stream_dispatcher_response(
     user_id: Optional[int] = None,
     db=None,  # AsyncSession，游客模式时为 None
     persist: bool = False,  # 是否自动保存到历史（Dashboard ChatDock 默认不保存）
+    provider_id: Optional[str] = None,  # LLM Provider 切换
 ) -> AsyncGenerator[str, None]:
     """
     Agent Dispatcher 流式响应生成器。
@@ -172,7 +173,7 @@ async def stream_dispatcher_response(
         # 高考顾问使用稍高温度以增加表达多样性
         temperature = 0.8 if agent_type == AgentType.GAOKAO_ADVISOR else 0.7
 
-        async for content_chunk in stream_chat(messages, temperature=temperature):
+        async for content_chunk in stream_chat(messages, temperature=temperature, provider_id=provider_id):
             full_text += content_chunk
             yield sse_event("reply", {"payload": {"content": content_chunk}})
 

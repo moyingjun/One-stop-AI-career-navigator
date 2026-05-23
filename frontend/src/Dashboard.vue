@@ -12,6 +12,7 @@ import { marked } from 'marked'
 // Pinia store
 import { useUserStore } from '@/stores/userStore'
 import { useChatSessionStore } from '@/stores/chatSessionStore'
+import { useLlmProviderStore } from '@/stores/llmProviderStore'
 import {
   buildResumeRadarData,
   buildInterviewRadarData,
@@ -27,6 +28,7 @@ import ChatPreviewModal from '@/components/ChatPreviewModal.vue'
 import KnowledgePanel from '@/components/KnowledgePanel.vue'
 import ChatDock from '@/components/chat/ChatDock.vue'
 import CareerPreviewPanel from '@/components/CareerPreviewPanel.vue'
+import GlobalProviderSwitcher from '@/components/GlobalProviderSwitcher.vue'
 
 import { Bot, Bookmark, FileText, MessageSquare, Folder, Settings, Clock, Puzzle, Plus, Search, MoreHorizontal, ChevronLeft, ChevronRight, Upload, CheckCircle, X, Loader2, History, Sparkles, Mic, GraduationCap, Star, Trash2, Compass }
   from 'lucide-vue-next'
@@ -35,6 +37,7 @@ const router = useRouter()
 const route = useRoute()
 const userStore = useUserStore()
 const chatStore = useChatSessionStore()
+const llmProviderStore = useLlmProviderStore()
 const radarData = computed(() => userStore.radarData)
 
 // ── Radar 手动选择状态（数据面板联动）──────────────────────
@@ -191,6 +194,9 @@ const examTypeLabel = computed(() => {
 
 
 const activeDataTab = ref('resume'); // 'resume' | 'interview' | 'career'
+
+// ── LLM Provider 切换器：已组件化为 GlobalProviderSwitcher.vue
+//    Dashboard 顶部 Online 徽章直接使用该组件，本文件不再持有下拉状态。
 
 // ── 职业规划浮窗 ──────────────────────────────────────────
 const showCareerPreview = ref(false)
@@ -1009,6 +1015,10 @@ const sendGeneralChatMessage = async (inputText) => {
     const targetJobValue = userStore.targetJob || localStorage.getItem('target_job') || ''
     if (targetJobValue) payload.target_job = targetJobValue
 
+    // 附加当前选中的 LLM Provider（若有）
+    const providerId = llmProviderStore.getCurrentProviderId()
+    if (providerId) payload.provider_id = providerId
+
     const response = await fetch(API_BASE_URL + '/agent/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
@@ -1721,10 +1731,8 @@ onUnmounted(() => {
               </div>
             </div>
             <div class="flex items-center gap-3">
-              <div class="bg-emerald-500/10 backdrop-blur-md border border-emerald-500/30 rounded-full px-3 py-1.5 flex items-center gap-2 shadow-[0_0_10px_rgba(16,185,129,0.15)]">
-                <div class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse shadow-[0_0_8px_rgba(16,185,129,0.8)]"></div>
-                <span class="text-xs text-emerald-400 font-mono font-semibold tracking-wider drop-shadow-[0_0_5px_rgba(52,211,153,0.4)]">DeepSeek V4 Online</span>
-              </div>
+              <!-- AI 引擎切换器（统一组件：GlobalProviderSwitcher） -->
+              <GlobalProviderSwitcher placement="bottom-right" />
               <button class="bg-white/10 border border-white/10 rounded-lg py-2 px-4 text-sm hover:bg-white/15 hover:border-purple-500/50 transition-all duration-300 hover:-translate-y-0.5 hover:shadow-lg hover:shadow-purple-500/20">
                 邀请
               </button>
@@ -2044,33 +2052,45 @@ onUnmounted(() => {
 
               <!-- 右侧 Bento 辅助面板 -->
               <div class="lg:col-span-4 flex flex-col gap-4 sticky top-6 self-start">
-                <!-- 卡片 1：系统状态 -->
+                <!-- 卡片 1：系统状态（动态读取 LLM Provider 列表） -->
                 <div class="bg-white/[0.015] backdrop-blur-xl border border-white/5 rounded-2xl p-4 shadow-[inset_0_0_20px_rgba(255,255,255,0.01)] transition-all duration-500 hover:-translate-y-1 hover:bg-white/[0.03] hover:border-purple-500/20 hover:shadow-[0_10px_30px_rgba(168,85,247,0.1)] group">
                   <div class="flex items-center justify-between mb-2">
                     <h3 class="text-xs font-semibold text-gray-300">系统状态</h3>
                     <span class="text-xs text-gray-500">实时</span>
                   </div>
                   <div class="space-y-1.5">
-                    <div class="flex items-center justify-between">
+                    <div
+                      v-for="provider in llmProviderStore.providers"
+                      :key="provider.id"
+                      class="flex items-center justify-between"
+                    >
+                      <div class="flex items-center gap-2">
+                        <div
+                          class="w-1.5 h-1.5 rounded-full"
+                          :class="llmProviderStore.currentProviderId === provider.id && provider.status === 'online'
+                            ? 'bg-emerald-500 animate-pulse shadow-[0_0_6px_rgba(16,185,129,0.8)]'
+                            : 'bg-gray-600'"
+                        ></div>
+                        <span
+                          class="text-xs"
+                          :class="llmProviderStore.currentProviderId === provider.id ? 'text-gray-300' : 'text-gray-500'"
+                        >{{ provider.display_name }}</span>
+                      </div>
+                      <span
+                        class="text-xs"
+                        :class="llmProviderStore.currentProviderId === provider.id && provider.status === 'online'
+                          ? 'text-emerald-400'
+                          : provider.status === 'unconfigured'
+                            ? 'text-gray-500 italic'
+                            : 'text-gray-500'"
+                      >{{ provider.status === 'unconfigured' ? 'Unconfigured' : (llmProviderStore.currentProviderId === provider.id ? 'Online' : 'Standby') }}</span>
+                    </div>
+                    <div v-if="llmProviderStore.providers.length === 0" class="flex items-center justify-between">
                       <div class="flex items-center gap-2">
                         <div class="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse shadow-[0_0_6px_rgba(16,185,129,0.8)]"></div>
-                        <span class="text-xs text-gray-300">DeepSeek V4</span>
+                        <span class="text-xs text-gray-300">Default LLM</span>
                       </div>
                       <span class="text-xs text-emerald-400">Online</span>
-                    </div>
-                    <div class="flex items-center justify-between">
-                      <div class="flex items-center gap-2">
-                        <div class="w-1.5 h-1.5 rounded-full bg-gray-600"></div>
-                        <span class="text-xs text-gray-500">GPT-4o</span>
-                      </div>
-                      <span class="text-xs text-gray-500">Standby</span>
-                    </div>
-                    <div class="flex items-center justify-between">
-                      <div class="flex items-center gap-2">
-                        <div class="w-1.5 h-1.5 rounded-full bg-gray-600"></div>
-                        <span class="text-xs text-gray-500">GLM-4</span>
-                      </div>
-                      <span class="text-xs text-gray-500">Standby</span>
                     </div>
                   </div>
                 </div>

@@ -25,6 +25,7 @@ async def career_plan(request: CareerPlanRequest):
         career_plan_stream(
             resume_text=request.resume_text,
             user_confusion=request.user_confusion,
+            provider_id=request.provider_id,
         ),
         media_type="text/event-stream",
         headers={
@@ -42,5 +43,8 @@ async def career_suggestions(request: CareerSuggestionsRequest):
 
     根据简历内容动态生成最可能的职业困惑问题，失败时返回默认兜底列表。
     """
-    suggestions = await get_career_suggestions(request.resume_text)
+    suggestions = await get_career_suggestions(
+        request.resume_text,
+        provider_id=request.provider_id,
+    )
     return {"suggestions": suggestions}

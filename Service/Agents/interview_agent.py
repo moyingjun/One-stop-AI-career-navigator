@@ -63,6 +63,8 @@ class InterviewChatAgent(BaseAgent):
           event: done    — 流结束标志
           ': ping'       — 心跳保活
         """
+        # provider_id 通过 kwargs 透传给 stream_chat，不进 build_messages
+        provider_id = kwargs.get("provider_id")
         messages = self.build_messages(**kwargs)
         last_yield_time = time.time()
 
@@ -72,6 +74,7 @@ class InterviewChatAgent(BaseAgent):
                 temperature=self.temperature,
                 max_tokens=self.max_tokens,
                 timeout=self.stream_timeout,
+                provider_id=provider_id,
             ):
                 # 超过 15 秒无内容时发送心跳保活
                 if time.time() - last_yield_time > 15:
@@ -193,24 +196,14 @@ class InterviewEvalAgent(BaseAgent):
         jd_text: str = "",
         difficulty: str = "standard",
         user_id: Optional[int] = None,
+        provider_id: Optional[str] = None,
     ) -> Optional[dict]:
-        """
-        执行面试评估，返回六维评分字典。
-
-        参数：
-            history     — 完整面试对话历史
-            resume_text — 候选人简历
-            jd_text     — 岗位描述
-            difficulty  — 面试难度（用于数据库分类存档）
-            user_id     — 当前用户 ID
-
-        返回：
-            dict — 包含六维评分和 comment 的字典，失败时返回 None
-        """
+        """执行面试评估，返回六维评分字典。"""
         raw_reply = await self.complete(
             history=history,
             resume_text=resume_text,
             jd_text=jd_text,
+            provider_id=provider_id,
         )
 
         if not raw_reply:

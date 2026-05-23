@@ -1,21 +1,18 @@
 """
 Service/Utils/llm_client.py — LLM 调用封装（唯一入口）
 
-所有 Agent 和 Service 通过此模块调用 LLM API，
-不再各自维护 httpx 调用逻辑、header 构建和超时配置。
+所有 Agent 和 Service 通过此模块调用 LLM API。
 
-支持通过 .env 切换不同 AI 模型（MIMO / DeepSeek / Claude 等），
-只需修改 LLM_API_KEY / LLM_BASE_URL / LLM_MODEL_NAME。
-
-提供公开函数：
-  - stream_chat()     — 流式调用，返回 AsyncGenerator[str, None]，每次 yield 一个 content 片段
-  - complete_chat()   — 非流式调用，返回完整回复字符串
+支持多 Provider 切换：
+  - 通过 provider_id 参数指定使用哪个 Provider（mimo / deepseek / default）
+  - provider_id 为 None / 不存在 / 未配置 → 静默回退默认 Provider
+  - 配置详见 Service/Utils/llm_provider_config.py
 
 错误边界设计：
   - 单条 chunk 解析失败 → continue 跳过，绝不 yield 到正文
   - HTTP 非 200 → raise LLMClientError（不 yield 文本）
-  - 网络超时 / 连接失败 → raise LLMClientError（不 yield 文本）
-  - 由调用方（Agent / Service）捕获 LLMClientError 并转换为 SSE error 事件
+  - 网络超时 / 连接失败 → raise LLMClientError
+  - 调用方（Agent / Service）捕获 LLMClientError 并转换为 SSE error 事件
 """
 
 import json
@@ -24,7 +21,7 @@ from typing import AsyncGenerator, List, Optional
 
 import httpx
 
-from Settings.config import LLM_API_KEY, LLM_BASE_URL, LLM_MODEL_NAME
+from Service.Utils.llm_provider_config import LLMProvider, get_provider
 
 
 # ─────────────────────────────────────────────
@@ -32,27 +29,16 @@ from Settings.config import LLM_API_KEY, LLM_BASE_URL, LLM_MODEL_NAME
 # ─────────────────────────────────────────────
 
 class LLMClientError(Exception):
-    """
-    LLM 调用层统一异常。
-
-    由 stream_chat / complete_chat 在以下情况抛出：
-      - LLM_API_KEY 未配置
-      - HTTP 非 200 响应
-      - 网络超时 / 连接失败
-      - 响应格式严重异常（非流式）
-
-    调用方捕获后应转换为 SSE event:error 事件发送给前端，
-    绝不允许将 LLMClientError 的 message 拼入 AI 正文内容。
-    """
+    """LLM 调用层统一异常。调用方需转换为 SSE event:error，绝不拼入 AI 正文。"""
 
 
 # ─────────────────────────────────────────────
 # 内部构建函数
 # ─────────────────────────────────────────────
 
-def _build_headers() -> dict:
+def _build_headers(provider: LLMProvider) -> dict:
     return {
-        "Authorization": f"Bearer {LLM_API_KEY}",
+        "Authorization": f"Bearer {provider.api_key}",
         "Content-Type": "application/json",
     }
 
@@ -60,11 +46,12 @@ def _build_headers() -> dict:
 def _build_payload(
     messages: List[dict],
     stream: bool,
+    provider: LLMProvider,
     temperature: float = 0.7,
     max_tokens: int = 4096,
 ) -> dict:
     return {
-        "model": LLM_MODEL_NAME,
+        "model": provider.model_name,
         "messages": messages,
         "stream": stream,
         "temperature": temperature,
@@ -72,24 +59,25 @@ def _build_payload(
     }
 
 
+def _resolve_provider(provider_id: Optional[str]) -> LLMProvider:
+    """根据 provider_id 解析 Provider；解析失败抛 LLMClientError。"""
+    provider = get_provider(provider_id)
+    if provider is None:
+        raise LLMClientError("没有可用的 LLM Provider，请检查 .env 配置")
+    if not provider.is_configured:
+        raise LLMClientError(f"Provider {provider.id} 未配置 API Key")
+    return provider
+
+
 def _safe_extract_content(parsed: dict) -> Optional[str]:
     """
     安全提取 OpenAI / DeepSeek / MIMO 兼容格式中的 delta.content。
 
-    严格校验顺序：
-      1. parsed 是 dict
-      2. choices 存在且为非空列表
-      3. choices[0] 是 dict
-      4. delta 存在且为 dict
-      5. content 是非空字符串
+    严格校验：parsed 是 dict、choices 非空列表、choices[0] 是 dict、
+    delta 是 dict、content 是非空字符串。任意失败均返回 None。
 
-    任意校验失败均返回 None，调用方应 continue 跳过。
-
-    以下 chunk 类型均返回 None（安全跳过）：
-      - tool_calls / function_call / annotations
-      - reasoning_content（忽略，不作为最终 content）
-      - 空 delta
-      - finish_reason chunk（标志结束，无 content）
+    跳过：tool_calls / function_call / annotations / reasoning_content /
+          空 delta / finish_reason chunk。
     """
     if not isinstance(parsed, dict):
         return None
@@ -102,20 +90,16 @@ def _safe_extract_content(parsed: dict) -> Optional[str]:
     if not isinstance(first_choice, dict):
         return None
 
-    # finish_reason chunk：choices[0].finish_reason 非空时表示流已完成，无内容
     if first_choice.get("finish_reason"):
         return None
 
-    # 标准流式格式：choices[0].delta.content
     delta = first_choice.get("delta")
     if isinstance(delta, dict):
         content = delta.get("content")
         if isinstance(content, str) and content:
             return content
-        # reasoning_content / tool_calls / annotations / 空 delta → 全部忽略
         return None
 
-    # 兼容某些供应商在流中混入 message 字段（非标准，仅做最佳努力）
     message = first_choice.get("message")
     if isinstance(message, dict):
         content = message.get("content")
@@ -134,37 +118,36 @@ async def stream_chat(
     temperature: float = 0.7,
     max_tokens: int = 4096,
     timeout: float = 120.0,
+    provider_id: Optional[str] = None,
 ) -> AsyncGenerator[str, None]:
     """
     流式调用 LLM，逐块 yield content 字符串片段。
 
-    只 yield 模型真实 content，绝不 yield 错误文本。
-
-    错误处理：
-      - 单条 chunk 解析失败 → 记录日志，continue 跳过，不中断流
-      - HTTP 非 200 → raise LLMClientError（调用方负责发送 SSE error）
-      - 网络超时 / 连接失败 → raise LLMClientError
-      - LLM_API_KEY 未配置 → raise LLMClientError
+    Args:
+        provider_id — 可选，指定 Provider；为 None 时使用默认 Provider。
+                      不存在或未配置时静默回退默认 Provider。
 
     Raises:
         LLMClientError — 不可恢复的 LLM 调用失败
     """
-    if not LLM_API_KEY:
-        raise LLMClientError("LLM_API_KEY 未配置，请在 .env 中设置后重启服务")
+    provider = _resolve_provider(provider_id)
 
-    payload = _build_payload(messages, stream=True, temperature=temperature, max_tokens=max_tokens)
+    payload = _build_payload(
+        messages, stream=True, provider=provider,
+        temperature=temperature, max_tokens=max_tokens,
+    )
 
     try:
         async with httpx.AsyncClient(timeout=timeout, proxy=None) as client:
             async with client.stream(
                 "POST",
-                LLM_BASE_URL,
+                provider.base_url,
                 json=payload,
-                headers=_build_headers(),
+                headers=_build_headers(provider),
             ) as response:
                 if response.status_code != 200:
                     error_body = (await response.aread()).decode("utf-8", errors="ignore")
-                    print(f"[llm_client] HTTP {response.status_code}: {error_body[:300]}")
+                    print(f"[llm_client] {provider.id} HTTP {response.status_code}: {error_body[:300]}")
                     raise LLMClientError(f"模型服务返回 {response.status_code}")
 
                 async for line in response.aiter_lines():
@@ -177,7 +160,6 @@ async def stream_chat(
                     if data_str == "[DONE]":
                         break
 
-                    # ── 单条 chunk 解析防波堤：任何异常都只 continue ──
                     try:
                         parsed = json.loads(data_str)
                     except json.JSONDecodeError:
@@ -196,19 +178,17 @@ async def stream_chat(
 
                     if content:
                         yield content
-                    # None → tool_calls / empty delta / reasoning_content / finish_reason，跳过
 
     except LLMClientError:
-        # 直接向上传播，调用方负责处理
         raise
     except httpx.ReadTimeout:
-        print("[llm_client] 流式读取超时")
+        print(f"[llm_client] {provider.id} 流式读取超时")
         raise LLMClientError("模型思考超时，请稍后重试")
     except httpx.ConnectError as exc:
-        print(f"[llm_client] 连接失败: {exc}")
+        print(f"[llm_client] {provider.id} 连接失败: {exc}")
         raise LLMClientError("无法连接模型服务，请检查网络或 LLM 配置")
     except Exception as exc:
-        print(f"[llm_client] stream_chat 未预期异常: {type(exc).__name__}: {exc}")
+        print(f"[llm_client] {provider.id} stream_chat 未预期异常: {type(exc).__name__}: {exc}")
         traceback.print_exc()
         raise LLMClientError(f"LLM 调用异常: {type(exc).__name__}")
 
@@ -218,26 +198,31 @@ async def complete_chat(
     temperature: float = 0.7,
     max_tokens: int = 4096,
     timeout: float = 60.0,
+    provider_id: Optional[str] = None,
 ) -> Optional[str]:
     """
     非流式调用 LLM，返回完整回复字符串。
 
-    错误处理：
-      - HTTP 非 200 → raise LLMClientError
-      - choices 字段异常 → raise LLMClientError（含脱敏响应片段）
-      - reasoning_content 不视为最终答案
+    Args:
+        provider_id — 可选，指定 Provider；不传或不存在时使用默认 Provider。
 
     Raises:
         LLMClientError — 不可恢复的 LLM 调用失败
     """
-    if not LLM_API_KEY:
-        raise LLMClientError("LLM_API_KEY 未配置，请在 .env 中设置后重启服务")
+    provider = _resolve_provider(provider_id)
 
-    payload = _build_payload(messages, stream=False, temperature=temperature, max_tokens=max_tokens)
+    payload = _build_payload(
+        messages, stream=False, provider=provider,
+        temperature=temperature, max_tokens=max_tokens,
+    )
 
     try:
         async with httpx.AsyncClient(timeout=timeout, proxy=None) as client:
-            response = await client.post(LLM_BASE_URL, json=payload, headers=_build_headers())
+            response = await client.post(
+                provider.base_url,
+                json=payload,
+                headers=_build_headers(provider),
+            )
     except httpx.ReadTimeout:
         raise LLMClientError("非流式调用超时")
     except httpx.ConnectError as exc:
@@ -246,9 +231,8 @@ async def complete_chat(
         raise LLMClientError(f"HTTP 请求异常: {type(exc).__name__}: {exc}")
 
     if response.status_code != 200:
-        # 打印脱敏片段（不含完整响应，避免泄露）
         snippet = response.text[:200] if response.text else "(empty)"
-        print(f"[llm_client] complete_chat HTTP {response.status_code}: {snippet}")
+        print(f"[llm_client] {provider.id} complete_chat HTTP {response.status_code}: {snippet}")
         raise LLMClientError(f"模型服务返回 {response.status_code}")
 
     try:
@@ -258,7 +242,6 @@ async def complete_chat(
 
     choices = data.get("choices")
     if not isinstance(choices, list) or len(choices) == 0:
-        # 打印脱敏结构用于排错
         keys = list(data.keys()) if isinstance(data, dict) else type(data).__name__
         print(f"[llm_client] complete_chat 响应缺少 choices，顶层 keys={keys}")
         raise LLMClientError("模型响应缺少 choices 字段")
@@ -275,7 +258,6 @@ async def complete_chat(
     if isinstance(content, str) and content:
         return content
 
-    # reasoning_content 不视为最终答案（Mimo 思维链字段）
     if message.get("reasoning_content") and not content:
         print("[llm_client] complete_chat 响应只含 reasoning_content，无 content，返回 None")
         return None
@@ -284,5 +266,4 @@ async def complete_chat(
         print(f"[llm_client] complete_chat message.content 为 None，message keys={list(message.keys())}")
         return None
 
-    # content 是空字符串
     return content

@@ -20,3 +20,4 @@ class AgentChatRequest(BaseModel):
     top_k: Optional[int] = 4
     user_id: Optional[int] = None
     persist: Optional[bool] = False  # 是否自动保存到历史（Dashboard ChatDock 默认不保存）
+    provider_id: Optional[str] = None  # LLM Provider 切换（mimo / deepseek / None=默认）

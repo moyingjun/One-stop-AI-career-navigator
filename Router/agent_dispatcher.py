@@ -41,6 +41,7 @@ async def agent_chat(
             user_id=current_user_id,
             db=db if current_user_id is not None else None,
             persist=request.persist if request.persist else False,
+            provider_id=request.provider_id,
         ),
         media_type="text/event-stream",
         headers={

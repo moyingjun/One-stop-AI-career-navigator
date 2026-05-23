@@ -11,7 +11,7 @@ load_dotenv()
 # 2. 读取配置
 # MIMO_API_KEY = os.getenv("MIMO_API_KEY", "sk-IWh97R23GRUwLzeQEjuXoozkf7nKAsjAXDPaHKfZnP8AtQiv")
 MIMO_API_KEY = os.getenv("MIMO_API_KEY", "sk-IWh97R23GRUwLzeQEjuXoozkf7nKAsjAXDPaHKfZnP8AtQiv")
-BASE_URL = os.getenv("MIMO_BASE_URL", "https://tokenrai.com/v1")
+BASE_URL = os.getenv("MIMO_BASE_URL", "https://tokenrai.com/v1/chat/completions")
 MODEL_NAME = os.getenv("MIMO_MODEL_NAME", "deepseek-v4-flash")
 
 async def test_mimo_api():

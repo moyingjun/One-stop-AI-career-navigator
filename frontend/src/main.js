@@ -16,6 +16,7 @@ if (typeof Uint8Array.prototype.toHex !== 'function') {
 import App from './App.vue'
 import router from './router'
 import { useUserStore } from './stores/userStore'
+import { useLlmProviderStore } from './stores/llmProviderStore'
 
 const pinia = createPinia()
 
@@ -27,5 +28,8 @@ app.use(router)
 // 必须在 app.use(pinia) 之后、app.mount() 之前调用，
 // 确保任意路由的组件挂载前 userStore 已经持有正确状态。
 useUserStore().loadFromStorage()
+
+// 异步加载 LLM Provider 列表（不阻塞 mount）
+useLlmProviderStore().loadProviders()
 
 app.mount('#app')

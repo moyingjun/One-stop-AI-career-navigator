@@ -10,10 +10,13 @@ import CyberRadarChart from '@/components/CyberRadarChart.vue'
 import FeaturePageShell from '@/components/FeaturePageShell.vue'
 import ActionDock from '@/components/ActionDock.vue'
 import SidebarEducationPlaceholder from '@/components/SidebarEducationPlaceholder.vue'
+import GlobalProviderSwitcher from '@/components/GlobalProviderSwitcher.vue'
 import { getAuthHeaders } from '@/services/authService.js'
 import { upsertSession, generateSessionId, loadRecordById } from '@/services/historyClient.js'
 import { useUserStore } from '@/stores/userStore'
+import { useLlmProviderStore } from '@/stores/llmProviderStore'
 const userStore = useUserStore()
+const llmProviderStore = useLlmProviderStore()
 
 const isLocalDev = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
 const API_BASE_URL = isLocalDev ? 'http://127.0.0.1:8000/api' : '/api'
@@ -203,7 +206,8 @@ const startDiagnosis = async () => {
       body: JSON.stringify({
         resume_text: resumeText.value,
         target_role: targetRole.value,
-        jd_text: jdText.value
+        jd_text: jdText.value,
+        provider_id: llmProviderStore.getCurrentProviderId() || undefined
       })
     })
 
@@ -400,6 +404,11 @@ onUnmounted(() => {})
         <ArrowLeft class="w-4 h-4 group-hover:-translate-x-1 transition-transform duration-300" />
         <span class="text-sm">返回工作台</span>
       </button>
+    </div>
+
+    <!-- 顶部 AI Provider 切换器（compact） -->
+    <div class="absolute top-4 right-4 z-20">
+      <GlobalProviderSwitcher :compact="true" placement="bottom-right" />
     </div>
 
     <!-- 主内容：侧边栏 + Shell 主体 -->
