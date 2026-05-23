@@ -12,6 +12,8 @@
   },
   "dependencies": {
     "@formkit/auto-animate": "^0.9.0",
+    "@tiptap/starter-kit": "^2.10.3",
+    "@tiptap/vue-3": "^2.10.3",
     "@vueuse/core": "^14.2.1",
     "axios": "^1.15.0",
     "echarts": "^6.0.0",

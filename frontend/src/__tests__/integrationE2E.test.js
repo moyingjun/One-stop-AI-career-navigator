@@ -6,7 +6,7 @@
  *
  * 测试流程：
  * 1. 点击全局资产 → SetupModal 弹出 → 填写提交 → 状态更新为"已就绪"
- * 2. 菜单"文件管理" → 跳转 /files → 确认路由调用
+ * 2. 菜单"文档工作台" → 跳转 /files → 确认路由调用
  * 3. Property 8: 菜单中有且仅有一个指向 /files 的菜单项
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
@@ -51,7 +51,7 @@ const menuItems = [
     items: [
       { icon: 'file-text', label: '功能模板' },
       { icon: 'message-square', label: '保存的对话' },
-      { icon: 'folder', label: '文件管理' },
+      { icon: 'folder', label: '文档工作台' },
       { icon: 'clock', label: '历史记录' },
       { icon: 'plugin', label: '插件集成' },
       { icon: 'settings', label: '系统设置' }
@@ -87,7 +87,7 @@ function handleSidebarItemClick(item, menu, router) {
     return { navigated: '/saved-chats', toast: null }
   }
 
-  if (item.label === '文件管理') {
+  if (item.label === '文档工作台') {
     router.push('/files')
     return { navigated: '/files', toast: null }
   }
@@ -194,12 +194,12 @@ describe('端到端集成测试：全局资产 → SetupModal → 状态更新',
   })
 })
 
-describe('端到端集成测试：菜单"文件管理" → 跳转 /files', () => {
-  it('点击"文件管理"菜单项应调用 router.push("/files")', () => {
+describe('端到端集成测试：菜单"文档工作台" → 跳转 /files', () => {
+  it('点击"文档工作台"菜单项应调用 router.push("/files")', () => {
     const pushCalls = []
     const mockRouter = { push: (path) => pushCalls.push(path) }
 
-    const fileManagementItem = { icon: 'folder', label: '文件管理' }
+    const fileManagementItem = { icon: 'folder', label: '文档工作台' }
     const mainMenu = { category: '主要功能' }
 
     const result = handleSidebarItemClick(fileManagementItem, mainMenu, mockRouter)
@@ -209,11 +209,11 @@ describe('端到端集成测试：菜单"文件管理" → 跳转 /files', () =>
     expect(result.toast).toBeNull()
   })
 
-  it('菜单中"文件管理"项存在于主要功能分组中', () => {
+  it('菜单中"文档工作台"项存在于主要功能分组中', () => {
     const mainCategory = menuItems.find(m => m.category === '主要功能')
     expect(mainCategory).toBeDefined()
 
-    const fileItem = mainCategory.items.find(item => item.label === '文件管理')
+    const fileItem = mainCategory.items.find(item => item.label === '文档工作台')
     expect(fileItem).toBeDefined()
     expect(fileItem.icon).toBe('folder')
   })
@@ -222,10 +222,10 @@ describe('端到端集成测试：菜单"文件管理" → 跳转 /files', () =>
     const pushCalls = []
     const mockRouter = { push: (path) => pushCalls.push(path) }
 
-    // 测试所有非"文件管理"的菜单项
+    // 测试所有非"文档工作台"的菜单项
     for (const menu of menuItems) {
       for (const item of menu.items) {
-        if (item.label !== '文件管理') {
+        if (item.label !== '文档工作台') {
           handleSidebarItemClick(item, menu, mockRouter)
         }
       }
@@ -243,20 +243,20 @@ describe('Property 8: 菜单唯一重资产入口', () => {
     // 收集所有菜单项
     const allItems = menuItems.flatMap(menu => menu.items)
 
-    // 找出所有"文件管理"项（即路由到 /files 的项）
-    const fileManagementItems = allItems.filter(item => item.label === '文件管理')
+    // 找出所有"文档工作台"项（即路由到 /files 的项）
+    const fileManagementItems = allItems.filter(item => item.label === '文档工作台')
 
     // 有且仅有一个
     expect(fileManagementItems).toHaveLength(1)
   })
 
-  it('Property: 唯一的文件管理菜单项点击后路由到 /files', () => {
+  it('Property: 唯一的文档工作台菜单项点击后路由到 /files', () => {
     const pushCalls = []
     const mockRouter = { push: (path) => pushCalls.push(path) }
 
-    // 找到唯一的文件管理项
+    // 找到唯一的文档工作台项
     const allItems = menuItems.flatMap(menu => menu.items)
-    const fileItems = allItems.filter(item => item.label === '文件管理')
+    const fileItems = allItems.filter(item => item.label === '文档工作台')
 
     expect(fileItems).toHaveLength(1)
 
@@ -268,7 +268,7 @@ describe('Property 8: 菜单唯一重资产入口', () => {
     expect(pushCalls).toEqual(['/files'])
   })
 
-  it('Property: 对任意菜单结构遍历，仅"文件管理"项路由到 /files（属性测试）', () => {
+  it('Property: 对任意菜单结构遍历，仅"文档工作台"项路由到 /files（属性测试）', () => {
     fc.assert(
       fc.property(
         // 生成随机的菜单项索引来模拟用户点击
@@ -298,9 +298,9 @@ describe('Property 8: 菜单唯一重资产入口', () => {
 
           handleSidebarItemClick(targetItem, targetMenu, mockRouter)
 
-          // 核心断言：路由到 /files 当且仅当 label === '文件管理'
+          // 核心断言：路由到 /files 当且仅当 label === '文档工作台'
           const navigatedToFiles = pushCalls.includes('/files')
-          const isFileManagement = targetItem.label === '文件管理'
+          const isFileManagement = targetItem.label === '文档工作台'
 
           expect(navigatedToFiles).toBe(isFileManagement)
         }

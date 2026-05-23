@@ -873,7 +873,7 @@ const menuItems = [
     category: '主要功能',
     items: [
       { icon: 'file-text', label: '功能模板' },
-      { icon: 'folder', label: '文件管理' },
+      { icon: 'folder', label: '文档工作台' },
       { icon: 'clock', label: '历史记录' },
       { icon: 'plugin', label: '插件集成' },
       { icon: 'settings', label: '系统设置' }
@@ -897,8 +897,10 @@ const handleSidebarItemClick = (item, menu) => {
     return
   }
 
-  if (item.label === '文件管理') {
-    showKnowledgePanel.value = true
+  if (item.label === '文档工作台') {
+    // Task A：左侧菜单统一跳转 /files（文档工作台）；
+    // 不再触发 KnowledgePanel 悬浮面板（保留组件代码以便后续复用）。
+    router.push('/files')
     return
   }
 
