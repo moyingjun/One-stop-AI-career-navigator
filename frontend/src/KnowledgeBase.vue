@@ -45,6 +45,7 @@ import { useEditor, EditorContent } from '@tiptap/vue-3'
 import StarterKit from '@tiptap/starter-kit'
 import BaseModal from '@/components/BaseModal.vue'
 import { showToast } from '@/utils/uiFallbacks'
+import { exportDocxFromDocument } from '@/utils/docxExport.js'
 
 const router = useRouter()
 
@@ -557,6 +558,27 @@ const printPdf = () => {
   iframe.srcdoc = printDocHtml
 }
 
+/**
+ * 导出 DOCX：基于 docx 包，将 Tiptap contentJson 转为 .docx Blob 触发下载。
+ * 失败时不影响当前文档内容，不清空 localStorage。
+ */
+const exportDocx = async () => {
+  if (!activeDoc.value) return
+  const doc = activeDoc.value
+  const typeLabel = getTypeMeta(doc.type).label
+  const updatedAtStr = doc.updatedAt
+    ? new Date(doc.updatedAt).toLocaleString('zh-CN', { hour12: false })
+    : '—'
+
+  try {
+    await exportDocxFromDocument(doc, typeLabel, updatedAtStr)
+    showToast('DOCX 已导出', { type: 'success' })
+  } catch (err) {
+    console.error('[DocWorkbench] DOCX 导出失败:', err)
+    showToast('DOCX 导出失败，请稍后重试', { type: 'error' })
+  }
+}
+
 // ─────────────────────────────────────────────
 // 工具栏命令（封装 Tiptap chain）
 // ─────────────────────────────────────────────
@@ -926,6 +948,17 @@ watch(filterType, () => {
 
                 <button
                   type="button"
+                  @click="exportDocx"
+                  :disabled="!activeDoc"
+                  class="dw-export-btn"
+                  data-test="docs-export-docx"
+                >
+                  <FileText class="w-4 h-4" />
+                  <span>导出 DOCX</span>
+                </button>
+
+                <button
+                  type="button"
                   @click="printPdf"
                   :disabled="!activeDoc"
                   class="dw-export-btn"
@@ -951,11 +984,6 @@ watch(filterType, () => {
                 <h2 class="text-xs font-mono uppercase tracking-wider text-gray-300">UPCOMING</h2>
               </div>
               <ul class="space-y-1.5 text-[13px] text-gray-400">
-                <li class="flex items-center gap-2">
-                  <Download class="w-3.5 h-3.5 text-cyan-300/70" />
-                  导出 DOCX
-                  <span class="ml-auto text-[10px] font-mono text-gray-500">soon</span>
-                </li>
                 <li class="flex items-center gap-2">
                   <Sparkles class="w-3.5 h-3.5 text-purple-300/70" />
                   AI 优化 / 改写
