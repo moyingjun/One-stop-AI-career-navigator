@@ -48,6 +48,22 @@
 │   │       ├── career_prompts.py
 │   │       └── agent_prompts.py
 │   │
+│   ├── Games/                       # 【游戏模块隔离区】严禁与核心业务层交叉依赖
+│   │   └── Avalon/                  # 阿瓦隆游戏有界上下文（Bounded Context）
+│   │       ├── avalon_service.py    # 游戏房间生命周期编排（创建/加入/启动/结束）
+│   │       ├── room_manager.py      # Redis 房间状态读写（Hash + List 操作封装）
+│   │       ├── speaking_token.py    # 麦克风令牌调度器（排队机制，防并发 LLM 调用）
+│   │       ├── watchdog.py          # 幽灵卡麦防线（Asyncio 超时 + 兜底动作生成）
+│   │       ├── Agents/              # 阿瓦隆专属 Agent 层
+│   │       │   ├── avalon_base_agent.py   # 游戏 Agent 基类（继承核心 base_agent）
+│   │       │   ├── merlin_agent.py        # 梅林角色 Agent
+│   │       │   ├── assassin_agent.py      # 刺客角色 Agent
+│   │       │   └── villager_agent.py      # 通用村民/爪牙 Agent
+│   │       ├── prompts/             # 阿瓦隆 Prompt 模板（与角色代码解耦）
+│   │       │   └── avalon_prompts.py
+│   │       └── models/              # 阿瓦隆专属 Pydantic 模型
+│   │           └── avalon_models.py # AIAvalonResponse、RoomState、PlayerAction 等
+│   │
 │   ├── Services/                    # 复杂业务服务
 │   │   └── rag_service.py           # RAG 真正实现：知识加载、向量嵌入、检索匹配
 │   │
@@ -58,6 +74,7 @@
 │       ├── ocr_sdk.py               # OCR SDK 封装（RapidOCR）
 │       ├── asr.py                   # 语音识别工具
 │       ├── tts_sdk.py               # 语音合成工具
+│       ├── god_mode_logger.py       # 上帝视角调试日志（仅开发环境，输出 AI 完整 JSON）
 │       └── databases/               # 数据库层
 │           ├── db/
 │           │   ├── __init__.py      # re-export 所有 CRUD 函数
@@ -80,8 +97,9 @@
         │   ├── index.js             # Vue Router 路由配置（含路由守卫）
         │   └── guardLogic.js        # 路由守卫逻辑（JWT 校验、Setup 门控）
         ├── stores/                  # Pinia 状态管理
-        │   ├── userStore.js         # 用户画像、雷达图数据、置顶记录 ID
-        │   └── knowledgeBaseStore.js
+        │   ├── userStore.js         # 用户画像、雷达图数据、置顶记录 ID（禁止混入游戏状态）
+        │   ├── knowledgeBaseStore.js
+        │   └── gameStore.js         # 【游戏专属 Store】阿瓦隆房间状态、玩家列表、回合日志（严禁写入 userStore）
         ├── services/                # API 客户端层
         │   ├── authService.js       # JWT 存取、请求头构建
         │   └── llm_service.js       # LLM/Agent API 调用及 SSE 流式传输处理
@@ -92,9 +110,12 @@
         ├── components/              # 可复用 UI 组件
         │   ├── CyberGlassCard.vue   # 统一卡片容器（Dark Cyberpunk + Glassmorphism）
         │   ├── CyberRadarChart.vue  # 六维能力雷达图（ECharts 6）
-        │   ├── SetupModal.vue       # 用户信息录入弹窗
-        │   ├── DataSourceModal.vue  # 数据源配置弹窗
-        │   ├── ChatPreviewModal.vue # 历史对话预览弹窗
+        │   ├── BaseModal.vue        # 【基础弹窗基类】所有弹窗必须基于此组件扩展，禁止另起炉灶
+        │   ├── SetupModal.vue       # 用户信息录入弹窗（基于 BaseModal）
+        │   ├── DataSourceModal.vue  # 数据源配置弹窗（基于 BaseModal）
+        │   ├── ChatPreviewModal.vue # 历史对话预览弹窗（基于 BaseModal）
+        │   ├── Toast.vue            # 全局 Toast 通知组件（统一轻提示，禁止各页面自行实现）
+        │   ├── StreamingLoader.vue  # 流光 Loading 动效组件（SSE 等待态统一使用）
         │   └── CustomDropdown.vue   # 自定义下拉选择器
         ├── Landing.vue              # 落地页（Vanta.js 动态背景）
         ├── Auth.vue                 # 注册/登录页
@@ -104,7 +125,8 @@
         ├── PremiumInterview.vue     # 模拟面试页（含实时雷达图评分）
         ├── CareerPlanning.vue       # 职业规划页
         ├── HistoryArchive.vue       # 历史记录归档页
-        └── KnowledgeBase.vue        # 知识库文件管理页
+        ├── KnowledgeBase.vue        # 知识库文件管理页
+        └── AvalonGame.vue           # 【阿瓦隆游戏主页面】职场情商对抗模拟器入口（含大厅 Modal + 游戏主界面）
 ```
 
 ## 架构规范
@@ -126,3 +148,26 @@
 6. **Prompt 与代码解耦** — 所有 System Prompt 字符串必须存放在 `Service/Agents/prompts/` 目录下，禁止在 Agent 或 Router 文件中硬编码 Prompt
 
 7. **前端页面结构扁平化** — Vue 单文件组件（SFCs）直接置于 `src/` 目录下，不进行子目录嵌套；可复用组件放 `src/components/`
+
+8. **游戏模块有界上下文隔离**（强制执行）：
+   - 阿瓦隆全部后端代码必须划归 `Service/Games/Avalon/` 目录，路由使用专属 Namespace `/api/game/avalon`
+   - 游戏路由文件独立为 `Router/game_avalon.py`，在 `main.py` 中以独立 `include_router` 挂载
+   - **严禁**游戏逻辑调用或修改 `Service/Services/rag_service.py`、`Router/auth.py`、`Router/dependencies.py` 等核心模块
+   - 游戏模块可复用 `Service/Utils/llm_client.py`（LLM 调用）和 `Service/Utils/sse_utils.py`（SSE 格式），但不得修改这两个文件
+
+9. **前端游戏状态强制隔离**：
+   - 必须新建 `src/stores/gameStore.js`（Pinia）专职管理游戏状态（房间信息、玩家列表、回合日志、投票结果等）
+   - **严禁**将任何游戏字段写入 `userStore.js`，两个 Store 之间不得存在直接的状态读写依赖
+   - `gameStore.js` 在游戏结束或用户离开房间时必须执行 `$reset()` 清空状态，防止脏数据污染
+
+10. **UI 资产强制复用规范**（防止组件无限增殖）：
+    - **弹窗**：所有新增弹窗必须基于 `BaseModal.vue` 扩展，通过 slot 注入内容，禁止从零新建独立弹窗组件
+    - **轻提示**：统一使用 `Toast.vue`，禁止各页面自行实现 alert/提示逻辑
+    - **加载态**：SSE 流式等待、AI 思考中等加载状态统一使用 `StreamingLoader.vue`
+    - **视觉风格铁律**：所有新增 UI 必须坚守"暗黑赛博毛玻璃"（Dark Cyberpunk + Glassmorphism）风格，禁止引入与现有设计语言冲突的第三方 UI 组件库
+
+11. **上帝视角调试日志（God Mode Logger）**：
+    - `Service/Utils/god_mode_logger.py` 为多 Agent 专属调试日志库，仅在 `DEBUG` 模式下激活（通过 `Settings/config.py` 中的 `DEBUG_MODE` 开关控制）
+    - 每次 AI 调用完成后，必须通过此模块输出完整 JSON，包含：Agent 标识、输入 messages、原始响应（含 `scratchpad` 思维链）、耗时、Token 消耗
+    - **生产环境此模块必须静默**，日志输出到独立文件（如 `logs/god_mode.log`），禁止混入 uvicorn 主日志流
+    - 禁止在 `god_mode_logger.py` 之外的任何文件中直接 `print()` AI 的原始响应 JSON

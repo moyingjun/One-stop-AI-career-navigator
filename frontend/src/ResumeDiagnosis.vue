@@ -1,13 +1,17 @@
 <script setup>
 import { ref, computed, nextTick, onMounted, onUnmounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
-import { FileText, ArrowLeft, Paperclip, Sparkles, Bot, Loader2 } from 'lucide-vue-next'
+import { FileText, ArrowLeft, Paperclip, Sparkles, Bot, Loader2, ScanLine, Target, Briefcase, ListChecks, BookOpen, PenTool } from 'lucide-vue-next'
 import { marked } from 'marked'
 import { parseFile } from '@/utils/ocrHelper.js'
 import { ACCEPTED_EXTENSIONS, validateFile } from '@/utils/fileConstants.js'
+import { showToast, resolveLoader } from '@/utils/uiFallbacks'
 import CyberRadarChart from '@/components/CyberRadarChart.vue'
-import CyberGlassCard from './components/CyberGlassCard.vue'
+import FeaturePageShell from '@/components/FeaturePageShell.vue'
+import ActionDock from '@/components/ActionDock.vue'
+import SidebarEducationPlaceholder from '@/components/SidebarEducationPlaceholder.vue'
 import { getAuthHeaders } from '@/services/authService.js'
+import { upsertSession, generateSessionId, loadRecordById } from '@/services/historyClient.js'
 import { useUserStore } from '@/stores/userStore'
 const userStore = useUserStore()
 
@@ -18,6 +22,9 @@ const router = useRouter()
 const route = useRoute()
 
 const isRestoring = ref(false)
+
+// 当前诊断会话 ID（用于 session upsert 幂等保存）
+const currentSessionId = ref(generateSessionId('resume'))
 
 const resumeText = ref('')
 const jdText = ref('')
@@ -45,11 +52,67 @@ const diagnosisScores = ref({
   coreCompetitiveness: 2
 })
 
+// 三阶段徽章：扫描 / 诊断 / 报告
+const STAGE_BADGES = [
+  { label: '扫描', tone: 'purple' },
+  { label: '诊断', tone: 'purple' },
+  { label: '报告', tone: 'purple' }
+]
+
+// 报告区空状态的"诊断完成后会得到什么"四张预告卡（仅展示层信息架构）
+const REPORT_PREVIEW_CARDS = [
+  {
+    label: '匹配度',
+    title: '岗位匹配度',
+    desc: '六维评分 + 综合分，量化简历与目标岗位的契合程度。',
+    icon: Target,
+    accent: 'purple'
+  },
+  {
+    label: '关键词缺口',
+    title: '关键词缺口',
+    desc: '识别 JD 中出现但简历未覆盖的硬技能与软技能词。',
+    icon: ListChecks,
+    accent: 'cyan'
+  },
+  {
+    label: 'STAR 表达',
+    title: 'STAR 表达建议',
+    desc: '把"我做了 X"改写成"情境 → 任务 → 行动 → 结果"。',
+    icon: BookOpen,
+    accent: 'pink'
+  },
+  {
+    label: '改写建议',
+    title: '可直接改写的语句',
+    desc: '逐条给出可粘回简历的优化句式与量化补充。',
+    icon: PenTool,
+    accent: 'emerald'
+  }
+]
+
 // 将诊断分数转换为 CyberRadarChart 所需的 chartData 格式
 const cyberRadarChartData = computed(() => ({
   indicators: DIAGNOSIS_LABEL_CN.map(name => ({ name, max: 100 })),
   values: DIAGNOSIS_LABELS.map(key => diagnosisScores.value[key])
 }))
+
+// 简历字符数（用于扫描仪面板的实时计数显示，不影响业务逻辑）
+const resumeCharCount = computed(() => (resumeText.value || '').length)
+const jdCharCount = computed(() => (jdText.value || '').length)
+
+// 表单完整度（仅 UI 提示用）：简历必填、目标岗位 + JD 加分
+const formReadiness = computed(() => {
+  let score = 0
+  if ((resumeText.value || '').trim().length >= 20) score += 60
+  if ((targetRole.value || '').trim()) score += 20
+  if ((jdText.value || '').trim().length >= 30) score += 20
+  return Math.min(100, score)
+})
+
+// 预解析 StreamingLoader（缺失时降级到内联实现）—— 不在本文件内重复实现降级（Requirement 8.8）
+const StreamingLoaderComp = ref(null)
+resolveLoader().then(c => { StreamingLoaderComp.value = c })
 
 const extractScoresFromResult = (text) => {
   try {
@@ -90,8 +153,7 @@ const handleFileSelect = (event) => {
 const processFile = async (file) => {
   const validation = validateFile(file)
   if (!validation.valid) {
-    error.value = validation.error
-    setTimeout(() => { error.value = '' }, 4000)
+    showToast(validation.error, { type: 'error' })
     return
   }
 
@@ -105,8 +167,7 @@ const processFile = async (file) => {
     })
 
     if (!text.trim()) {
-      error.value = '文件内容为空或未识别到文字，请检查后重试'
-      setTimeout(() => { error.value = '' }, 4000)
+      showToast('文件内容为空或未识别到文字，请检查后重试', { type: 'error' })
       return
     }
 
@@ -115,8 +176,7 @@ const processFile = async (file) => {
       localStorage.setItem('resume_text', text.trim())
     }
   } catch (e) {
-    error.value = e.message || '文件解析失败，请重试'
-    setTimeout(() => { error.value = '' }, 4000)
+    showToast(e.message || '文件解析失败，请重试', { type: 'error' })
   } finally {
     isParsing.value = false
     isScanPdfDetected.value = false
@@ -125,8 +185,7 @@ const processFile = async (file) => {
 
 const startDiagnosis = async () => {
   if (!resumeText.value.trim()) {
-    error.value = '请先粘贴简历内容或上传简历文件'
-    setTimeout(() => { error.value = '' }, 3000)
+    showToast('请先粘贴简历内容或上传简历文件', { type: 'error' })
     return
   }
 
@@ -193,18 +252,40 @@ const startDiagnosis = async () => {
       const scores = extractScoresFromResult(diagnosisResult.value)
       if (scores) {
         diagnosisScores.value = { ...diagnosisScores.value, ...scores }
+        // Phase 1：打通 Dashboard 右侧雷达图 —— 简历诊断完成时写入 resume 快照
+        userStore.updateRadarFromResume(scores)
       }
       const cleanedDisplay = displayedResult.value.replace(/```json\s*[\s\S]*?\s*```/g, '').trim()
       displayedResult.value = cleanedDisplay
       const cleanedDiagnosis = diagnosisResult.value.replace(/```json\s*[\s\S]*?\s*```/g, '').trim()
       diagnosisResult.value = cleanedDiagnosis
+
+      // ── 自动保存到 PostgreSQL（session upsert，幂等） ──
+      try {
+        await upsertSession(currentSessionId.value, {
+          record_type: 'resume_diagnosis',
+          user_input: `目标岗位：${targetRole.value || '未指定'}`,
+          ai_result: cleanedDiagnosis.slice(0, 5000),
+          scores: scores || diagnosisScores.value,
+          extra_data: {
+            resume_text: resumeText.value.slice(0, 3000),
+            target_role: targetRole.value,
+            jd_text: jdText.value.slice(0, 2000)
+          },
+          chat_history: [
+            { role: 'user', content: `简历诊断请求 - 目标岗位：${targetRole.value || '未指定'}` },
+            { role: 'ai', content: cleanedDiagnosis.slice(0, 5000) }
+          ]
+        })
+      } catch (saveErr) {
+        console.error('简历诊断自动保存失败:', saveErr)
+        // 保存失败不阻断诊断结果展示
+      }
     }
   } catch (err) {
     console.error('诊断请求失败:', err)
-    error.value = err.message.includes('Failed to fetch')
-      ? '😵 导师正在开小差，请检查网络后重试哦~'
-      : `⚠️ ${err.message}`
-    setTimeout(() => { error.value = '' }, 8000)
+    // 错误透传纪律：直接展示原始错误内容；仅在 message 缺失时使用 llm_service.js 既定的兜底字符串
+    error.value = err && err.message ? err.message : '网络连接异常，请重试'
   } finally {
     isDiagnosing.value = false
   }
@@ -252,6 +333,8 @@ const initResume = async () => {
               const required = ['keywordMatch', 'experienceQuality', 'dataDriven', 'skillCompleteness', 'layoutLogic', 'coreCompetitiveness']
               if (required.every(k => k in scores)) {
                 diagnosisScores.value = { ...diagnosisScores.value, ...scores }
+                // Phase 1：历史记录恢复时同步更新雷达图快照
+                userStore.updateRadarFromResume(scores)
               }
             } catch {}
           }
@@ -259,6 +342,11 @@ const initResume = async () => {
           const cleanedResult = rawResult.replace(/```json\s*[\s\S]*?\s*```/g, '').trim()
           diagnosisResult.value = cleanedResult
           displayedResult.value = cleanedResult
+
+          // 恢复 session_id，后续再保存时 upsert 到同一条记录
+          if (record.session_id) {
+            currentSessionId.value = record.session_id
+          }
 
           isComplete.value = true
           return
@@ -296,7 +384,7 @@ onUnmounted(() => {})
 </script>
 
 <template>
-  <div class="min-h-[100dvh] bg-[#020205] text-gray-300 relative flex flex-col lg:flex-row overflow-x-hidden">
+  <div class="resume-page min-h-[100dvh] bg-[#020205] text-gray-300 relative overflow-x-hidden">
     <!-- 统一紫/青 blur 背景层 -->
     <div class="absolute inset-0 pointer-events-none overflow-hidden">
       <div class="absolute top-[-10%] left-[-5%] w-[50vw] h-[50vw] bg-purple-600/20 blur-[150px] rounded-full"></div>
@@ -314,166 +402,273 @@ onUnmounted(() => {})
       </button>
     </div>
 
-    <!-- 主内容 -->
-    <div class="relative z-10 flex w-full flex-col lg:flex-row min-h-[100dvh] pt-14 overflow-y-auto">
-      <!-- 左栏 40%：简历参考区 -->
-      <CyberGlassCard variant="purple" headerless no-padding class="w-full lg:w-[40%] flex flex-col min-h-0 overflow-y-auto border-r border-purple-500/10">
-            <!-- 文件上传区 -->
-            <div class="p-3 md:p-4 border-b border-white/[0.04]">
-              <div
-                class="upload-zone relative bg-white/[0.02] backdrop-blur-xl border rounded-xl p-3 md:p-4 cursor-pointer transition-all duration-300"
-                :class="dropZoneActive ? 'border-purple-500/40 bg-purple-500/[0.04]' : 'border-white/[0.05]'"
-                @dragover.prevent="dropZoneActive = true; isDragging = true"
-                @dragleave.prevent="dropZoneActive = false; isDragging = false"
-                @drop.prevent="handleFileDrop"
-              >
-                <input type="file" ref="fileInput" class="hidden" :accept="ACCEPTED_EXTENSIONS" @change="handleFileSelect" />
-                <div class="flex items-center gap-3">
-                  <div class="w-10 h-10 rounded-xl flex items-center justify-center transition-all duration-300" :class="dropZoneActive ? 'bg-purple-500/15' : 'bg-white/[0.03]'">
-                    <Paperclip class="w-4 h-4" :class="dropZoneActive ? 'text-purple-400' : 'text-gray-500'" />
+    <!-- 主内容：侧边栏 + Shell 主体 -->
+    <div class="relative z-10 flex flex-col lg:flex-row gap-4 lg:gap-6 px-3 md:px-6 pt-14 pb-8 max-w-[1280px] mx-auto">
+      <!-- 侧边栏：升学占位（顶部 / 左侧） -->
+      <aside class="w-full lg:w-[220px] lg:flex-shrink-0 lg:sticky lg:top-14 lg:self-start">
+        <SidebarEducationPlaceholder data-test="sidebar-placeholder" />
+      </aside>
+
+      <!-- Shell 主体 -->
+      <main class="flex-1 min-w-0">
+        <FeaturePageShell
+          title="简历诊断"
+          subtitle="AI 简历扫描 · JD 匹配 · STAR 表达优化"
+          :stageBadges="STAGE_BADGES"
+          variant="purple"
+          max-width="1280px"
+        >
+          <!-- ============ Control 区：左输入 / 右目标 + JD ============ -->
+          <template #control>
+            <div class="control-grid grid grid-cols-1 lg:grid-cols-12 gap-4 p-2">
+              <!-- ── 左侧：扫描仪上传 + 简历预览（跨 7 列） ── -->
+              <div class="lg:col-span-7 space-y-3">
+                <div class="flex items-center justify-between">
+                  <h3 class="text-xs font-semibold text-gray-400 uppercase tracking-wider flex items-center gap-2">
+                    <ScanLine class="w-3.5 h-3.5 text-purple-400" />
+                    简历扫描入口
+                  </h3>
+                  <span class="text-[10px] text-gray-500 font-mono">
+                    SCAN STATUS · {{ isParsing ? 'PARSING' : (resumeCharCount > 0 ? 'READY' : 'IDLE') }}
+                  </span>
+                </div>
+
+                <!-- 扫描仪 dropzone：扫描线 + 紫色边框辉光 -->
+                <div
+                  class="scanner-dropzone relative bg-white/[0.02] backdrop-blur-xl border rounded-xl p-5 cursor-pointer transition-all duration-300 overflow-hidden"
+                  :class="[
+                    dropZoneActive ? 'border-purple-400/60 bg-purple-500/[0.06] shadow-[0_0_28px_rgba(168,85,247,0.20)]' : 'border-white/[0.06]',
+                    isParsing ? 'scanner-dropzone--scanning' : '',
+                    resumeCharCount > 0 ? 'scanner-dropzone--has-data' : ''
+                  ]"
+                  @dragover.prevent="dropZoneActive = true; isDragging = true"
+                  @dragleave.prevent="dropZoneActive = false; isDragging = false"
+                  @drop.prevent="handleFileDrop"
+                  data-test="upload-dropzone"
+                >
+                  <input type="file" ref="fileInput" class="hidden" :accept="ACCEPTED_EXTENSIONS" @change="handleFileSelect" />
+                  <div class="scanner-dropzone__bar" aria-hidden="true"></div>
+
+                  <div class="flex items-center gap-3 relative z-10">
+                    <div
+                      class="w-11 h-11 rounded-xl flex items-center justify-center transition-all duration-300"
+                      :class="dropZoneActive ? 'bg-purple-500/20 ring-1 ring-purple-400/40' : 'bg-white/[0.04]'"
+                    >
+                      <Paperclip class="w-4 h-4" :class="dropZoneActive ? 'text-purple-300' : 'text-gray-400'" />
+                    </div>
+                    <div class="flex-1 text-left min-w-0">
+                      <p class="text-sm text-gray-200">
+                        <span class="text-purple-300 cursor-pointer font-semibold underline-offset-2 hover:underline" @click="$refs.fileInput.click()">点击上传简历</span>
+                        <span class="text-gray-400"> 或将文件拖入此处</span>
+                      </p>
+                      <p class="text-[11px] text-gray-500 mt-0.5">PDF / Word / TXT / JPG / PNG / WEBP · 扫描件自动 OCR</p>
+                    </div>
                   </div>
-                  <div class="flex-1 text-left min-w-0">
-                    <p class="text-xs md:text-sm text-gray-300 truncate">
-                      <span class="text-purple-400 cursor-pointer font-medium" @click="$refs.fileInput.click()">点击上传</span>
-                      <span class="text-gray-500"> 或拖拽文件到此处</span>
-                    </p>
-                    <p class="text-[10px] md:text-xs text-gray-600 mt-0.5">支持文档与图片格式上传（PDF/Word/TXT/JPG/PNG/WEBP）</p>
-                  </div>
-                </div>
-                <p v-if="uploadedFileName && !isParsing" class="mt-2 text-xs text-purple-400 flex items-center gap-1">
-                  <FileText class="w-3 h-3" />
-                  已加载：{{ uploadedFileName }}
-                </p>
-                <div v-if="isParsing" class="mt-3 flex items-center gap-2">
-                  <Loader2 class="w-3.5 h-3.5 text-purple-400 animate-spin" />
-                  <span class="text-xs text-purple-300">{{ isScanPdfDetected ? '深度视觉扫描中...' : '解析文件中...' }}</span>
-                </div>
-              </div>
-            </div>
 
-            <!-- 简历内容 -->
-            <div class="p-3 md:p-4 border-b border-white/[0.04]">
-              <h3 class="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">简历内容</h3>
-              <div class="bg-white/[0.02] border border-white/[0.05] rounded-xl p-3 text-xs md:text-sm text-gray-300 leading-relaxed max-h-[200px] overflow-y-auto whitespace-pre-wrap font-mono tracking-[0.01em]">
-                {{ resumeText || '等待输入简历内容...' }}
-              </div>
-            </div>
-
-            <!-- 目标岗位 -->
-            <div class="p-3 md:p-4 border-b border-white/[0.04]">
-              <h3 class="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">目标岗位</h3>
-              <input
-                v-model="targetRole"
-                type="text"
-                placeholder="如：Java后端开发工程师"
-                class="w-full bg-white/[0.02] border border-white/[0.05] rounded-xl px-3 py-2 md:px-4 md:py-3 text-sm md:text-base text-gray-200 placeholder-gray-600 focus:outline-none focus:border-purple-500/40 focus:ring-1 focus:ring-purple-500/20 transition-all duration-300"
-              />
-            </div>
-
-            <!-- 岗位描述 -->
-            <div class="p-3 md:p-4 border-b border-white/[0.04]">
-              <h3 class="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">岗位描述 (可选)</h3>
-              <textarea
-                v-model="jdText"
-                placeholder="粘贴目标岗位的 JD 内容..."
-                rows="4"
-                class="w-full bg-white/[0.02] border border-white/[0.05] rounded-xl px-3 py-2 md:px-4 md:py-3 text-xs md:text-sm text-gray-200 placeholder-gray-600 focus:outline-none focus:border-purple-500/40 focus:ring-1 focus:ring-purple-500/20 transition-all duration-300 resize-none leading-relaxed"
-              ></textarea>
-            </div>
-
-            <!-- 诊断按钮 -->
-            <div class="p-3 md:p-4 mt-auto">
-              <button
-                @click="startDiagnosis"
-                :disabled="isDiagnosing || !resumeText.trim()"
-                class="w-full bg-gradient-to-r from-purple-600 to-indigo-600 text-white py-3 md:py-4 rounded-2xl font-semibold text-sm md:text-base shadow-lg shadow-purple-500/20 hover:shadow-xl hover:shadow-purple-500/30 transition-all duration-300 hover:-translate-y-0.5 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:translate-y-0 flex items-center justify-center gap-2"
-              >
-                <Loader2 v-if="isDiagnosing" class="w-4 h-4 animate-spin" />
-                <Sparkles v-else class="w-4 h-4" />
-                {{ isDiagnosing ? 'AI 深度分析中...' : '开始深度诊断' }}
-              </button>
-              <div v-if="error" class="mt-3 bg-red-500/[0.06] border border-red-500/[0.15] rounded-xl p-3 text-xs text-red-400 text-center">
-                {{ error }}
-              </div>
-            </div>
-          </CyberGlassCard>
-
-          <!-- 右栏 60%：AI 诊断报告 -->
-          <CyberGlassCard variant="purple" headerless no-padding class="flex-1 lg:w-[60%] flex flex-col min-h-0">
-            <!-- 报告标题栏 -->
-            <div class="px-3 py-2 md:px-6 md:py-3 border-b border-white/[0.04] flex items-center justify-between bg-white/[0.01]">
-              <div class="flex items-center gap-2">
-                <Bot class="w-4 h-4 text-purple-400" />
-                <h2 class="text-sm font-semibold text-gray-300">AI 诊断报告</h2>
-              </div>
-              <div class="flex items-center gap-2">
-                <div v-if="isComplete" class="flex items-center gap-1.5">
-                  <div class="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse"></div>
-                  <span class="text-xs text-green-400">分析完成</span>
-                </div>
-                <div v-else-if="isDiagnosing" class="flex items-center gap-1.5">
-                  <Loader2 class="w-3 h-3 animate-spin text-purple-400" />
-                  <span class="text-xs text-purple-400">导师正在查阅你的职业档案...</span>
-                </div>
-              </div>
-            </div>
-
-            <!-- 报告内容 -->
-            <div ref="resultContainer" class="flex-1 overflow-y-auto p-4 md:p-8">
-              <!-- 六维雷达图 -->
-              <div v-if="isComplete" class="mb-6">
-                <div class="flex items-center gap-2 mb-3">
-                  <Sparkles class="w-4 h-4 text-purple-400" />
-                  <h3 class="text-sm font-semibold text-purple-400">六维简历评分</h3>
-                </div>
-                <CyberRadarChart :chartData="cyberRadarChartData" />
-                <div class="grid grid-cols-6 gap-1 mt-3">
-                  <div v-for="(label, i) in DIAGNOSIS_LABEL_CN" :key="i" class="text-center">
-                    <div class="text-sm font-bold text-purple-400">{{ diagnosisScores[DIAGNOSIS_LABELS[i]] }}</div>
-                    <div class="text-[9px] text-gray-500">{{ label }}</div>
+                  <p v-if="uploadedFileName && !isParsing" class="mt-3 text-xs text-purple-300/90 flex items-center gap-1.5 relative z-10">
+                    <FileText class="w-3.5 h-3.5" />
+                    <span class="truncate">已加载：{{ uploadedFileName }}</span>
+                  </p>
+                  <div v-if="isParsing" class="mt-3 flex items-center gap-2 relative z-10">
+                    <Loader2 class="w-3.5 h-3.5 text-purple-300 animate-spin" />
+                    <span class="text-xs text-purple-200">{{ isScanPdfDetected ? '深度视觉扫描中…' : '解析文件中…' }}</span>
                   </div>
                 </div>
+
+                <!-- 简历内容预览 -->
+                <div class="flex items-center justify-between pt-1">
+                  <h3 class="text-xs font-semibold text-gray-400 uppercase tracking-wider">简历正文</h3>
+                  <span class="text-[10px] text-gray-500 font-mono">{{ resumeCharCount }} 字</span>
+                </div>
+                <div class="bg-white/[0.02] border border-white/[0.06] rounded-xl p-3 text-xs md:text-sm text-gray-300 leading-relaxed min-h-[200px] max-h-[320px] overflow-y-auto whitespace-pre-wrap font-mono tracking-[0.01em]">
+                  <span v-if="resumeText">{{ resumeText }}</span>
+                  <span v-else class="text-gray-500 not-italic">尚未读取简历内容。上传文件、粘贴扫描件，或将文本直接拖入上方扫描入口，简历正文会显示在这里供 AI 分析。</span>
+                </div>
               </div>
 
-              <div v-if="displayedResult" class="markdown-body max-w-full">
-                <div v-html="marked.parse(displayedResult)"></div>
-                <span v-if="!isComplete" class="inline-block w-2 h-[1.2em] bg-purple-500 animate-pulse rounded-sm ml-0.5 align-middle"></span>
-              </div>
+              <!-- ── 右侧：目标岗位 + JD（跨 5 列） ── -->
+              <div class="lg:col-span-5 space-y-3">
+                <h3 class="text-xs font-semibold text-gray-400 uppercase tracking-wider flex items-center gap-2">
+                  <Briefcase class="w-3.5 h-3.5 text-purple-400" />
+                  目标岗位
+                </h3>
+                <input
+                  v-model="targetRole"
+                  type="text"
+                  placeholder="如：Java 后端开发工程师"
+                  class="w-full bg-white/[0.02] border border-white/[0.06] rounded-xl px-3 py-2 md:px-4 md:py-3 text-sm md:text-base text-gray-200 placeholder-gray-500 focus:outline-none focus:border-purple-500/50 focus:ring-1 focus:ring-purple-500/25 transition-all duration-300"
+                  data-test="target-role-input"
+                />
 
-              <div v-else-if="isDiagnosing" class="flex flex-col items-center justify-center h-full text-center">
-                <div class="relative mb-6">
-                  <div class="w-20 h-20 rounded-2xl bg-purple-500/[0.04] border border-purple-500/[0.08] flex items-center justify-center">
-                    <Loader2 class="w-8 h-8 text-purple-400 animate-spin" />
+                <div class="flex items-center justify-between pt-1">
+                  <h3 class="text-xs font-semibold text-gray-400 uppercase tracking-wider">岗位描述（可选）</h3>
+                  <span class="text-[10px] text-gray-500 font-mono">{{ jdCharCount }} 字</span>
+                </div>
+                <textarea
+                  v-model="jdText"
+                  placeholder="粘贴目标岗位的 JD 内容，AI 会与简历做关键词与能力匹配……"
+                  rows="9"
+                  class="w-full bg-white/[0.02] border border-white/[0.06] rounded-xl px-3 py-2 md:px-4 md:py-3 text-xs md:text-sm text-gray-200 placeholder-gray-500 focus:outline-none focus:border-purple-500/50 focus:ring-1 focus:ring-purple-500/25 transition-all duration-300 resize-none leading-relaxed min-h-[220px]"
+                  data-test="jd-textarea"
+                ></textarea>
+
+                <!-- 表单完整度（仅 UI 提示，不影响业务） -->
+                <div class="pt-1">
+                  <div class="flex items-center justify-between text-[11px] text-gray-500 mb-1">
+                    <span>表单完整度</span>
+                    <span class="font-mono">{{ formReadiness }}%</span>
                   </div>
-                  <div class="absolute -inset-2 rounded-2xl bg-purple-500/[0.02] blur-xl animate-pulse"></div>
+                  <div class="h-1 bg-white/5 rounded-full overflow-hidden">
+                    <div class="h-full bg-gradient-to-r from-purple-500/70 to-cyan-400/70 transition-all duration-500" :style="{ width: formReadiness + '%' }"></div>
+                  </div>
                 </div>
-                <p class="text-purple-300/80 text-sm font-medium">导师正在查阅你的职业档案...</p>
-                <p class="text-gray-600 text-xs mt-2 max-w-[240px]">正在深度分析简历、目标岗位与 JD，为你出具精准诊断报告</p>
-              </div>
-
-              <div v-else class="flex flex-col items-center justify-center h-full text-center">
-                <div class="w-16 h-16 rounded-2xl bg-white/[0.02] border border-white/[0.04] flex items-center justify-center mb-4">
-                  <FileText class="w-7 h-7 text-gray-600" />
-                </div>
-                <p class="text-gray-500 text-sm">在左侧输入简历信息</p>
-                <p class="text-gray-600 text-xs mt-1.5 max-w-[220px]">点击"开始深度诊断"，AI 将对照 JD 逐条剖析，提供优化方案</p>
               </div>
             </div>
 
-            <!-- 底部：模拟面试入口 -->
-            <div v-if="isComplete" class="px-4 py-3 md:px-6 md:py-4 border-t border-white/[0.04] bg-gradient-to-r from-pink-600/[0.04] to-rose-600/[0.04]">
-              <button
-                @click="goToMockInterview"
-                class="w-full bg-gradient-to-r from-pink-500 to-rose-500 text-white py-3 rounded-xl font-semibold text-sm hover:shadow-lg hover:shadow-pink-500/20 transition-all duration-300 hover:-translate-y-0.5 flex items-center justify-center gap-2 group"
-              >
-                <svg class="w-4 h-4 group-hover:rotate-12 transition-transform duration-300" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                  <circle cx="12" cy="8" r="4" />
-                  <path d="M4 20c0-4 4-7 8-7s8 3 8 7" />
-                </svg>
-                已根据诊断生成专属题目，立即开启 AI 模拟面试
-              </button>
+            <!-- ActionDock：触发诊断按钮 -->
+            <div class="mt-4 px-2">
+              <ActionDock align="right">
+                <template #primary>
+                  <button
+                    @click="startDiagnosis"
+                    :disabled="isDiagnosing || !resumeText.trim()"
+                    class="diagnose-cta bg-gradient-to-r from-purple-600 to-indigo-600 text-white px-6 md:px-10 py-3 md:py-3.5 rounded-2xl font-semibold text-sm md:text-base shadow-lg shadow-purple-500/20 hover:shadow-xl hover:shadow-purple-500/40 hover:from-purple-500 hover:to-indigo-500 transition-all duration-300 hover:-translate-y-0.5 active:translate-y-0 active:scale-[0.98] disabled:bg-none disabled:bg-gray-600/30 disabled:text-gray-400 disabled:shadow-none disabled:cursor-not-allowed disabled:hover:translate-y-0 flex items-center justify-center gap-2"
+                    data-test="diagnose-trigger"
+                  >
+                    <Loader2 v-if="isDiagnosing" class="w-4 h-4 animate-spin" />
+                    <ScanLine v-else class="w-4 h-4" />
+                    {{ isDiagnosing ? '诊断中...' : '开始深度诊断' }}
+                  </button>
+                </template>
+              </ActionDock>
             </div>
-          </CyberGlassCard>
+
+            <!-- 错误展示区域：透传后端 / 网络错误原始内容，禁止任何前缀 / 后缀 / 模板包装文案 -->
+            <div
+              v-if="error"
+              class="mt-3 mx-2 bg-red-500/[0.06] border border-red-500/[0.20] rounded-xl p-3 text-xs text-red-300 text-center"
+              data-test="error-display"
+              role="alert"
+            >{{ error }}</div>
+          </template>
+
+          <!-- ============ Result 区：报告标题 + 雷达图 + 流式 Markdown ============ -->
+          <template #result>
+            <div class="result-zone flex flex-col min-h-[480px]">
+              <!-- 报告标题栏 -->
+              <div class="px-3 py-2 md:px-4 md:py-3 border-b border-white/[0.05] flex items-center justify-between bg-white/[0.012]">
+                <div class="flex items-center gap-2">
+                  <Bot class="w-4 h-4 text-purple-400" />
+                  <h2 class="text-sm font-semibold text-gray-200" data-test="report-title">AI 诊断报告</h2>
+                </div>
+                <div class="flex items-center gap-2">
+                  <div v-if="isComplete" class="flex items-center gap-1.5">
+                    <div class="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse"></div>
+                    <span class="text-xs text-green-400">分析完成</span>
+                  </div>
+                  <div v-else-if="isDiagnosing" class="flex items-center gap-1.5">
+                    <Loader2 class="w-3 h-3 animate-spin text-purple-400" />
+                    <span class="text-xs text-purple-300">导师正在查阅你的职业档案…</span>
+                  </div>
+                  <div v-else class="flex items-center gap-1.5">
+                    <div class="w-1.5 h-1.5 rounded-full bg-gray-500/60"></div>
+                    <span class="text-xs text-gray-500">待启动</span>
+                  </div>
+                </div>
+              </div>
+
+              <!-- 报告内容 -->
+              <div ref="resultContainer" class="flex-1 overflow-y-auto p-4 md:p-6">
+                <!-- 六维雷达图 -->
+                <div v-if="isComplete" class="mb-6" data-test="radar-container">
+                  <div class="flex items-center gap-2 mb-3">
+                    <Sparkles class="w-4 h-4 text-purple-400" />
+                    <h3 class="text-sm font-semibold text-purple-300">六维简历评分</h3>
+                  </div>
+                  <CyberRadarChart :chartData="cyberRadarChartData" />
+                  <div class="grid grid-cols-6 gap-1 mt-3">
+                    <div
+                      v-for="(label, i) in DIAGNOSIS_LABEL_CN"
+                      :key="i"
+                      class="text-center"
+                      data-test="report-item"
+                    >
+                      <div class="text-sm font-bold text-purple-300">{{ diagnosisScores[DIAGNOSIS_LABELS[i]] }}</div>
+                      <div class="text-[9px] text-gray-500">{{ label }}</div>
+                    </div>
+                  </div>
+                </div>
+
+                <div v-if="displayedResult" class="markdown-body max-w-full" data-test="report-item">
+                  <div v-html="marked.parse(displayedResult)"></div>
+                  <span v-if="!isComplete" class="inline-block w-2 h-[1.2em] bg-purple-500 animate-pulse rounded-sm ml-0.5 align-middle"></span>
+                </div>
+
+                <div v-else-if="isDiagnosing" class="flex flex-col items-center justify-center h-full text-center min-h-[320px]">
+                  <component
+                    v-if="StreamingLoaderComp"
+                    :is="StreamingLoaderComp"
+                    label="导师正在查阅你的职业档案..."
+                  />
+                  <div v-else class="relative mb-6">
+                    <div class="w-20 h-20 rounded-2xl bg-purple-500/[0.04] border border-purple-500/[0.10] flex items-center justify-center">
+                      <Loader2 class="w-8 h-8 text-purple-400 animate-spin" />
+                    </div>
+                    <div class="absolute -inset-2 rounded-2xl bg-purple-500/[0.02] blur-xl animate-pulse"></div>
+                  </div>
+                  <p class="text-purple-300/85 text-sm font-medium mt-4">导师正在查阅你的职业档案…</p>
+                  <p class="text-gray-500 text-xs mt-2 max-w-[260px]">正在深度分析简历、目标岗位与 JD，为你出具精准诊断报告。</p>
+                </div>
+
+                <!-- 空状态：4 张预告卡（替代单图标） -->
+                <div v-else class="space-y-5">
+                  <div class="flex items-start gap-3">
+                    <div class="w-10 h-10 rounded-xl bg-purple-500/[0.06] border border-purple-500/[0.15] flex items-center justify-center flex-shrink-0 shadow-[0_0_16px_rgba(168,85,247,0.10)]">
+                      <FileText class="w-4 h-4 text-purple-300" />
+                    </div>
+                    <div>
+                      <p class="text-gray-200 text-sm font-medium">填写简历信息后开始深度诊断</p>
+                      <p class="text-gray-500 text-xs mt-1 leading-relaxed">诊断完成后，你将在这里得到以下四类输出：</p>
+                    </div>
+                  </div>
+
+                  <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div
+                      v-for="card in REPORT_PREVIEW_CARDS"
+                      :key="card.label"
+                      class="report-preview-card group rounded-xl p-3 border bg-white/[0.02] backdrop-blur-md transition-all duration-300"
+                      :class="`report-preview-card--${card.accent}`"
+                    >
+                      <div class="flex items-center gap-2 mb-1.5">
+                        <span class="report-preview-card__icon w-7 h-7 rounded-lg flex items-center justify-center">
+                          <component :is="card.icon" class="w-3.5 h-3.5" />
+                        </span>
+                        <span class="text-xs font-semibold text-gray-200">{{ card.title }}</span>
+                      </div>
+                      <p class="text-[11px] text-gray-400 leading-relaxed pl-9">{{ card.desc }}</p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- 底部：模拟面试入口（保留原有功能入口） -->
+              <div v-if="isComplete" class="px-4 py-3 md:px-6 md:py-4 border-t border-white/[0.05] bg-gradient-to-r from-pink-600/[0.05] to-rose-600/[0.05]">
+                <button
+                  @click="goToMockInterview"
+                  class="w-full bg-gradient-to-r from-pink-500 to-rose-500 text-white py-3 rounded-xl font-semibold text-sm hover:shadow-lg hover:shadow-pink-500/25 transition-all duration-300 hover:-translate-y-0.5 flex items-center justify-center gap-2 group"
+                  data-test="mock-interview-cta"
+                >
+                  <svg class="w-4 h-4 group-hover:rotate-12 transition-transform duration-300" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <circle cx="12" cy="8" r="4" />
+                    <path d="M4 20c0-4 4-7 8-7s8 3 8 7" />
+                  </svg>
+                  已根据诊断生成专属题目，立即开启 AI 模拟面试
+                </button>
+              </div>
+            </div>
+          </template>
+        </FeaturePageShell>
+      </main>
     </div>
   </div>
 </template>
@@ -493,14 +688,69 @@ onUnmounted(() => {})
   background: rgba(255, 255, 255, 0.12);
 }
 
-.upload-zone {
-  transition: all 0.3s ease;
+/* ── 扫描仪 dropzone：扫描线 + 紫色辉光 ────────────────────── */
+.scanner-dropzone {
+  isolation: isolate;
 }
+.scanner-dropzone__bar {
+  position: absolute;
+  inset: -20% 0 auto 0;
+  height: 30%;
+  background: linear-gradient(
+    180deg,
+    transparent 0%,
+    rgba(168, 85, 247, 0.10) 45%,
+    rgba(168, 85, 247, 0.22) 55%,
+    transparent 100%
+  );
+  filter: blur(2px);
+  pointer-events: none;
+  opacity: 0;
+  transform: translateY(0);
+  z-index: 0;
+}
+.scanner-dropzone--scanning .scanner-dropzone__bar {
+  opacity: 1;
+  animation: scanner-bar-sweep 2.4s ease-in-out infinite;
+}
+.scanner-dropzone--has-data {
+  border-color: rgba(168, 85, 247, 0.30);
+  box-shadow: 0 0 18px rgba(168, 85, 247, 0.10) inset;
+}
+@keyframes scanner-bar-sweep {
+  0%   { transform: translateY(0%);   opacity: 0; }
+  10%  { opacity: 0.9; }
+  90%  { opacity: 0.9; }
+  100% { transform: translateY(420%); opacity: 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .scanner-dropzone--scanning .scanner-dropzone__bar { animation: none; }
+}
+
+/* ── 报告区空状态预告卡 ──────────────────────────────────────── */
+.report-preview-card {
+  transition: transform 0.2s ease-out, border-color 0.2s, box-shadow 0.2s;
+}
+.report-preview-card:hover {
+  transform: translateY(-1px);
+}
+.report-preview-card--purple   { border-color: rgba(168,85,247,0.25); }
+.report-preview-card--cyan     { border-color: rgba(34,211,238,0.25); }
+.report-preview-card--pink     { border-color: rgba(236,72,153,0.25); }
+.report-preview-card--emerald  { border-color: rgba(16,185,129,0.25); }
+.report-preview-card--purple:hover   { box-shadow: 0 0 18px rgba(168,85,247,0.18); }
+.report-preview-card--cyan:hover     { box-shadow: 0 0 18px rgba(34,211,238,0.18); }
+.report-preview-card--pink:hover     { box-shadow: 0 0 18px rgba(236,72,153,0.18); }
+.report-preview-card--emerald:hover  { box-shadow: 0 0 18px rgba(16,185,129,0.18); }
+.report-preview-card--purple .report-preview-card__icon  { background: rgba(168,85,247,0.14); color: #d8b4fe; }
+.report-preview-card--cyan .report-preview-card__icon    { background: rgba(34,211,238,0.14);  color: #67e8f9; }
+.report-preview-card--pink .report-preview-card__icon    { background: rgba(236,72,153,0.14);  color: #f9a8d4; }
+.report-preview-card--emerald .report-preview-card__icon { background: rgba(16,185,129,0.14);  color: #6ee7b7; }
 
 .markdown-body {
   color: rgba(233, 213, 255, 0.9);
   font-size: 14px;
-  line-height: 1.8;
+  line-height: 1.85;
   word-wrap: break-word;
 }
 
@@ -542,18 +792,18 @@ onUnmounted(() => {})
 }
 
 .markdown-body :deep(p) {
-  margin: 0.5em 0;
-  color: rgba(233, 213, 255, 0.82);
+  margin: 0.55em 0;
+  color: rgba(233, 213, 255, 0.85);
 }
 
 .markdown-body :deep(ul), .markdown-body :deep(ol) {
-  padding-left: 1.4em;
-  margin: 0.4em 0;
+  padding-left: 1.5em;
+  margin: 0.5em 0;
 }
 
 .markdown-body :deep(li) {
-  margin: 0.25em 0;
-  color: rgba(233, 213, 255, 0.78);
+  margin: 0.3em 0;
+  color: rgba(233, 213, 255, 0.82);
 }
 
 .markdown-body :deep(li)::marker {
@@ -585,7 +835,7 @@ onUnmounted(() => {})
 .markdown-body :deep(td) {
   padding: 7px 12px;
   font-size: 12px;
-  color: rgba(233, 213, 255, 0.75);
+  color: rgba(233, 213, 255, 0.78);
   border-bottom: 1px solid rgba(168, 85, 247, 0.06);
 }
 
@@ -597,7 +847,7 @@ onUnmounted(() => {})
   margin: 0.6em 0;
   background: rgba(168, 85, 247, 0.03);
   border-radius: 0 6px 6px 0;
-  color: rgba(233, 213, 255, 0.65);
+  color: rgba(233, 213, 255, 0.7);
 }
 
 .markdown-body :deep(code) {
@@ -621,7 +871,7 @@ onUnmounted(() => {})
 .markdown-body :deep(pre code) {
   background: none;
   padding: 0;
-  color: rgba(233, 213, 255, 0.82);
+  color: rgba(233, 213, 255, 0.85);
 }
 
 .markdown-body :deep(hr) {

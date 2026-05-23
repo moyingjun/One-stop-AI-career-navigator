@@ -40,6 +40,7 @@ async def agent_chat(
             jd_text=request.jd_text or "",
             user_id=current_user_id,
             db=db if current_user_id is not None else None,
+            persist=request.persist if request.persist else False,
         ),
         media_type="text/event-stream",
         headers={

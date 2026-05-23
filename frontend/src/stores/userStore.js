@@ -1,4 +1,5 @@
 import { defineStore } from 'pinia'
+import { mapResumeScores, mapInterviewScores } from '@/utils/radarMapping'
 
 // ─────────────────────────────────────────────
 // JWT 工具函数（不依赖任何外部库）
@@ -96,6 +97,20 @@ export const useUserStore = defineStore('user', {
       ],
       values: [0, 0, 0, 0, 0, 0]
     },
+
+    // ── 雷达图双源快照（Phase 1 新增） ──────────────
+    // 简历诊断快照：最近一次简历诊断映射到 6 维后的结果 + 时间戳
+    radarFromResume: {
+      values: [0, 0, 0, 0, 0, 0],
+      updatedAt: null  // ISO 字符串或 null
+    },
+    // 面试评估快照：最近一次面试评估映射到 6 维后的结果 + 时间戳
+    radarFromInterview: {
+      values: [0, 0, 0, 0, 0, 0],
+      updatedAt: null
+    },
+    // 雷达图当前展示的来源（'auto' = 取最新；'resume' / 'interview' = 强制单源）
+    radarSourcePreference: 'auto',
 
     // 面板布局配置
     panelLayout: {
@@ -266,6 +281,163 @@ export const useUserStore = defineStore('user', {
       this.radarData = { ...this.radarData, values: [0, 0, 0, 0, 0, 0] }
     },
 
+    /**
+     * Phase 1：简历诊断完成后，写入 radar 简历快照并重新合成 radarData
+     *
+     * @param {Record<string, number>} rawResumeScores
+     *   原始英文 key 简历评分，例如：
+     *   { keywordMatch: 80, experienceQuality: 70, dataDriven: 65,
+     *     skillCompleteness: 90, layoutLogic: 60, coreCompetitiveness: 75 }
+     */
+    updateRadarFromResume(rawResumeScores) {
+      const cnScores = mapResumeScores(rawResumeScores)
+      const values = this._scoresToValues(cnScores)
+      this.radarFromResume = {
+        values,
+        updatedAt: new Date().toISOString()
+      }
+      this._persistRadarSnapshots()
+      this._recomputeRadarData()
+    },
+
+    /**
+     * Phase 1：模拟面试评估完成后，写入 radar 面试快照并重新合成 radarData
+     *
+     * @param {Record<string, number>} rawInterviewScores
+     *   原始英文 key 面试评分，例如：
+     *   { professional: 88, logic: 82, communication: 91,
+     *     problemSolving: 76, potential: 80, resilience: 85 }
+     */
+    updateRadarFromInterview(rawInterviewScores) {
+      const cnScores = mapInterviewScores(rawInterviewScores)
+      const values = this._scoresToValues(cnScores)
+      this.radarFromInterview = {
+        values,
+        updatedAt: new Date().toISOString()
+      }
+      this._persistRadarSnapshots()
+      this._recomputeRadarData()
+    },
+
+    /**
+     * 内部辅助：把「中文 key → 0-100」对象转成与 indicators 顺序对齐的 values 数组
+     * 缺失的维度填 0
+     */
+    _scoresToValues(cnScores) {
+      const dimensionMap = {
+        '技术能力': 0, '沟通表达': 1, '项目经验': 2,
+        '学习能力': 3, '团队协作': 4, '职业规划': 5
+      }
+      const values = [0, 0, 0, 0, 0, 0]
+      if (!cnScores || typeof cnScores !== 'object') return values
+      for (const [key, val] of Object.entries(cnScores)) {
+        const idx = dimensionMap[key]
+        if (idx !== undefined) {
+          const num = Number(val)
+          values[idx] = Number.isFinite(num) ? Math.max(0, Math.min(100, num)) : 0
+        }
+      }
+      return values
+    },
+
+    /**
+     * 内部：根据 radarSourcePreference 重新合成 radarData.values
+     * 'auto'      → 取两源中 updatedAt 较新的；都为 null → 全 0
+     * 'resume'    → 强制使用简历快照
+     * 'interview' → 强制使用面试快照
+     */
+    _recomputeRadarData() {
+      const pref = this.radarSourcePreference
+      const r = this.radarFromResume
+      const i = this.radarFromInterview
+
+      let chosen = [0, 0, 0, 0, 0, 0]
+
+      if (pref === 'resume' && r.updatedAt) {
+        chosen = r.values.slice()
+      } else if (pref === 'interview' && i.updatedAt) {
+        chosen = i.values.slice()
+      } else {
+        // 'auto'：取较新的一源
+        if (r.updatedAt && i.updatedAt) {
+          chosen = (r.updatedAt >= i.updatedAt ? r.values : i.values).slice()
+        } else if (r.updatedAt) {
+          chosen = r.values.slice()
+        } else if (i.updatedAt) {
+          chosen = i.values.slice()
+        }
+      }
+
+      this.radarData = { ...this.radarData, values: chosen }
+    },
+
+    /**
+     * 切换雷达图来源偏好（'auto' / 'resume' / 'interview'）并立刻重算
+     */
+    setRadarSourcePreference(pref) {
+      if (!['auto', 'resume', 'interview'].includes(pref)) return
+      this.radarSourcePreference = pref
+      try {
+        localStorage.setItem('radar_source_preference', pref)
+      } catch {}
+      this._recomputeRadarData()
+    },
+
+    /**
+     * 内部：把双源快照 + 偏好持久化到 localStorage（不依赖后端）
+     */
+    _persistRadarSnapshots() {
+      try {
+        localStorage.setItem('radar_from_resume', JSON.stringify(this.radarFromResume))
+        localStorage.setItem('radar_from_interview', JSON.stringify(this.radarFromInterview))
+      } catch {
+        // localStorage 写入失败时静默处理
+      }
+    },
+
+    /**
+     * 启动时调用：从 localStorage 恢复两份雷达快照与偏好，合成 radarData
+     * 由 loadFromStorage 触发，无需业务页面手动调用
+     */
+    _loadRadarSnapshots() {
+      try {
+        const rawResume = localStorage.getItem('radar_from_resume')
+        const rawInterview = localStorage.getItem('radar_from_interview')
+        const pref = localStorage.getItem('radar_source_preference')
+
+        if (rawResume) {
+          const parsed = JSON.parse(rawResume)
+          if (parsed && Array.isArray(parsed.values) && parsed.values.length === 6) {
+            this.radarFromResume = {
+              values: parsed.values.map((v) => {
+                const n = Number(v)
+                return Number.isFinite(n) ? Math.max(0, Math.min(100, n)) : 0
+              }),
+              updatedAt: typeof parsed.updatedAt === 'string' ? parsed.updatedAt : null
+            }
+          }
+        }
+        if (rawInterview) {
+          const parsed = JSON.parse(rawInterview)
+          if (parsed && Array.isArray(parsed.values) && parsed.values.length === 6) {
+            this.radarFromInterview = {
+              values: parsed.values.map((v) => {
+                const n = Number(v)
+                return Number.isFinite(n) ? Math.max(0, Math.min(100, n)) : 0
+              }),
+              updatedAt: typeof parsed.updatedAt === 'string' ? parsed.updatedAt : null
+            }
+          }
+        }
+        if (pref && ['auto', 'resume', 'interview'].includes(pref)) {
+          this.radarSourcePreference = pref
+        }
+      } catch {
+        // 解析失败：保持初始空快照
+      }
+      this._recomputeRadarData()
+    },
+
     /** 从 localStorage 读取所有用户画像字段并同步到 state */
     loadFromStorage() {
       this.candidateName = localStorage.getItem('candidate_name') || ''
@@ -279,6 +451,8 @@ export const useUserStore = defineStore('user', {
       this.targetSchool = localStorage.getItem('target_school') || ''
       this.targetGoal = localStorage.getItem('target_goal') || ''
       this.loadPinnedIds()
+      // Phase 1：恢复双源雷达快照 + 偏好，让 Dashboard 刷新后立刻看到最近一次评估结果
+      this._loadRadarSnapshots()
     },
 
     /**

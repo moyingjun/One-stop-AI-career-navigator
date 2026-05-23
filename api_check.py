@@ -3,45 +3,42 @@ import httpx
 import asyncio
 import json
 from dotenv import load_dotenv
+import traceback
 
-# 1. 加载本地 .env 文件
+# 1. 加载 .env 文件
 load_dotenv()
 
-# 2. 从环境变量读取配置
-API_KEY = os.getenv("DEEPSEEK_API_KEY", "")
-BASE_URL = os.getenv("DEEPSEEK_BASE_URL", "https://tokenrai.com/v1/chat/completions")
-MODEL_NAME = os.getenv("DEEPSEEK_MODEL_NAME", "deepseek-v4-flash")
+# 2. 读取配置
+# MIMO_API_KEY = os.getenv("MIMO_API_KEY", "sk-IWh97R23GRUwLzeQEjuXoozkf7nKAsjAXDPaHKfZnP8AtQiv")
+MIMO_API_KEY = os.getenv("MIMO_API_KEY", "sk-IWh97R23GRUwLzeQEjuXoozkf7nKAsjAXDPaHKfZnP8AtQiv")
+BASE_URL = os.getenv("MIMO_BASE_URL", "https://tokenrai.com/v1")
+MODEL_NAME = os.getenv("MIMO_MODEL_NAME", "deepseek-v4-flash")
 
-async def test_deepseek_ignition():
-    print("========== 🚀 DeepSeek 引擎点火测试开始 ==========")
+async def test_mimo_api():
+    print("========== 🚀 Mimo 引擎点火测试开始 ==========")
     print(f"📡 目标地址: {BASE_URL}")
     print(f"🤖 使用模型: {MODEL_NAME}")
-    
-    # 检查变量是否成功读取
-    if not all([API_KEY, BASE_URL, MODEL_NAME]):
-        print("❌ 错误: .env 文件读取失败，请检查变量名是否拼错！")
+
+    # 检查变量是否正确
+    if not all([MIMO_API_KEY, BASE_URL, MODEL_NAME]):
+        print("❌ .env 配置缺失或拼写错误")
         return
 
-    # 这里的 URL 处理逻辑要非常小心，中转平台有时对后缀很敏感
-    # 如果你 env 里填的是 https://tokenrai.com/v1，代码里需要手动补全
-    request_url = BASE_URL if BASE_URL.endswith("chat/completions") else f"{BASE_URL.rstrip('/')}/chat/completions"
+    request_url = BASE_URL.rstrip("/") + "/chat/completions"
 
     headers = {
-        "Authorization": f"Bearer {API_KEY}",
+        "Authorization": f"Bearer {MIMO_API_KEY}",
         "Content-Type": "application/json"
     }
 
-    # 采用“降维合并法”：把指令和测试信息合在一起，全走 user 角色
-    # 这样能绕过某些中转平台对 system 角色的支持缺陷
     payload = {
         "model": MODEL_NAME,
         "messages": [
-            {
-                "role": "user", 
-                "content": "这是一条点火测试消息。请回复：‘教练，DeepSeek 引擎已就绪！’"
-            }
+            {"role": "user", "content": "这是一条点火测试消息，请回复：‘教练，Mimo 引擎已就绪！’"}
         ],
-        "temperature": 0.7
+        "temperature": 0.7,
+        "stream": False,  # 改为 True 可支持流式 SSE
+        "max_tokens": 500
     }
 
     async with httpx.AsyncClient(timeout=30.0) as client:
@@ -50,16 +47,29 @@ async def test_deepseek_ignition():
             response = await client.post(request_url, json=payload, headers=headers)
             
             print(f"📡 响应状态码: {response.status_code}")
-            
-            if response.status_code == 200:
+            try:
                 result = response.json()
-                content = result["choices"][0]["message"]["content"]
-                print(f"✅ 点火成功！大模型回复：\n{'-'*40}\n{content}\n{'-'*40}")
+            except json.JSONDecodeError:
+                print(f"❌ 无法解析响应 JSON: {response.text}")
+                return
+
+            print(f"📄 完整返回内容:\n{json.dumps(result, ensure_ascii=False, indent=2)}")
+
+            if response.status_code == 200:
+                if "choices" in result and len(result["choices"]) > 0:
+                    content = result["choices"][0]["message"].get("content")
+                    print(f"✅ 点火成功！Mimo 模型回复：\n{'-'*40}\n{content}\n{'-'*40}")
+                else:
+                    print(f"⚠️ 响应中未找到 choices: {result}")
             else:
-                print(f"❌ 点火失败！错误详情: {response.text}")
-                
+                print(f"❌ 请求失败，状态码: {response.status_code}")
+
+        except httpx.RequestError as re:
+            print(f"💥 请求错误: {str(re)}")
+            traceback.print_exc()
         except Exception as e:
-            print(f"💥 发生底层网络异常: {str(e)}")
+            print(f"💥 未知异常: {str(e)}")
+            traceback.print_exc()
 
 if __name__ == "__main__":
-    asyncio.run(test_deepseek_ignition())
+    asyncio.run(test_mimo_api())

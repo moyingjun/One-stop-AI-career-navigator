@@ -11,14 +11,19 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # ─────────────────────────────────────────────
-# LLM 配置
+# LLM 配置（通用多 AI 支持）
 # ─────────────────────────────────────────────
-DEEPSEEK_API_KEY: str = os.getenv("DEEPSEEK_API_KEY", "")
-DEEPSEEK_BASE_URL: str = os.getenv("DEEPSEEK_BASE_URL", "https://tokenrai.com/v1/chat/completions")
-DEEPSEEK_MODEL_NAME: str = os.getenv("DEEPSEEK_MODEL_NAME", "deepseek-v4-flash")
+LLM_API_KEY: str = os.getenv("LLM_API_KEY", "")
+LLM_BASE_URL: str = os.getenv("LLM_BASE_URL", "https://api.xiaomimimo.com/v1/chat/completions")
+LLM_MODEL_NAME: str = os.getenv("LLM_MODEL_NAME", "mimo-v2.5-pro")
 
-if not DEEPSEEK_BASE_URL.endswith("chat/completions"):
-    DEEPSEEK_BASE_URL = f"{DEEPSEEK_BASE_URL.rstrip('/')}/chat/completions"
+if not LLM_BASE_URL.endswith("chat/completions"):
+    LLM_BASE_URL = f"{LLM_BASE_URL.rstrip('/')}/chat/completions"
+
+# 向后兼容：旧代码中 import DEEPSEEK_* 的地方不会立即报错
+DEEPSEEK_API_KEY = LLM_API_KEY
+DEEPSEEK_BASE_URL = LLM_BASE_URL
+DEEPSEEK_MODEL_NAME = LLM_MODEL_NAME
 
 # ─────────────────────────────────────────────
 # JWT 配置

@@ -1,0 +1,106 @@
+<script setup>
+import { ref, nextTick, watch } from 'vue'
+import { Bot, Loader2 } from 'lucide-vue-next'
+import { marked } from 'marked'
+
+const props = defineProps({
+  messages: { type: Array, default: () => [] },
+  isLoading: { type: Boolean, default: false }
+})
+
+const containerRef = ref(null)
+
+function scrollToBottom() {
+  nextTick(() => {
+    if (containerRef.value) {
+      containerRef.value.scrollTop = containerRef.value.scrollHeight
+    }
+  })
+}
+
+// 自动滚动：消息变化时滚到底部
+watch(() => props.messages.length, () => {
+  scrollToBottom()
+})
+
+// streaming 内容变化时也滚动
+watch(
+  () => {
+    const last = props.messages[props.messages.length - 1]
+    return last?.content?.length || 0
+  },
+  () => { scrollToBottom() }
+)
+
+defineExpose({ scrollToBottom })
+</script>
+
+<template>
+  <div
+    ref="containerRef"
+    class="chat-message-list flex-1 overflow-y-auto custom-scrollbar space-y-3 pr-1"
+  >
+    <div v-for="(message, index) in messages" :key="index" class="chat-message">
+      <!-- 用户消息 -->
+      <div v-if="message.role === 'user'" class="flex justify-end">
+        <div class="max-w-[80%] bg-gradient-to-r from-fuchsia-500/20 to-purple-500/20 border border-fuchsia-500/30 rounded-xl p-3 text-right">
+          <p class="text-sm text-gray-200">{{ message.content }}</p>
+          <p class="text-xs text-gray-500 mt-1">{{ message.timestamp }}</p>
+        </div>
+      </div>
+      <!-- AI 消息 -->
+      <div v-else class="flex gap-3">
+        <div class="w-8 h-8 rounded-full bg-gradient-to-r from-cyan-500/20 to-blue-500/20 border border-cyan-500/30 flex items-center justify-center flex-shrink-0">
+          <Bot class="w-4 h-4 text-cyan-400" />
+        </div>
+        <div class="max-w-[80%] bg-gradient-to-r from-gray-800/50 to-gray-900/50 border border-white/10 rounded-xl p-3">
+          <div class="text-sm text-gray-200 chat-markdown" v-html="marked.parse(message.content || '')"></div>
+          <p class="text-xs text-gray-500 mt-1">{{ message.timestamp }}</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Loading 指示器 -->
+    <div v-if="isLoading" class="flex gap-3">
+      <div class="w-8 h-8 rounded-full bg-gradient-to-r from-cyan-500/20 to-blue-500/20 border border-cyan-500/30 flex items-center justify-center flex-shrink-0">
+        <Loader2 class="w-4 h-4 animate-spin text-cyan-400" />
+      </div>
+      <div class="bg-gradient-to-r from-gray-800/50 to-gray-900/50 border border-white/10 rounded-xl px-4 py-3">
+        <div class="flex items-center gap-1.5">
+          <div class="w-2 h-2 rounded-full bg-cyan-500 animate-bounce" style="animation-delay: 0s;"></div>
+          <div class="w-2 h-2 rounded-full bg-cyan-500 animate-bounce" style="animation-delay: 0.2s;"></div>
+          <div class="w-2 h-2 rounded-full bg-cyan-500 animate-bounce" style="animation-delay: 0.4s;"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</template>
+
+<style scoped>
+.custom-scrollbar::-webkit-scrollbar {
+  width: 4px;
+}
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 4px;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: rgba(168, 85, 247, 0.5);
+}
+
+.chat-markdown :deep(h1) { font-size: 1.2em; font-weight: 700; margin: 0.5em 0 0.3em; color: #67e8f9; }
+.chat-markdown :deep(h2) { font-size: 1.1em; font-weight: 600; margin: 0.4em 0 0.2em; color: #22d3ee; }
+.chat-markdown :deep(h3) { font-size: 1.05em; font-weight: 600; margin: 0.3em 0 0.15em; color: #06b6d4; }
+.chat-markdown :deep(strong), .chat-markdown :deep(b) { color: #67e8f9; font-weight: 700; }
+.chat-markdown :deep(p) { margin: 0.2em 0; color: rgba(229, 231, 235, 0.9); }
+.chat-markdown :deep(ul), .chat-markdown :deep(ol) { padding-left: 1.2em; margin: 0.2em 0; }
+.chat-markdown :deep(li) { margin: 0.1em 0; color: rgba(229, 231, 235, 0.85); }
+.chat-markdown :deep(li)::marker { color: #06b6d4; }
+.chat-markdown :deep(blockquote) { border-left: 3px solid rgba(6, 182, 212, 0.35); padding: 0.2em 0.6em; margin: 0.3em 0; background: rgba(6, 182, 212, 0.04); border-radius: 0 6px 6px 0; color: rgba(229, 231, 235, 0.7); }
+.chat-markdown :deep(code) { background: rgba(6, 182, 212, 0.1); padding: 0.1em 0.3em; border-radius: 3px; font-size: 0.88em; color: #67e8f9; font-family: 'JetBrains Mono', 'Fira Code', monospace; }
+.chat-markdown :deep(pre) { background: rgba(0, 0, 0, 0.35); border: 1px solid rgba(6, 182, 212, 0.12); border-radius: 8px; padding: 0.6em; overflow-x: auto; margin: 0.3em 0; }
+.chat-markdown :deep(pre code) { background: none; padding: 0; border-radius: 0; color: rgba(229, 231, 235, 0.85); }
+</style>

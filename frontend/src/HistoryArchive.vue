@@ -17,6 +17,7 @@ import {
 } from 'lucide-vue-next'
 import CustomDropdown from '@/components/CustomDropdown.vue'
 import { getAuthHeaders } from '@/services/authService.js'
+import { showToast } from '@/utils/uiFallbacks.js'
 
 const router = useRouter()
 
@@ -33,10 +34,10 @@ const filterSaved = ref('all')
 const categoryFilterOptions = [
   { value: 'all', label: '全部类型' },
   { value: 'resume_diagnosis', label: '简历诊断' },
-  { value: 'interview', label: '面试评估' },
-  { value: 'career_planning', label: '职业规划' },
-  { value: 'general_chat', label: '职场助理' },
-  { value: 'agent_', label: 'Agent 对话' }
+  { value: 'interview', label: '模拟面试' },
+  { value: 'career_plan', label: '职业规划' },
+  { value: 'dashboard_chat', label: 'Agent 对话' },
+  { value: 'general_chat', label: '职场助理(旧)' }
 ]
 const showClearConfirm = ref(false)
 const isClearing = ref(false)
@@ -66,14 +67,18 @@ const filteredRecords = computed(() => {
     records = records.filter(r => r.is_saved === 1 || r.is_saved === true)
   }
 
-  // 类型过滤：interview_ 和 agent_ 前缀类型使用 startsWith 匹配，其余精确匹配
+  // 类型过滤
   if (filterCategory.value !== 'all') {
     if (filterCategory.value === 'interview') {
-      records = records.filter(r => r.category?.startsWith('interview'))
-    } else if (filterCategory.value === 'agent_') {
-      records = records.filter(r => r.category?.startsWith('agent_'))
+      records = records.filter(r => r.record_type === 'interview_session' || r.category?.startsWith('interview'))
+    } else if (filterCategory.value === 'dashboard_chat') {
+      records = records.filter(r => r.record_type === 'dashboard_chat' || r.category === 'dashboard_chat' || r.category?.startsWith('agent_'))
+    } else if (filterCategory.value === 'career_plan') {
+      records = records.filter(r => r.record_type === 'career_plan' || r.category === 'career_planning' || r.category === 'career_plan')
+    } else if (filterCategory.value === 'resume_diagnosis') {
+      records = records.filter(r => r.record_type === 'resume_diagnosis' || r.category === 'resume_diagnosis')
     } else {
-      records = records.filter(r => r.category === filterCategory.value)
+      records = records.filter(r => r.category === filterCategory.value || r.record_type === filterCategory.value)
     }
   }
 
@@ -89,11 +94,18 @@ const filteredRecords = computed(() => {
   return records
 })
 
-const getCategoryLabel = (cat) => {
+const getCategoryLabel = (cat, record) => {
+  // 优先按 record_type 判断（新系统）
+  const rt = record?.record_type
+  if (rt === 'dashboard_chat') return 'Agent 对话'
+  if (rt === 'resume_diagnosis') return '简历诊断'
+  if (rt === 'career_plan') return '职业规划'
+  if (rt === 'interview_session') return '模拟面试'
+  // 兼容旧 category 字段
   if (cat === 'resume_diagnosis') return '简历诊断'
+  if (cat === 'career_planning' || cat === 'career_plan') return '职业规划'
   if (cat === 'interview_evaluate') return '面试评估'
   if (cat?.startsWith?.('interview')) return '模拟面试'
-  if (cat === 'career_planning') return '职业规划'
   if (cat?.startsWith?.('agent_')) return 'Agent 对话'
   if (cat === 'general_chat') return '职场助理'
   return cat || '未知记录'
@@ -116,12 +128,21 @@ const getCategoryColor = (cat) => {
 }
 
 const goToRecord = (record) => {
-  if (record.category === 'resume_diagnosis') router.push(`/resume-diagnosis?id=${record.id}`)
-  else if (record.category?.startsWith?.('interview')) router.push(`/interview?id=${record.id}`)
-  else if (record.category === 'career_planning') router.push(`/career-planning?id=${record.id}`)
-  // 新增：Agent 对话 + 通用聊天 → Dashboard 恢复上下文
-  else if (record.category?.startsWith?.('agent_') || record.category === 'general_chat')
-    router.push(`/dashboard?chat_id=${record.id}`)
+  const rt = record.record_type
+  const cat = record.category
+  // 新 record_type 优先路由
+  if (rt === 'resume_diagnosis' || cat === 'resume_diagnosis')
+    return router.push(`/resume-diagnosis?id=${record.id}`)
+  if (rt === 'interview_session' || cat?.startsWith?.('interview'))
+    return router.push(`/interview?id=${record.id}`)
+  if (rt === 'career_plan' || cat === 'career_planning')
+    return router.push(`/career-planning?id=${record.id}`)
+  // dashboard_chat 类型：通过 session_id 恢复完整 ChatDock 对话
+  if (rt === 'dashboard_chat' && record.session_id)
+    return router.push(`/dashboard?session_id=${record.session_id}`)
+  // 旧 Agent 对话 + 通用聊天 → Dashboard 恢复上下文（兼容旧记录）
+  if (cat?.startsWith?.('agent_') || cat === 'general_chat')
+    return router.push(`/dashboard?chat_id=${record.id}`)
 }
 
 const markBusy = (recordId, busy) => {
@@ -156,12 +177,28 @@ const toggleSaveRecord = async (record) => {
       headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
       body: JSON.stringify({ is_saved: nextSaved })
     })
-    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+
+    if (!res.ok) {
+      // 收藏夹已满（409）或其他业务错误：解析 detail 给用户看
+      let message = '操作失败，请稍后重试'
+      try {
+        const errBody = await res.json()
+        if (errBody?.detail) message = errBody.detail
+      } catch {
+        // 响应体非 JSON，使用默认文案
+      }
+      // 关键：不更新本地 record.is_saved，星标状态保持原样
+      showToast(message, { type: 'error', duration: 3500 })
+      return
+    }
+
+    // 仅在请求成功后才更新本地状态
     historyRecords.value = historyRecords.value.map((item) =>
       item.id === record.id ? { ...item, is_saved: nextSaved } : item
     )
   } catch (err) {
     console.error('保存状态切换失败:', err)
+    showToast('网络异常，操作失败', { type: 'error', duration: 3000 })
   } finally {
     markBusy(record.id, false)
   }
@@ -273,6 +310,16 @@ onMounted(loadHistory)
 
       <div class="flex-1 overflow-y-auto p-4 md:p-6">
         <div class="max-w-6xl mx-auto">
+          <!-- 自动清理规则提示（暗黑赛博风格，轻提示） -->
+          <div class="mb-4 flex items-start gap-2.5 px-4 py-2.5 rounded-xl border border-amber-400/15 bg-amber-500/[0.04] backdrop-blur-sm">
+            <Star class="w-3.5 h-3.5 text-amber-300/80 flex-shrink-0 mt-0.5" />
+            <p class="text-xs text-amber-200/75 leading-relaxed">
+              <span class="hidden md:inline">普通历史记录会自动清理；重要内容请点击星标收藏。</span>
+              <span class="md:hidden">历史会自动清理，重要记录请收藏。</span>
+              收藏夹最多保留 <span class="text-amber-300 font-medium">10 条</span>。
+            </p>
+          </div>
+
           <div v-if="isLoading" class="flex items-center justify-center h-64">
             <Loader2 class="w-8 h-8 text-purple-400 animate-spin" />
           </div>
@@ -294,7 +341,7 @@ onMounted(loadHistory)
               <div class="flex items-center justify-between mb-3">
                 <div class="flex items-center gap-2 min-w-0">
                   <component :is="getCategoryIcon(record.category)" class="w-4 h-4 flex-shrink-0" :class="getCategoryColor(record.category).split(' ')[0]" />
-                  <span class="text-xs px-2 py-0.5 rounded-full border truncate font-bold" :class="getCategoryColor(record.category)">{{ getCategoryLabel(record.category) }}</span>
+                  <span class="text-xs px-2 py-0.5 rounded-full border truncate font-bold" :class="getCategoryColor(record.category)">{{ getCategoryLabel(record.category, record) }}</span>
                 </div>
                 <span class="text-[10px] text-gray-600 flex-shrink-0 ml-2">{{ record.created_at }}</span>
               </div>

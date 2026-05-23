@@ -1,28 +1,21 @@
 """
-Service/Utils/databases/db/__init__.py
+Service/Utils/databases/db/__init__.py — PostgreSQL 数据库层唯一入口
 
-此包同时提供两套数据库能力：
+提供：
+  1. SQLAlchemy 2.0 异步引擎（PostgreSQL）
+     - engine, AsyncSessionLocal, Base
+     - get_db()   — FastAPI 依赖注入用的异步 Session 生成器
+     - init_db()  — 启动时建表（幂等）
 
-1. SQLAlchemy 2.0 异步引擎（新架构）
-   - engine, AsyncSessionLocal, Base
-   - get_db()   — FastAPI 依赖注入用的异步 Session 生成器
-   - init_db()  — 启动时建表（幂等）
+  2. 历史记录 CRUD 封装（PostgreSQL async 版本）
+     - 所有函数均为 async，接受 AsyncSession 参数
+     - 返回格式与旧 SQLite 版本兼容（dict）
 
-2. SQLite history_db CRUD re-export（旧架构兼容层）
-   - insert_record, get_recent_records, get_record_by_id, ...
-   - create_user, get_user_by_username
-
-调用方统一使用：
-    from Service.Utils.databases.db import get_db, engine, init_db
-    from Service.Utils.databases.db import insert_record
-
-循环引用规避策略：
-  - Base 定义在独立的 base.py，ORM 模型只引用 base.py，不触发本文件加载
-  - history_db 的 CRUD 函数通过局部导入（函数内 import）暴露给外部
-    避免模块级 from .history_db import ... 在包初始化时触发循环
+旧 SQLite 实现（history_db.py）已重命名为 legacy_sqlite_history_db.py，
+不再被主路径 import，保留为备份。
 """
 
-from typing import AsyncGenerator
+from typing import AsyncGenerator, Optional
 
 from sqlalchemy.ext.asyncio import (
     AsyncSession,
@@ -30,9 +23,7 @@ from sqlalchemy.ext.asyncio import (
     create_async_engine,
 )
 
-# Base 从独立地基导入，不在此处定义，防止 ORM 模型 → 本文件 → history_db 的循环
 from .base import Base
-
 from Service.Settings.config import DATABASE_URL
 
 # ─────────────────────────────────────────────
@@ -40,8 +31,8 @@ from Service.Settings.config import DATABASE_URL
 # ─────────────────────────────────────────────
 engine = create_async_engine(
     DATABASE_URL,
-    echo=False,          # 生产环境关闭 SQL 日志；调试时可改为 True
-    pool_pre_ping=True,  # 连接前探活，防止连接池中的失效连接
+    echo=False,
+    pool_pre_ping=True,
 )
 
 # ─────────────────────────────────────────────
@@ -50,22 +41,14 @@ engine = create_async_engine(
 AsyncSessionLocal = async_sessionmaker(
     bind=engine,
     class_=AsyncSession,
-    expire_on_commit=False,  # 提交后对象属性仍可访问，避免 lazy-load 异常
+    expire_on_commit=False,
 )
 
 
 # ─────────────────────────────────────────────
-# 依赖注入：异步 Session 生成器（新架构）
+# 依赖注入：异步 Session 生成器
 # ─────────────────────────────────────────────
 async def get_db() -> AsyncGenerator[AsyncSession, None]:
-    """
-    FastAPI 依赖注入用的异步 Session 生成器。
-
-    用法：
-        @router.get("/example")
-        async def example(db: AsyncSession = Depends(get_db)):
-            ...
-    """
     async with AsyncSessionLocal() as session:
         try:
             yield session
@@ -76,99 +59,57 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
 
 
 # ─────────────────────────────────────────────
-# 数据库初始化（在 lifespan 的 yield 前调用）
+# 数据库初始化（lifespan 中调用）
 # ─────────────────────────────────────────────
 async def init_db() -> None:
     """
     异步创建所有已注册模型对应的数据库表（幂等，表已存在时跳过）。
-    必须在所有 ORM 模型 import 之后调用，确保 Base.metadata 已收集到全部表定义。
     """
-    # 延迟导入，确保模型已注册到 Base.metadata
-    from Service.Utils.databases.models import user_model      # noqa: F401
+    # 延迟导入确保所有 ORM 模型已注册到 Base.metadata
+    from Service.Utils.databases.models import user_model       # noqa: F401
     from Service.Utils.databases.models import knowledge_model  # noqa: F401
+    from Service.Utils.databases.models import history_model    # noqa: F401
 
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 
 
 # ─────────────────────────────────────────────
-# SQLite history_db CRUD re-export（旧架构兼容层）
-# 使用局部导入函数包装，避免模块级循环引用
+# PostgreSQL 历史记录 CRUD（async，直接暴露）
 # ─────────────────────────────────────────────
+# 这些是 async 函数，调用方需要 await，且需要传入 AsyncSession。
+# Router 层通过 Depends(get_db) 获取 session 后直接调用。
 
-def insert_record(*args, **kwargs):
-    from .history_db import insert_record as _fn
-    return _fn(*args, **kwargs)
-
-
-def get_recent_records(*args, **kwargs):
-    from .history_db import get_recent_records as _fn
-    return _fn(*args, **kwargs)
-
-
-def get_recent_records_by_user(*args, **kwargs):
-    from .history_db import get_recent_records_by_user as _fn
-    return _fn(*args, **kwargs)
-
-
-def get_record_by_id(*args, **kwargs):
-    from .history_db import get_record_by_id as _fn
-    return _fn(*args, **kwargs)
-
-
-def delete_record(*args, **kwargs):
-    from .history_db import delete_record as _fn
-    return _fn(*args, **kwargs)
-
-
-def clear_all_records(*args, **kwargs):
-    from .history_db import clear_all_records as _fn
-    return _fn(*args, **kwargs)
-
-
-def clear_records_by_user(*args, **kwargs):
-    """按 user_id 清空指定用户的历史记录（多租户安全版本）。"""
-    from .history_db import clear_records_by_user as _fn
-    return _fn(*args, **kwargs)
-
-
-def toggle_save_record(*args, **kwargs):
-    from .history_db import toggle_save_record as _fn
-    return _fn(*args, **kwargs)
-
-
-def get_saved_records(*args, **kwargs):
-    from .history_db import get_saved_records as _fn
-    return _fn(*args, **kwargs)
-
-
-def create_user(*args, **kwargs):
-    from .history_db import create_user as _fn
-    return _fn(*args, **kwargs)
-
-
-def get_user_by_username(*args, **kwargs):
-    from .history_db import get_user_by_username as _fn
-    return _fn(*args, **kwargs)
+from .pg_history_db import (  # noqa: E402
+    insert_record,
+    get_recent_records_by_user,
+    get_record_by_id,
+    delete_record,
+    clear_records_by_user,
+    toggle_save_record,
+    count_saved_records_by_user,
+    upsert_session_record,
+    get_record_by_session_id,
+    enforce_unsaved_cap,
+)
 
 
 __all__ = [
-    # 新架构
+    # 新架构：PostgreSQL 异步引擎
     "Base",
     "engine",
     "AsyncSessionLocal",
     "get_db",
     "init_db",
-    # 旧架构兼容
+    # PostgreSQL 历史记录 CRUD（async）
     "insert_record",
-    "get_recent_records",
     "get_recent_records_by_user",
     "get_record_by_id",
     "delete_record",
-    "clear_all_records",
     "clear_records_by_user",
     "toggle_save_record",
-    "get_saved_records",
-    "create_user",
-    "get_user_by_username",
+    "count_saved_records_by_user",
+    "upsert_session_record",
+    "get_record_by_session_id",
+    "enforce_unsaved_cap",
 ]

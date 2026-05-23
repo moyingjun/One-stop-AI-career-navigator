@@ -11,19 +11,167 @@ import { marked } from 'marked'
 
 // Pinia store
 import { useUserStore } from '@/stores/userStore'
+import { useChatSessionStore } from '@/stores/chatSessionStore'
+import {
+  buildResumeRadarData,
+  buildInterviewRadarData,
+  emptyResumeRadar,
+  emptyInterviewRadar,
+  hasNonZeroScores
+} from '@/utils/radarMapping.js'
+import { formatRecordTime, getRecordTimestamp } from '@/utils/dateFormat.js'
 import CyberRadarChart from '@/components/CyberRadarChart.vue'
 import SetupModal from '@/components/SetupModal.vue'
 import DataSourceModal from '@/components/DataSourceModal.vue'
 import ChatPreviewModal from '@/components/ChatPreviewModal.vue'
 import KnowledgePanel from '@/components/KnowledgePanel.vue'
+import ChatDock from '@/components/chat/ChatDock.vue'
+import CareerPreviewPanel from '@/components/CareerPreviewPanel.vue'
 
-import { Bot, Bookmark, FileText, MessageSquare, Folder, Settings, Clock, Puzzle, Plus, Search, Paperclip, MoreHorizontal, ChevronDown, ChevronLeft, ChevronRight, Upload, CheckCircle, X, Loader2, History, Send, Sparkles, Mic, GraduationCap, Star, Trash2 }
+import { Bot, Bookmark, FileText, MessageSquare, Folder, Settings, Clock, Puzzle, Plus, Search, MoreHorizontal, ChevronLeft, ChevronRight, Upload, CheckCircle, X, Loader2, History, Sparkles, Mic, GraduationCap, Star, Trash2, Compass }
   from 'lucide-vue-next'
 
 const router = useRouter()
 const route = useRoute()
 const userStore = useUserStore()
+const chatStore = useChatSessionStore()
 const radarData = computed(() => userStore.radarData)
+
+// ── Radar 手动选择状态（数据面板联动）──────────────────────
+// 用户从数据面板选中具体记录后，存储该 record 引用；切换 tab 不清除
+const manualResumeRecord = ref(null)
+const manualInterviewRecord = ref(null)
+
+// ── Radar tab 独立数据源（每 tab 使用各自原始六维）────────
+const displayedRadarData = computed(() => {
+  if (activeDataTab.value === 'resume') {
+    // 优先：手动选择的简历记录
+    if (manualResumeRecord.value) {
+      return buildResumeRadarData(manualResumeRecord.value.scores)
+    }
+    // 兜底：bento 池中最近一次简历诊断（通过 computed 派生）
+    const latest = resumeRadarRecords.value[0]
+    if (latest) return buildResumeRadarData(latest.scores)
+    return emptyResumeRadar()
+  }
+
+  if (activeDataTab.value === 'interview') {
+    if (manualInterviewRecord.value) {
+      return buildInterviewRadarData(manualInterviewRecord.value.scores)
+    }
+    const latest = interviewRadarRecords.value[0]
+    if (latest) return buildInterviewRadarData(latest.scores)
+    return emptyInterviewRadar()
+  }
+
+  // career tab：返回空态简历指标占位（实际模板不渲染雷达）
+  return emptyResumeRadar()
+})
+
+// ── 条形列表数据：与 radar chart 同源 ──────────────────────
+const displayedRadarItems = computed(() => {
+  const data = displayedRadarData.value
+  return data.indicators.map((ind, i) => ({
+    name: ind.name,
+    value: data.values[i] || 0
+  }))
+})
+
+// ── DataSourceModal 数据源（按当前 tab 筛选）────────────────
+const dataSourceRecords = computed(() => {
+  if (activeDataTab.value === 'resume') return resumeRadarRecords.value
+  if (activeDataTab.value === 'interview') return interviewRadarRecords.value
+  if (activeDataTab.value === 'career') return careerRecords.value
+  return []
+})
+
+// ── 手动选择是否激活（用于显示"恢复最新"按钮）──────────────
+const hasManualSelection = computed(() => {
+  if (activeDataTab.value === 'resume') return manualResumeRecord.value !== null
+  if (activeDataTab.value === 'interview') return manualInterviewRecord.value !== null
+  return false
+})
+
+const restoreAutoRadar = () => {
+  if (activeDataTab.value === 'resume') manualResumeRecord.value = null
+  else if (activeDataTab.value === 'interview') manualInterviewRecord.value = null
+}
+
+// ── 数据面板选择记录后的联动 ────────────────────────────────
+const handleDataSourceSelect = (record) => {
+  if (!record) return
+  const cat = record.category || ''
+  const rt = record.record_type || ''
+
+  // 简历诊断记录
+  if (rt === 'resume_diagnosis' || cat === 'resume_diagnosis') {
+    activeDataTab.value = 'resume'
+    if (hasNonZeroScores(record.scores)) {
+      manualResumeRecord.value = record
+      userStore.activeDataSourceId = record.id
+      showToastMsg('已切换雷达数据源', 1500)
+    } else {
+      showToastMsg('该记录暂无评分数据', 2000)
+    }
+    showDataSourceModal.value = false
+    return
+  }
+
+  // 模拟面试记录
+  if (rt === 'interview_session' || cat?.startsWith?.('interview')) {
+    activeDataTab.value = 'interview'
+    if (hasNonZeroScores(record.scores)) {
+      manualInterviewRecord.value = record
+      userStore.activeDataSourceId = record.id
+      showToastMsg('已切换雷达数据源', 1500)
+    } else {
+      showToastMsg('该记录暂无评分数据', 2000)
+    }
+    showDataSourceModal.value = false
+    return
+  }
+
+  // 职业规划记录：切到 career tab，打开预览浮窗，不更新 radar
+  if (rt === 'career_plan' || cat === 'career_planning' || cat === 'career_plan' || cat === '职业规划') {
+    activeDataTab.value = 'career'
+    showDataSourceModal.value = false
+    // 定位到该记录在 careerRecords 中的位置
+    const idx = careerRecords.value.findIndex(r => r.id === record.id)
+    careerPreviewIndex.value = idx >= 0 ? idx : 0
+    showCareerPreview.value = true
+    return
+  }
+
+  // 其他类型：仅关闭弹窗
+  showDataSourceModal.value = false
+}
+
+// 雷达图数据来源提示（基于当前 tab、手动选择和 bento 池）
+const radarSourceHint = computed(() => {
+  if (activeDataTab.value === 'resume') {
+    if (manualResumeRecord.value) {
+      const t = formatRecordTime(manualResumeRecord.value)
+      return { label: `当前选择：简历诊断${t ? ' · ' + t : ''}`, type: 'manual' }
+    }
+    if (resumeRadarRecords.value.length > 0) {
+      return { label: '数据来源：最近一次简历诊断', type: 'resume' }
+    }
+    return { label: '完成简历诊断后生成能力雷达', type: 'empty' }
+  }
+
+  if (activeDataTab.value === 'interview') {
+    if (manualInterviewRecord.value) {
+      const t = formatRecordTime(manualInterviewRecord.value)
+      return { label: `当前选择:模拟面试${t ? ' · ' + t : ''}`, type: 'manual' }
+    }
+    if (interviewRadarRecords.value.length > 0) {
+      return { label: '数据来源：最近一次模拟面试', type: 'interview' }
+    }
+    return { label: '完成模拟面试后生成能力雷达', type: 'empty' }
+  }
+
+  return { label: '暂无综合规划评分数据', type: 'empty' }
+})
 
 // 考试类型标签映射（升学模式侧边栏展示用）
 // 使用 hasOwnProperty 而非 map[key] || fallback，避免原型链属性（如 'toString'）被误判为合法 key
@@ -44,11 +192,94 @@ const examTypeLabel = computed(() => {
 
 const activeDataTab = ref('resume'); // 'resume' | 'interview' | 'career'
 
+// ── 职业规划浮窗 ──────────────────────────────────────────
+const showCareerPreview = ref(false)
+// 当前预览的 career 记录索引（用于上一条/下一条翻阅）
+const careerPreviewIndex = ref(0)
+
+// 最近一条 career_plan（取自 bento 池，不再依赖 historyRecords limit=2）
+const latestCareerRecord = computed(() => {
+  return careerRecords.value[0] || null
+})
+
+const openCareerPreview = (index = 0) => {
+  careerPreviewIndex.value = Math.max(0, Math.min(index, careerRecords.value.length - 1))
+  showCareerPreview.value = true
+}
+const closeCareerPreview = () => { showCareerPreview.value = false }
+const goCareerFull = (recordId = null) => {
+  showCareerPreview.value = false
+  if (recordId) {
+    router.push(`/career-planning?id=${recordId}`)
+  } else {
+    router.push('/career-planning')
+  }
+}
+
+// ── 历史记录类型标签（优先 record_type，兼容旧 category）──
+const getRecordTypeLabel = (record) => {
+  const rt = record.record_type
+  if (rt === 'resume_diagnosis') return '简历诊断'
+  if (rt === 'career_plan') return '职业规划'
+  if (rt === 'interview_session') return '模拟面试'
+  if (rt === 'dashboard_chat') return 'Agent 对话'
+  return getCategoryLabel(record.category)
+}
+
 const isLocalDev = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
 const API_BASE_URL = isLocalDev ? 'http://127.0.0.1:8000/api' : '/api'
 
 const historyRecords = ref([])
 const isHistoryLoading = ref(true)
+
+// ── Bento 数据源（独立于首页"继续上次"的最近 2 条）──────────
+// 全量历史池（最多 100 条），用于派生三个分类列表
+const bentoRecordsPool = ref([])
+
+// 按类型分类 & 排序的最近 10 条记录（computed 派生）
+const resumeRadarRecords = computed(() => {
+  return bentoRecordsPool.value
+    .filter(r => {
+      const rt = r.record_type
+      const cat = r.category
+      const isResume = rt === 'resume_diagnosis'
+        || cat === 'resume_diagnosis'
+        || cat === '简历诊断'
+      return isResume && hasNonZeroScores(r.scores)
+    })
+    .sort((a, b) => getRecordTimestamp(b) - getRecordTimestamp(a))
+    .slice(0, 10)
+})
+
+const interviewRadarRecords = computed(() => {
+  return bentoRecordsPool.value
+    .filter(r => {
+      const rt = r.record_type
+      const cat = r.category
+      const isInterview = rt === 'interview_session'
+        || cat === 'interview'
+        || (typeof cat === 'string' && cat.startsWith('interview'))
+        || cat === '模拟面试'
+      return isInterview && hasNonZeroScores(r.scores)
+    })
+    .sort((a, b) => getRecordTimestamp(b) - getRecordTimestamp(a))
+    .slice(0, 10)
+})
+
+const careerRecords = computed(() => {
+  return bentoRecordsPool.value
+    .filter(r => {
+      const rt = r.record_type
+      const cat = r.category
+      return rt === 'career_plan'
+        || cat === 'career_plan'
+        || cat === 'career_planning'
+        || cat === '职业规划'
+    })
+    // career 不要求 scores
+    .sort((a, b) => getRecordTimestamp(b) - getRecordTimestamp(a))
+    .slice(0, 10)
+})
 
 // 新手启航舱卡片配置（静态数据，不依赖任何响应式数据源）
 // Requirements: 7.1, 7.2, 7.3, 7.4, 8.3
@@ -120,6 +351,30 @@ const loadHistory = async () => {
   }
 }
 
+/**
+ * 加载 Bento 数据池（独立于首页"继续上次"的 limit=2 调用）
+ *
+ * 拉取最近 100 条记录到 bentoRecordsPool，
+ * 由 resumeRadarRecords / interviewRadarRecords / careerRecords computed 自动派生。
+ *
+ * 失败时静默保持空数组，不阻断页面渲染。
+ */
+const loadDashboardBentoRecords = async () => {
+  try {
+    const res = await fetch(`${API_BASE_URL}/history?limit=100`, {
+      headers: { ...getAuthHeaders() }
+    })
+    if (res.ok) {
+      const data = await res.json()
+      bentoRecordsPool.value = data.records || []
+    } else {
+      bentoRecordsPool.value = []
+    }
+  } catch {
+    bentoRecordsPool.value = []
+  }
+}
+
 const getCategoryLabel = (cat) => {
   if (cat === 'resume_diagnosis') return '简历诊断'
   if (cat === 'interview_beginner') return '温和面试'
@@ -184,15 +439,9 @@ const goToHistory = (record) => {
  * 将历史对话消息载入当前聊天，并在 nextTick 后 focus 输入框并滚动到底部（Requirements 13.1）
  */
 const handleChatPreviewLoadContext = async (payload) => {
-  chatMessages.value = payload.messages.map(msg => ({
-    role: msg.role === 'user' ? 'user' : 'ai',
-    content: msg.content || '',
-    timestamp: '',
-    isNew: false
-  }))
-  currentRecordId.value = payload.recordId
+  chatStore.restoreFromHistory(payload.recordId, payload.messages)
   await nextTick()
-  chatInputRef.value?.focus()
+  chatDockRef.value?.focus()
   scrollChatToBottom()
 }
 
@@ -430,11 +679,20 @@ const unlockInterview = () => {
 
 
 const chatInputRef = ref(null)
+const chatDockRef = ref(null)
 
 const askEducationPlanning = async () => {
-  userChatInput.value = '你好，我是大专生，我想咨询升学避坑与路线规划。'
+  chatStore.setCollapsed(false)
   await nextTick()
-  chatInputRef.value?.focus()
+  chatDockRef.value?.setInput('你好，我是大专生，我想咨询升学避坑与路线规划。')
+  chatDockRef.value?.focus()
+}
+
+const handleQuickAction = async (text) => {
+  chatStore.setCollapsed(false)
+  await nextTick()
+  chatDockRef.value?.setInput(text)
+  chatDockRef.value?.focus()
 }
 
 const features = [
@@ -687,48 +945,51 @@ const iconMap = {
   'bot': Bot
 }
 
-const chatMessages = ref([])
+const chatMessages = computed(() => chatStore.messages)
 const userChatInput = ref('')
-const isChatLoading = ref(false)
+const isChatLoading = computed(() => chatStore.isLoading)
 const uploadedGlobalResume = ref('')
 const chatContainerRef = ref(null)
-const currentRecordId = ref(null)
+const currentRecordId = computed({
+  get: () => chatStore.currentSessionId,
+  set: (val) => { chatStore.currentSessionId = val }
+})
 const showNewChatModal = ref(false)
+
+// 浮动对话框折叠状态：由 chatSessionStore 管理
+const isChatDockCollapsed = computed(() => chatStore.isCollapsed)
+
+// 折叠态 pill 中展示的最近一条用户消息预览
+const lastUserPreview = computed(() => chatStore.lastUserPreview)
+const toggleChatDock = async () => {
+  chatStore.toggleCollapsed()
+  if (!chatStore.isCollapsed) {
+    await nextTick()
+    chatDockRef.value?.focus()
+  }
+}
 
 const scrollChatToBottom = () => {
   nextTick(() => {
-    if (chatContainerRef.value) {
-      chatContainerRef.value.scrollTop = chatContainerRef.value.scrollHeight
-    }
+    chatDockRef.value?.scrollToBottom()
   })
 }
 
-const sendGeneralChatMessage = async () => {
-  if (!userChatInput.value.trim() || isChatLoading.value) return
+const sendGeneralChatMessage = async (inputText) => {
+  // inputText 可以从 ChatDock @send 事件传入，也可以从旧 userChatInput 取
+  const userMessage = (inputText || userChatInput.value || '').trim()
+  if (!userMessage || chatStore.isLoading) return
 
-  const userMessage = userChatInput.value.trim()
-  const aiMessage = {
-    role: 'ai',
-    content: '',
-    timestamp: new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }),
-    isNew: true,
-    agentLabel: ''
-  }
-
-  chatMessages.value.push({
-    role: 'user',
-    content: userMessage,
-    timestamp: new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
-  })
-  chatMessages.value.push(aiMessage)
+  chatStore.appendUserMessage(userMessage)
+  const aiMessage = chatStore.appendAIMessage()
   userChatInput.value = ''
-  isChatLoading.value = true
+  chatStore.isLoading = true
   scrollChatToBottom()
 
   try {
     const payload = {
       user_input: userMessage,
-      history: chatMessages.value
+      history: chatStore.messages
         .slice(-10, -1)
         .map((message) => ({
           role: message.role === 'user' ? 'user' : 'assistant',
@@ -792,7 +1053,7 @@ const sendGeneralChatMessage = async () => {
         }
 
         if (eventName === 'done') {
-          currentRecordId.value = data.payload?.record_id || currentRecordId.value
+          chatStore.currentSessionId = data.payload?.record_id || chatStore.currentSessionId
         }
       } catch (parseError) {
         console.warn('SSE 数据解析失败', parseError, block)
@@ -818,23 +1079,21 @@ const sendGeneralChatMessage = async () => {
     console.error('发送 Agent 聊天消息失败', error)
     aiMessage.content = error.message || 'Agent 暂时无法连接，请稍后重试。'
   } finally {
-    isChatLoading.value = false
+    chatStore.isLoading = false
+    chatStore.persistLocal()
     scrollChatToBottom()
   }
 }
 
 const forceStartNew = () => {
-  chatMessages.value = []
+  chatStore.clearSession()
   userChatInput.value = ''
-  isChatLoading.value = false
-  currentRecordId.value = null
   showNewChatModal.value = false
   router.push('/')
 }
 
 const handleNewChat = () => {
-  const hasConversation = chatMessages.value.some((message) => String(message.content || '').trim())
-  if (!hasConversation) {
+  if (!chatStore.hasConversation) {
     forceStartNew()
     return
   }
@@ -866,11 +1125,13 @@ const saveAndStartNew = async () => {
   }
 }
 
-const handleChatFileUpload = async (event) => {
-  const files = event.target.files
-  if (files.length > 0) {
-    await uploadKnowledgeFile(files[0])
-    event.target.value = ''
+const handleChatFileUpload = async (fileOrEvent) => {
+  // 支持两种调用方式：直接传 File 对象（ChatDock），或传 event（旧路径）
+  if (fileOrEvent instanceof File) {
+    await uploadKnowledgeFile(fileOrEvent)
+  } else if (fileOrEvent?.target?.files?.length > 0) {
+    await uploadKnowledgeFile(fileOrEvent.target.files[0])
+    fileOrEvent.target.value = ''
   }
 }
 
@@ -935,10 +1196,20 @@ const playConsoleAnimation = async () => {
   }
 }
 
-// 加载最新雷达图数据（使用 has_scores=true 筛选含有效评分的记录）
+// 加载最新雷达图数据
+//
+// Phase B 修复：原版本调用 userStore.updateRadarData(中文 key setter)，
+// 但 history.scores 字段存的是英文 6 维（professional / keywordMatch 等），
+// 字段不匹配导致雷达图永远是 0。
+//
+// 新策略：拉取最近 10 条带 scores 的记录，按 record category 分类：
+//   - resume_diagnosis → updateRadarFromResume（走 RESUME_TO_RADAR 映射）
+//   - interview_*      → updateRadarFromInterview（走 INTERVIEW_TO_RADAR 映射）
+// 各类只取最新一条，分别写入两份 store 快照；
+// store._recomputeRadarData() 自然会取较新的一份合成 radarData。
 async function loadLatestRadarData() {
   try {
-    const response = await fetch(`${API_BASE_URL}/history?has_scores=true&limit=1`, {
+    const response = await fetch(`${API_BASE_URL}/history?has_scores=true&limit=10`, {
       headers: { ...getAuthHeaders() }
     })
     if (!response.ok) return  // 网络错误时保持当前状态不变，不向用户展示错误
@@ -946,23 +1217,48 @@ async function loadLatestRadarData() {
     const data = await response.json()
     const records = data.records || []
 
-    if (records.length === 0) {
-      userStore.resetRadarData()
-      return
+    // 找到每类最新一条（records 已按 id DESC 返回，第一条命中即最新）
+    let latestResume = null
+    let latestInterview = null
+    for (const r of records) {
+      const cat = r.category || ''
+      const type = r.record_type || ''  // D1 之后会用，目前只是预留
+      const isResume = type === 'resume_diagnosis' || cat === 'resume_diagnosis'
+      const isInterview = type === 'interview_session' || cat?.startsWith?.('interview')
+      if (isResume && !latestResume) latestResume = r
+      if (isInterview && !latestInterview) latestInterview = r
+      if (latestResume && latestInterview) break
     }
 
-    // 解析 scores JSON 字符串
-    let scores = records[0].scores
-    if (typeof scores === 'string') {
-      try { scores = JSON.parse(scores) } catch { scores = {} }
+    const parseScores = (raw) => {
+      if (!raw) return null
+      if (typeof raw === 'object') return raw
+      try { return JSON.parse(raw) } catch { return null }
     }
 
-    if (scores && Object.keys(scores).length > 0) {
-      userStore.updateRadarData(scores)
-      userStore.activeDataSourceId = records[0].id
+    const resumeScores = parseScores(latestResume?.scores)
+    const interviewScores = parseScores(latestInterview?.scores)
+
+    if (resumeScores && Object.keys(resumeScores).length > 0) {
+      userStore.updateRadarFromResume(resumeScores)
+    }
+    if (interviewScores && Object.keys(interviewScores).length > 0) {
+      userStore.updateRadarFromInterview(interviewScores)
+    }
+
+    // activeDataSourceId 取较新的一条（auto 策略下展示的来源）
+    if (latestResume && latestInterview) {
+      const resumeNewer = (latestResume.id || 0) >= (latestInterview.id || 0)
+      userStore.activeDataSourceId = resumeNewer ? latestResume.id : latestInterview.id
+    } else if (latestResume) {
+      userStore.activeDataSourceId = latestResume.id
+    } else if (latestInterview) {
+      userStore.activeDataSourceId = latestInterview.id
     } else {
-      userStore.resetRadarData()
+      userStore.activeDataSourceId = null
     }
+
+    // 两边都没有：保持空状态（store 默认 [0,0,0,0,0,0]）
   } catch {
     // 请求失败时保持当前 radarData 状态不变，不向用户展示错误
   }
@@ -978,7 +1274,7 @@ async function restoreChatContext(chatId) {
     })
     if (!response.ok) {
       // 404 或其他错误：清空聊天，用户可开始新对话
-      chatMessages.value = []
+      chatStore.clearSession()
       return
     }
 
@@ -990,39 +1286,29 @@ async function restoreChatContext(chatId) {
       try { chatHistory = JSON.parse(chatHistory) } catch { chatHistory = [] }
     }
 
+    let messages = []
     if (!Array.isArray(chatHistory) || chatHistory.length === 0) {
       // 降级：从 user_input + ai_result 构建最小上下文
-      chatMessages.value = []
       if (record.user_input) {
-        chatMessages.value.push({
-          role: 'user',
-          content: record.user_input,
-          timestamp: record.created_at
-        })
+        messages.push({ role: 'user', content: record.user_input, timestamp: record.created_at })
       }
       if (record.ai_result) {
-        chatMessages.value.push({
-          role: 'ai',
-          content: record.ai_result,
-          timestamp: record.created_at
-        })
+        messages.push({ role: 'ai', content: record.ai_result, timestamp: record.created_at })
       }
     } else {
-      // 正常解析 chat_history
-      chatMessages.value = chatHistory.map(msg => ({
+      messages = chatHistory.map(msg => ({
         role: msg.role === 'user' ? 'user' : 'ai',
         content: msg.content || '',
-        timestamp: record.created_at,
-        isNew: false
+        timestamp: record.created_at
       }))
     }
 
-    currentRecordId.value = Number(chatId)
+    chatStore.restoreFromHistory(Number(chatId), messages)
     await nextTick()
     scrollChatToBottom()
   } catch (error) {
     console.error('恢复对话上下文失败:', error)
-    chatMessages.value = []
+    chatStore.clearSession()
   }
 }
 
@@ -1052,8 +1338,8 @@ async function fetchPinnedRadarData(tab, pinnedId) {
   }
 
   if (pinnedId === null) {
-    // 无置顶记录时重置为空状态
-    userStore.resetRadarData()
+    // 无置顶记录时：不清空已有雷达图，仅清除错误提示
+    // 雷达图保持当前 auto 策略（最近一次诊断/面试的数据）
     radarFetchError.value = ''
     return
   }
@@ -1083,11 +1369,15 @@ async function fetchPinnedRadarData(tab, pinnedId) {
     }
 
     if (scores && Object.keys(scores).length > 0) {
-      userStore.updateRadarData(scores)
-    } else {
-      // 记录存在但无有效 scores，重置为空状态
-      userStore.resetRadarData()
+      // Phase B 修复：按 tab 类型走新链路，不再使用旧 updateRadarData
+      if (tab === 'resume') {
+        userStore.updateRadarFromResume(scores)
+      } else if (tab === 'interview') {
+        userStore.updateRadarFromInterview(scores)
+      }
+      // career tab 不写 radar（无明确 scores 映射）
     }
+    // 记录存在但 scores 为空时：保留当前已有 radar，不归零
   } catch (err) {
     if (err.name === 'AbortError') {
       // 请求被主动取消（新请求已发出），静默处理
@@ -1127,6 +1417,30 @@ watch(() => route.query.chat_id, async (chatId) => {
   await restoreChatContext(chatId)
 }, { immediate: true })
 
+// 监听 session_id 路由参数，恢复 ChatDock 会话（从 HistoryArchive 继续对话）
+watch(() => route.query.session_id, async (sessionId) => {
+  if (!sessionId) return
+  try {
+    const { loadSession } = await import('@/services/historyClient.js')
+    const record = await loadSession(sessionId)
+    if (!record) return
+
+    let chatHistory = record.chat_history
+    if (typeof chatHistory === 'string') {
+      try { chatHistory = JSON.parse(chatHistory) } catch { chatHistory = [] }
+    }
+    if (!Array.isArray(chatHistory)) chatHistory = []
+
+    chatStore.restoreFromHistory(sessionId, chatHistory, record.id)
+    chatStore.setCollapsed(false)
+    await nextTick()
+    chatDockRef.value?.focus()
+    scrollChatToBottom()
+  } catch (err) {
+    console.error('恢复会话失败:', err)
+  }
+}, { immediate: true })
+
 // ─────────────────────────────────────────────
 // 目标志愿展示（Requirements 15.1 ~ 15.5）
 // ─────────────────────────────────────────────
@@ -1154,8 +1468,8 @@ watch(() => userStore.targetGoal, () => {
 
 // 生命周期
 onMounted(() => {
-  // 恢复用户画像状态，确保 Sidebar 等组件初始化时能读到正确的 Store 状态
-  userStore.loadFromStorage()
+  // loadFromStorage() 已在 main.js 应用启动时统一调用（Phase 1.1 收口），此处无需重复调用
+  chatStore.restoreFromLocalStorage()
   typeWriter()
   startCarousel()
   startAutoPlay()
@@ -1163,6 +1477,7 @@ onMounted(() => {
   window.addEventListener('storage', handleStorageChange)
   playConsoleAnimation()
   loadHistory()
+  loadDashboardBentoRecords()
   loadLatestRadarData()
 })
 
@@ -1296,28 +1611,6 @@ onUnmounted(() => {
                   <span class="text-sm">{{ item.label }}</span>
                 </div>
               </div>
-            </div>
-
-            <div v-if="chatMessages.length > 0" class="history mt-8">
-              <h2 class="text-xs text-gray-500 uppercase mb-2 font-semibold text-left pl-2">
-                最近
-              </h2>
-              <div class="space-y-1">
-                <div
-                  v-for="(message, index) in chatMessages"
-                  :key="index"
-                  class="history-item p-2 rounded-lg hover:bg-white/10 transition-all duration-300 cursor-pointer hover:translate-x-2"
-                >
-                  <p class="text-sm truncate text-left">AI分析 - {{ new Date().toLocaleDateString() }}</p>
-                </div>
-              </div>
-            </div>
-
-            <div class="add-topic mt-8">
-              <button class="w-full flex items-center gap-2 text-gray-500 hover:text-white transition-colors duration-300 hover:translate-x-2">
-                <Plus class="w-5 h-5" />
-                <span class="text-sm">添加主题</span>
-              </button>
             </div>
 
             <!-- 全局简历状态卡片 -->
@@ -1701,7 +1994,7 @@ onUnmounted(() => {
                       <div class="absolute bottom-0 left-0 w-full h-[2px] bg-gradient-to-r from-transparent via-purple-500/50 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500"></div>
                       <div class="flex items-center justify-between mb-2">
                         <div class="flex items-center gap-2">
-                          <span class="text-xs px-2 py-0.5 rounded-full border" :class="getCategoryColor(record.category)">{{ getCategoryLabel(record.category) }}</span>
+                          <span class="text-xs px-2 py-0.5 rounded-full border" :class="getCategoryColor(record.category)">{{ getRecordTypeLabel(record) }}</span>
                           <span v-if="getDifficultyBadge(record) && getDifficultyBadgeConfig(getDifficultyBadge(record))" class="text-xs px-1.5 py-0.5 rounded-full border" :class="getDifficultyBadgeConfig(getDifficultyBadge(record)).class">{{ getDifficultyBadgeConfig(getDifficultyBadge(record)).label }}</span>
                         </div>
                         <span class="text-xs text-gray-500">{{ record.created_at }}</span>
@@ -1735,7 +2028,7 @@ onUnmounted(() => {
                     <button
                       v-for="action in quickActions"
                       :key="action"
-                      @click="userChatInput = action"
+                      @click="handleQuickAction(action)"
                       class="group px-3 py-1.5 rounded-lg border border-white/5 bg-white/[0.02] hover:bg-cyan-500/10 hover:border-cyan-500/30 transition-all duration-300 flex items-center gap-2"
                     >
                       <span class="text-cyan-500/40 group-hover:text-cyan-400 font-mono text-xs transition-colors duration-300">&gt;&gt;</span>
@@ -1747,38 +2040,6 @@ onUnmounted(() => {
 
 
 
-              <div class="chat-messages mb-6 space-y-4 animate-[fadeInUp_0.5s_ease-out_0.3s_both]" v-if="chatMessages.length > 0" v-auto-animate>
-                <div v-for="(message, index) in chatMessages" :key="index" :id="message.id" class="chat-message">
-                  <div v-if="message.role === 'user'" class="flex justify-end">
-                    <div class="max-w-[80%] bg-gradient-to-r from-fuchsia-500/20 to-purple-500/20 border border-fuchsia-500/30 rounded-xl p-3 text-right">
-                      <p class="text-sm text-gray-200">{{ message.content }}</p>
-                      <p class="text-xs text-gray-500 mt-1">{{ message.timestamp }}</p>
-                    </div>
-                  </div>
-                  <div v-else class="flex gap-3">
-                    <div class="w-8 h-8 rounded-full bg-gradient-to-r from-cyan-500/20 to-blue-500/20 border border-cyan-500/30 flex items-center justify-center flex-shrink-0">
-                      <Bot class="w-4 h-4 text-cyan-400" />
-                    </div>
-                    <div class="max-w-[80%] bg-gradient-to-r from-gray-800/50 to-gray-900/50 border border-white/10 rounded-xl p-3">
-                      <div class="text-sm text-gray-200 dashboard-markdown" v-html="marked.parse(message.content)"></div>
-                      <p class="text-xs text-gray-500 mt-1">{{ message.timestamp }}</p>
-                    </div>
-                  </div>
-                </div>
-
-                <div v-if="isChatLoading" class="flex gap-3">
-                  <div class="w-8 h-8 rounded-full bg-gradient-to-r from-cyan-500/20 to-blue-500/20 border border-cyan-500/30 flex items-center justify-center flex-shrink-0">
-                    <Loader2 class="w-4 h-4 animate-spin text-cyan-400" />
-                  </div>
-                  <div class="bg-gradient-to-r from-gray-800/50 to-gray-900/50 border border-white/10 rounded-xl px-4 py-3">
-                    <div class="flex items-center gap-1.5">
-                      <div class="w-2 h-2 rounded-full bg-cyan-500 animate-bounce" style="animation-delay: 0s;"></div>
-                      <div class="w-2 h-2 rounded-full bg-cyan-500 animate-bounce" style="animation-delay: 0.2s;"></div>
-                      <div class="w-2 h-2 rounded-full bg-cyan-500 animate-bounce" style="animation-delay: 0.4s;"></div>
-                    </div>
-                  </div>
-                </div>
-              </div>
               </div>
 
               <!-- 右侧 Bento 辅助面板 -->
@@ -1866,33 +2127,100 @@ onUnmounted(() => {
                   <div class="relative flex-1 overflow-hidden">
                     <transition name="widget-fade" mode="out-in">
                       <div v-if="activeDataTab === 'resume'" key="resume" class="flex flex-col">
-                        <CyberRadarChart :chartData="radarData" style="height: 220px;" class="-mt-4 -mb-2" />
+                        <CyberRadarChart :chartData="displayedRadarData" style="height: 220px;" class="-mt-4 -mb-2" />
                         <div class="grid grid-cols-2 gap-x-4 gap-y-3">
-                          <div><div class="flex justify-between text-xs text-gray-500 mb-1"><span>技术能力</span><span class="text-purple-400">{{ radarData.values[0] }}%</span></div><div class="h-1 bg-white/5 rounded-full overflow-hidden"><div class="h-full bg-purple-500/60 animate-boot-bar" :style="{ width: radarData.values[0] + '%' }"></div></div></div>
-                          <div><div class="flex justify-between text-xs text-gray-500 mb-1"><span>沟通表达</span><span class="text-cyan-400">{{ radarData.values[1] }}%</span></div><div class="h-1 bg-white/5 rounded-full overflow-hidden"><div class="h-full bg-cyan-500/60 animate-boot-bar" :style="{ width: radarData.values[1] + '%' }"></div></div></div>
-                          <div><div class="flex justify-between text-xs text-gray-500 mb-1"><span>项目经验</span><span class="text-purple-400">{{ radarData.values[2] }}%</span></div><div class="h-1 bg-white/5 rounded-full overflow-hidden"><div class="h-full bg-purple-500/60 animate-boot-bar" :style="{ width: radarData.values[2] + '%' }"></div></div></div>
-                          <div><div class="flex justify-between text-xs text-gray-500 mb-1"><span>学习能力</span><span class="text-cyan-400">{{ radarData.values[3] }}%</span></div><div class="h-1 bg-white/5 rounded-full overflow-hidden"><div class="h-full bg-cyan-500/60 animate-boot-bar" :style="{ width: radarData.values[3] + '%' }"></div></div></div>
-                          <div><div class="flex justify-between text-xs text-gray-500 mb-1"><span>团队协作</span><span class="text-purple-400">{{ radarData.values[4] }}%</span></div><div class="h-1 bg-white/5 rounded-full overflow-hidden"><div class="h-full bg-purple-500/60 animate-boot-bar" :style="{ width: radarData.values[4] + '%' }"></div></div></div>
-                          <div><div class="flex justify-between text-xs text-gray-500 mb-1"><span>职业规划</span><span class="text-cyan-400">{{ radarData.values[5] }}%</span></div><div class="h-1 bg-white/5 rounded-full overflow-hidden"><div class="h-full bg-cyan-500/60 animate-boot-bar" :style="{ width: radarData.values[5] + '%' }"></div></div></div>
-                        </div>
-                      </div>
-                      
-                      <div v-else-if="activeDataTab === 'interview'" key="interview" class="flex flex-col">
-                        <CyberRadarChart :chartData="radarData" style="height: 220px;" class="-mt-4 -mb-2" />
-                        <div class="grid grid-cols-2 gap-x-4 gap-y-3">
-                          <div><div class="flex justify-between text-xs text-gray-500 mb-1"><span>技术能力</span><span class="text-pink-400">{{ radarData.values[0] }}%</span></div><div class="h-1 bg-white/5 rounded-full overflow-hidden"><div class="h-full bg-pink-500/60 animate-boot-bar" :style="{ width: radarData.values[0] + '%' }"></div></div></div>
-                          <div><div class="flex justify-between text-xs text-gray-500 mb-1"><span>沟通表达</span><span class="text-pink-400">{{ radarData.values[1] }}%</span></div><div class="h-1 bg-white/5 rounded-full overflow-hidden"><div class="h-full bg-pink-500/60 animate-boot-bar" :style="{ width: radarData.values[1] + '%' }"></div></div></div>
-                          <div><div class="flex justify-between text-xs text-gray-500 mb-1"><span>项目经验</span><span class="text-pink-400">{{ radarData.values[2] }}%</span></div><div class="h-1 bg-white/5 rounded-full overflow-hidden"><div class="h-full bg-pink-500/60 animate-boot-bar" :style="{ width: radarData.values[2] + '%' }"></div></div></div>
-                          <div><div class="flex justify-between text-xs text-gray-500 mb-1"><span>学习能力</span><span class="text-pink-400">{{ radarData.values[3] }}%</span></div><div class="h-1 bg-white/5 rounded-full overflow-hidden"><div class="h-full bg-pink-500/60 animate-boot-bar" :style="{ width: radarData.values[3] + '%' }"></div></div></div>
-                          <div><div class="flex justify-between text-xs text-gray-500 mb-1"><span>团队协作</span><span class="text-pink-400">{{ radarData.values[4] }}%</span></div><div class="h-1 bg-white/5 rounded-full overflow-hidden"><div class="h-full bg-pink-500/60 animate-boot-bar" :style="{ width: radarData.values[4] + '%' }"></div></div></div>
-                          <div><div class="flex justify-between text-xs text-gray-500 mb-1"><span>职业规划</span><span class="text-pink-400">{{ radarData.values[5] }}%</span></div><div class="h-1 bg-white/5 rounded-full overflow-hidden"><div class="h-full bg-pink-500/60 animate-boot-bar" :style="{ width: radarData.values[5] + '%' }"></div></div></div>
+                          <div v-for="(item, idx) in displayedRadarItems" :key="'resume-' + item.name">
+                            <div class="flex justify-between text-xs text-gray-500 mb-1">
+                              <span>{{ item.name }}</span>
+                              <span :class="idx % 2 === 0 ? 'text-purple-400' : 'text-cyan-400'">{{ item.value }}%</span>
+                            </div>
+                            <div class="h-1 bg-white/5 rounded-full overflow-hidden">
+                              <div class="h-full animate-boot-bar" :class="idx % 2 === 0 ? 'bg-purple-500/60' : 'bg-cyan-500/60'" :style="{ width: item.value + '%' }"></div>
+                            </div>
+                          </div>
                         </div>
                       </div>
 
-                      <div v-else key="career" class="flex items-center justify-center h-full">
-                         <p class="text-xs text-gray-500 border border-dashed border-gray-600/50 rounded-lg p-4 w-full text-center">暂未生成综合规划，<br>请在左侧发起咨询</p>
+                      <div v-else-if="activeDataTab === 'interview'" key="interview" class="flex flex-col">
+                        <CyberRadarChart :chartData="displayedRadarData" style="height: 220px;" class="-mt-4 -mb-2" />
+                        <div class="grid grid-cols-2 gap-x-4 gap-y-3">
+                          <div v-for="(item, idx) in displayedRadarItems" :key="'interview-' + item.name">
+                            <div class="flex justify-between text-xs text-gray-500 mb-1">
+                              <span>{{ item.name }}</span>
+                              <span class="text-pink-400">{{ item.value }}%</span>
+                            </div>
+                            <div class="h-1 bg-white/5 rounded-full overflow-hidden">
+                              <div class="h-full bg-pink-500/60 animate-boot-bar" :style="{ width: item.value + '%' }"></div>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div v-else key="career" class="flex flex-col items-center justify-center h-full gap-3 py-6">
+                        <Compass class="w-8 h-8 text-gray-600" />
+                        <template v-if="careerRecords.length > 0">
+                          <p class="text-xs text-gray-300 text-center leading-relaxed">
+                            已找到 {{ careerRecords.length }} 条职业规划记录<br>
+                            <span class="text-gray-500">最近一次：{{ formatRecordTime(latestCareerRecord) }}</span>
+                          </p>
+                          <button
+                            @click="openCareerPreview(0)"
+                            class="px-3 py-1.5 rounded-lg border border-cyan-500/30 bg-cyan-500/[0.06] text-xs text-cyan-300 font-medium hover:bg-cyan-500/15 hover:border-cyan-400/50 hover:shadow-[0_0_14px_rgba(6,182,212,0.18)] transition-all duration-300 flex items-center gap-1.5"
+                          >
+                            <Compass class="w-3 h-3" />
+                            快速规划预览
+                          </button>
+                          <button
+                            @click="router.push('/career-planning')"
+                            class="px-3 py-1.5 rounded-lg border border-white/10 bg-white/[0.02] text-xs text-gray-400 hover:text-gray-200 hover:border-white/20 hover:bg-white/[0.04] transition-all duration-300"
+                          >
+                            前往完整功能页
+                          </button>
+                        </template>
+                        <template v-else>
+                          <p class="text-xs text-gray-500 text-center leading-relaxed">
+                            暂无职业规划记录<br>
+                            请在职业规划页生成一次职业蓝图
+                          </p>
+                          <button
+                            @click="router.push('/career-planning')"
+                            class="px-3 py-1.5 rounded-lg border border-cyan-500/30 bg-cyan-500/[0.06] text-xs text-cyan-300 font-medium hover:bg-cyan-500/15 hover:border-cyan-400/50 transition-all duration-300"
+                          >
+                            前往完整功能页
+                          </button>
+                        </template>
                       </div>
                     </transition>
+                  </div>
+
+                  <!-- Phase B：雷达图数据来源提示 + 手动选择恢复按钮 -->
+                  <div class="mt-2 flex items-center justify-center gap-2 flex-wrap">
+                    <div class="flex items-center gap-1.5">
+                      <div
+                        class="w-1.5 h-1.5 rounded-full flex-shrink-0"
+                        :class="radarSourceHint.type === 'empty'
+                          ? 'bg-gray-600'
+                          : radarSourceHint.type === 'manual'
+                            ? 'bg-cyan-400 shadow-[0_0_6px_rgba(34,211,238,0.7)]'
+                            : radarSourceHint.type === 'resume'
+                              ? 'bg-purple-400 shadow-[0_0_6px_rgba(168,85,247,0.6)]'
+                              : 'bg-pink-400 shadow-[0_0_6px_rgba(236,72,153,0.6)]'"
+                      ></div>
+                      <span
+                        class="text-xs"
+                        :class="radarSourceHint.type === 'empty'
+                          ? 'text-gray-600 italic'
+                          : radarSourceHint.type === 'manual'
+                            ? 'text-cyan-300/90'
+                            : 'text-gray-500'"
+                      >{{ radarSourceHint.label }}</span>
+                    </div>
+                    <button
+                      v-if="hasManualSelection"
+                      @click="restoreAutoRadar"
+                      class="text-[10px] px-2 py-0.5 rounded-full border border-cyan-500/25 bg-cyan-500/[0.06] text-cyan-300/90 hover:text-cyan-200 hover:border-cyan-400/50 transition-all duration-200"
+                      title="恢复显示最新一次评估"
+                    >恢复最新</button>
                   </div>
                 </div>
 
@@ -1960,64 +2288,19 @@ onUnmounted(() => {
             </div>
           </div>
 
-          <!-- 底部 Dock 输入框 - 通用职业助手 -->
-          <div class="input-container absolute bottom-8 left-0 w-full flex justify-center z-[60] pointer-events-none animate-[fadeInUp_0.5s_ease-out_0.5s_both] pb-[env(safe-area-inset-bottom)]">
-            <div
-              class="input-wrapper relative pointer-events-auto w-full max-w-4xl bg-black/50 backdrop-blur-md rounded-xl border border-white/10 p-4 transition-all duration-300 shadow-[0_0_15px_rgba(168,85,247,0.1)] border-purple-500/20 focus-within:border-cyan-500/50 focus-within:shadow-[0_0_30px_rgba(34,211,238,0.2)] focus-within:-translate-y-1"
-              :class="{ 'border-cyan-500/50 shadow-[0_0_30px_rgba(6,182,212,0.2)]': isChatLoading }"
-            >
-              <!-- 个人文件挂载状态（白色极简风格） -->
-              <div v-if="knowledgeId" class="mb-3 flex items-center gap-2">
-                <div class="personal-file-tag rounded-full px-3 py-1 flex items-center gap-2">
-                  <FileText class="w-3.5 h-3.5 text-gray-300" />
-                  <span class="text-xs text-gray-200 truncate max-w-[260px]">[个人文件已挂载] {{ knowledgeFileName }}</span>
-                  <button
-                    @click="clearKnowledge"
-                    class="text-gray-400 hover:text-white transition-colors ml-1"
-                    title="清空文件挂载"
-                  >
-                    <X class="w-3.5 h-3.5" />
-                  </button>
-                </div>
-              </div>
-              <!-- 系统预设知识库状态（赛博炫酷风格） -->
-              <div v-else class="mb-3 flex items-center gap-2">
-                <div class="system-knowledge-tag rounded-full px-3 py-1 flex items-center gap-2">
-                  <Sparkles class="w-3.5 h-3.5 text-emerald-300" />
-                  <span class="text-xs text-emerald-100 truncate max-w-[260px] system-carousel-text" :class="{ 'carousel-fade-out': !carouselFade, 'carousel-fade-in': carouselFade }">{{ currentCarouselText }}</span>
-                </div>
-              </div>
-
-              <div class="flex items-end gap-3">
-                <label class="relative flex-shrink-0 mb-0.5">
-                  <input type="file" class="absolute inset-0 w-full h-full opacity-0 cursor-pointer" @change="handleChatFileUpload" :accept="ACCEPTED_EXTENSIONS" />
-                  <Paperclip class="w-5 h-5 text-gray-400 hover:text-cyan-400 transition-colors cursor-pointer" />
-                </label>
-
-                <textarea
-                  ref="chatInputRef"
-                  v-model="userChatInput"
-                  @keydown="handleChatEnter"
-                  :placeholder="chatPlaceholder"
-                  rows="1"
-                  class="flex-1 bg-transparent border-none outline-none text-gray-300 placeholder-gray-500 resize-none text-sm leading-relaxed focus:ring-0"
-                ></textarea>
-
-                <button
-                  @click="sendGeneralChatMessage"
-                  :disabled="isChatLoading || !userChatInput.trim()"
-                  class="flex-shrink-0 px-4 py-2.5 rounded-xl font-semibold text-sm shadow-lg transition-all duration-300 hover:scale-[1.02] disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 overflow-hidden relative bg-gradient-to-r from-cyan-500 to-blue-500 text-white shadow-cyan-500/30 hover:shadow-xl hover:shadow-cyan-500/50 mb-0.5"
-                >
-                  <Send class="w-4 h-4" />
-                </button>
-              </div>
-
-              <div class="flex items-center gap-2 mt-2">
-                <Sparkles class="w-3 h-3 text-cyan-500/50" />
-                <span class="text-xs text-gray-500">AI 职场领航员 · 附件仅作本轮对话上下文</span>
-              </div>
-            </div>
-          </div>
+          <!-- 底部 Dock 输入框 - 通用职业助手（浮动 + 可折叠） -->
+          <ChatDock
+            ref="chatDockRef"
+            :placeholder="chatPlaceholder"
+            :knowledgeId="knowledgeId"
+            :knowledgeFileName="knowledgeFileName"
+            :carouselText="currentCarouselText"
+            :carouselFade="carouselFade"
+            @send="sendGeneralChatMessage"
+            @file-upload="handleChatFileUpload"
+            @clear-knowledge="clearKnowledge"
+            @toast="showToastMsg"
+          />
         </div>
       </div>
     </div>
@@ -2158,10 +2441,10 @@ onUnmounted(() => {
     <!-- DataSourceModal 挂载（数据面板设置，与 SetupModal 解耦） -->
     <DataSourceModal
       :visible="showDataSourceModal"
-      :historyRecords="historyRecords"
-      :activeTab="activeDataTab"
+      :records="dataSourceRecords"
+      :activeType="activeDataTab"
       @close="showDataSourceModal = false"
-      @select="(record) => { userStore.setPinnedId(activeDataTab.value, record.id); showDataSourceModal = false }"
+      @select="handleDataSourceSelect"
     />
 
     <!-- ChatPreviewModal 挂载：预览 agent_ 类别的历史对话（Requirements 13.1, 13.5, 13.6） -->
@@ -2174,6 +2457,15 @@ onUnmounted(() => {
 
     <!-- KnowledgePanel 悬浮面板：知识库资产背包 -->
     <KnowledgePanel v-model="showKnowledgePanel" />
+
+    <!-- CareerPreviewPanel 浮窗：职业规划快速预览（支持上一条/下一条翻阅） -->
+    <CareerPreviewPanel
+      :visible="showCareerPreview"
+      :records="careerRecords"
+      :initialIndex="careerPreviewIndex"
+      @close="closeCareerPreview"
+      @go-full="goCareerFull"
+    />
   </div>
 </template>
 
@@ -2368,10 +2660,6 @@ button.bg-gradient-to-r.from-purple-500.to-indigo-600 {
   color: white;
 }
 
-.history-item {
-  transition: all 0.3s ease;
-}
-
 .quick-action {
   transition: all 0.2s ease;
 }
@@ -2548,5 +2836,106 @@ button.bg-gradient-to-r.from-purple-500.to-indigo-600 {
 .widget-fade-leave-to {
   opacity: 0;
   transform: translateX(-10px) scale(0.98);
+}
+
+/* ── 浮动对话框：折叠 / 展开过渡 ────────────────────────── */
+.chat-dock-enter-active,
+.chat-dock-leave-active {
+  transition: opacity 0.28s cubic-bezier(0.4, 0, 0.2, 1),
+              transform 0.32s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.chat-dock-enter-from {
+  opacity: 0;
+  transform: translateY(12px) scale(0.985);
+}
+.chat-dock-leave-to {
+  opacity: 0;
+  transform: translateY(8px) scale(0.985);
+}
+
+/* 顶部高亮分隔线：与 Bento 卡片视觉层级关联 */
+.chat-dock-accent {
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(168, 85, 247, 0.0) 8%,
+    rgba(168, 85, 247, 0.45) 30%,
+    rgba(34, 211, 238, 0.55) 50%,
+    rgba(168, 85, 247, 0.45) 70%,
+    rgba(168, 85, 247, 0.0) 92%,
+    transparent 100%
+  );
+  box-shadow: 0 0 8px rgba(34, 211, 238, 0.18);
+  border-top-left-radius: 12px;
+  border-top-right-radius: 12px;
+}
+
+/* 折叠态最小标题栏：维持赛博毛玻璃质感，升级为紫青双层描边 */
+.chat-dock-collapsed {
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.38), 0 0 14px rgba(168, 85, 247, 0.18);
+  /* 慢呼吸动效：让用户知道它"活着" */
+  animation: chat-dock-pill-breathe 3.2s ease-in-out infinite;
+}
+
+@keyframes chat-dock-pill-breathe {
+  0%, 100% { box-shadow: 0 8px 24px rgba(0,0,0,0.38), 0 0 10px rgba(168,85,247,0.14); }
+  50%      { box-shadow: 0 8px 28px rgba(0,0,0,0.42), 0 0 20px rgba(34,211,238,0.22); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chat-dock-collapsed { animation: none; }
+}
+
+/* 折叠按钮的包裹容器（用于 tooltip 定位） */
+.chat-dock-fold-wrap {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 10;
+}
+
+/* 折叠按钮 hover 反馈 */
+.chat-dock-fold-btn:hover {
+  box-shadow: 0 0 12px rgba(34, 211, 238, 0.22);
+  transform: scale(1.08);
+}
+.chat-dock-fold-btn:active {
+  transform: scale(0.96);
+}
+
+/* 内联 tooltip：折叠按钮 hover 时从上方滑入 */
+.chat-dock-fold-tooltip {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  white-space: nowrap;
+  font-size: 10px;
+  padding: 3px 8px;
+  border-radius: 6px;
+  border: 1px solid rgba(34, 211, 238, 0.25);
+  background: rgba(6, 10, 20, 0.90);
+  color: rgba(207, 250, 254, 0.9);
+  backdrop-filter: blur(8px);
+  opacity: 0;
+  transform: translateY(-4px);
+  pointer-events: none;
+  transition: opacity 0.18s ease, transform 0.18s ease;
+}
+
+.chat-dock-fold-wrap:hover .chat-dock-fold-tooltip {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+/* 减少动效偏好用户：去除位移过渡，仅保留淡入淡出 */
+@media (prefers-reduced-motion: reduce) {
+  .chat-dock-enter-active,
+  .chat-dock-leave-active {
+    transition: opacity 0.18s ease;
+  }
+  .chat-dock-enter-from,
+  .chat-dock-leave-to {
+    transform: none;
+  }
 }
 </style>

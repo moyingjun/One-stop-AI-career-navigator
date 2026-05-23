@@ -53,6 +53,9 @@ def init_db():
         "ALTER TABLE history_records ADD COLUMN chat_history TEXT DEFAULT '[]'",
         "ALTER TABLE history_records ADD COLUMN is_saved INTEGER DEFAULT 0",
         "ALTER TABLE history_records ADD COLUMN user_id INTEGER",
+        "ALTER TABLE history_records ADD COLUMN session_id TEXT",
+        "ALTER TABLE history_records ADD COLUMN record_type TEXT",
+        "ALTER TABLE history_records ADD COLUMN updated_at TEXT",
     ]:
         try:
             conn.execute(alter_sql)
@@ -60,6 +63,12 @@ def init_db():
             pass
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_history_user_id ON history_records(user_id)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_history_session_id ON history_records(session_id)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_history_record_type ON history_records(record_type)"
     )
     conn.commit()
     conn.close()
@@ -208,6 +217,155 @@ def get_saved_records() -> list:
     ).fetchall()
     conn.close()
     return [_normalize_record(row) for row in rows]
+
+
+# ─────────────────────────────────────────────
+# 会话级 Upsert（Phase D 新增）
+# ─────────────────────────────────────────────
+
+def upsert_session_record(
+    user_id: int,
+    session_id: str,
+    record_type: str,
+    user_input: str = "",
+    ai_result: str = "",
+    scores: dict = None,
+    extra_data: dict = None,
+    chat_history: list = None,
+    category: str = None,
+) -> dict:
+    """
+    按 session_id 幂等写入/更新历史记录。
+
+    - 若 session_id 已存在且属于同一 user_id → UPDATE
+    - 若不存在 → INSERT
+    - 返回完整记录字典（含 id、updated_at）
+
+    用于 Dashboard ChatDock 归档（一次完整对话 = 一条记录）。
+    """
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    conn = get_db()
+
+    # 查找已有记录
+    existing = conn.execute(
+        "SELECT id FROM history_records WHERE session_id = ? AND user_id = ?",
+        (session_id, user_id),
+    ).fetchone()
+
+    if existing:
+        # UPDATE
+        record_id = existing["id"]
+        conn.execute(
+            """UPDATE history_records SET
+                user_input = ?,
+                ai_result = ?,
+                scores = ?,
+                extra_data = ?,
+                chat_history = ?,
+                record_type = ?,
+                category = ?,
+                updated_at = ?
+            WHERE id = ?""",
+            (
+                user_input[:2000],
+                ai_result[:5000],
+                json.dumps(scores or {}, ensure_ascii=False),
+                json.dumps(extra_data or {}, ensure_ascii=False),
+                json.dumps(chat_history or [], ensure_ascii=False),
+                record_type,
+                category or record_type,
+                now,
+                record_id,
+            ),
+        )
+    else:
+        # INSERT
+        cursor = conn.execute(
+            """INSERT INTO history_records
+               (category, user_input, ai_result, scores, extra_data, chat_history,
+                is_saved, created_at, user_id, session_id, record_type, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?)""",
+            (
+                category or record_type,
+                user_input[:2000],
+                ai_result[:5000],
+                json.dumps(scores or {}, ensure_ascii=False),
+                json.dumps(extra_data or {}, ensure_ascii=False),
+                json.dumps(chat_history or [], ensure_ascii=False),
+                now,
+                user_id,
+                session_id,
+                record_type,
+                now,
+            ),
+        )
+        record_id = cursor.lastrowid
+
+    conn.commit()
+    conn.close()
+    return get_record_by_id(record_id)
+
+
+def get_record_by_session_id(user_id: int, session_id: str) -> Optional[dict]:
+    """按 session_id + user_id 查询唯一记录。"""
+    conn = get_db()
+    row = conn.execute(
+        "SELECT * FROM history_records WHERE session_id = ? AND user_id = ?",
+        (session_id, user_id),
+    ).fetchone()
+    conn.close()
+    return _normalize_record(row) if row else None
+
+
+def enforce_unsaved_cap(user_id: int, record_group: str, cap: int = 10) -> int:
+    """
+    强制执行未收藏记录上限策略。
+
+    record_group:
+        'chat'    — dashboard_chat 类型（record_type = 'dashboard_chat'）
+        'feature' — resume_diagnosis / career_plan / interview_session
+
+    超出 cap 时删除最旧的未收藏记录（按 id ASC）。
+    收藏记录（is_saved=1）永远保留。
+    返回删除的记录数。
+    """
+    conn = get_db()
+
+    if record_group == "chat":
+        type_filter = "record_type = 'dashboard_chat'"
+    elif record_group == "feature":
+        type_filter = "record_type IN ('resume_diagnosis', 'career_plan', 'interview_session')"
+    else:
+        conn.close()
+        return 0
+
+    # 统计未收藏记录数
+    count_row = conn.execute(
+        f"SELECT COUNT(*) as cnt FROM history_records WHERE user_id = ? AND is_saved = 0 AND {type_filter}",
+        (user_id,),
+    ).fetchone()
+    count = count_row["cnt"] if count_row else 0
+
+    deleted = 0
+    if count > cap:
+        excess = count - cap
+        # 找到最旧的 excess 条未收藏记录的 id
+        rows = conn.execute(
+            f"SELECT id FROM history_records WHERE user_id = ? AND is_saved = 0 AND {type_filter} ORDER BY id ASC LIMIT ?",
+            (user_id, excess),
+        ).fetchall()
+        ids_to_delete = [r["id"] for r in rows]
+        if ids_to_delete:
+            placeholders = ",".join("?" * len(ids_to_delete))
+            cursor = conn.execute(
+                f"DELETE FROM history_records WHERE id IN ({placeholders})",
+                ids_to_delete,
+            )
+            deleted = cursor.rowcount
+
+    conn.commit()
+    conn.close()
+    return deleted
 
 
 # ─────────────────────────────────────────────

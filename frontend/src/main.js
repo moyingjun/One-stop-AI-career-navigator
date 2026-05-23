@@ -15,10 +15,17 @@ if (typeof Uint8Array.prototype.toHex !== 'function') {
 
 import App from './App.vue'
 import router from './router'
+import { useUserStore } from './stores/userStore'
 
 const pinia = createPinia()
 
 const app = createApp(App)
 app.use(pinia)
 app.use(router)
+
+// 应用启动时统一恢复用户画像 + 雷达快照（Phase 1 radar 打通）。
+// 必须在 app.use(pinia) 之后、app.mount() 之前调用，
+// 确保任意路由的组件挂载前 userStore 已经持有正确状态。
+useUserStore().loadFromStorage()
+
 app.mount('#app')

@@ -1,54 +1,50 @@
 """
-Router/history_router.py — 历史记录 CRUD 路由（多租户隔离版）
+Router/history_router.py — 历史记录 CRUD 路由（PostgreSQL async 版本）
 
 所有端点均注入 get_current_user 依赖，强制要求有效 JWT。
-- GET  /api/history          — 返回当前用户的最近记录（按 user_id 隔离）
-- GET  /api/history/saved    — 返回当前用户的已保存记录
-- DELETE /api/history/clear  — 清空当前用户的所有记录
-- GET  /api/history/{id}     — 获取指定记录（校验 user_id 归属，不匹配返回 403）
-- DELETE /api/history/{id}   — 删除指定记录（校验 user_id 归属，不匹配返回 403）
-- PATCH /api/history/{id}/save — 切换保存状态（校验 user_id 归属，不匹配返回 403）
-
-对应 Requirements 4.2, 4.3, 4.4, 4.5
+端点列表：
+  GET    /api/history              — 返回当前用户的最近记录
+  GET    /api/history/saved        — 返回当前用户的已保存记录
+  DELETE /api/history/clear        — 清空当前用户的所有记录
+  GET    /api/history/{id}         — 获取指定记录（校验 user_id 归属）
+  DELETE /api/history/{id}         — 删除指定记录（校验 user_id 归属）
+  PATCH  /api/history/{id}/save    — 切换保存状态（校验 user_id 归属）
+  PUT    /api/history/session/{session_id}  — 幂等归档会话（upsert）
+  GET    /api/history/session/{session_id}  — 按 session_id 获取记录
 """
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
+from sqlalchemy.ext.asyncio import AsyncSession
+from typing import Optional, List
 
-from database import (
-    clear_records_by_user,
-    delete_record,
+from Router.dependencies import get_current_user
+from Router.models.history_model import SaveRecordRequest, SessionUpsertRequest
+from Service.Utils.databases.db import (
+    get_db,
     get_recent_records_by_user,
     get_record_by_id,
-    get_saved_records,
+    delete_record,
+    clear_records_by_user,
     toggle_save_record,
+    count_saved_records_by_user,
+    upsert_session_record,
+    get_record_by_session_id,
+    enforce_unsaved_cap,
 )
-from Router.dependencies import get_current_user
-
 
 router = APIRouter(prefix="/api/history", tags=["History"])
 
-
-class SaveRecordRequest(BaseModel):
-    is_saved: bool
+# 收藏夹上限：用户最多可同时收藏 10 条记录（按 user_id 隔离）
+SAVED_CAP = 10
 
 
 def _assert_record_ownership(record: dict, current_user_id: int) -> None:
     """
     校验历史记录的 user_id 是否与当前用户匹配。
-
-    存量记录的 user_id 可能为 NULL（迁移前写入），此时允许访问以保持向后兼容。
-    若 user_id 不为 NULL 且与当前用户不匹配，则抛出 HTTP 403。
-
-    参数：
-        record          — 从数据库取出的记录字典
-        current_user_id — 由 get_current_user 依赖注入提供的当前用户 ID
-
-    抛出：
-        HTTPException(403) — 记录归属于其他用户时
+    存量记录 user_id 为 NULL 时允许访问（向后兼容）。
     """
     record_user_id = record.get("user_id")
-    # user_id 为 NULL 的存量记录允许任意已认证用户访问（向后兼容）
     if record_user_id is not None and record_user_id != current_user_id:
         raise HTTPException(status_code=403, detail="无权访问此资源")
 
@@ -58,22 +54,14 @@ async def get_history(
     limit: int = 10,
     has_scores: bool = False,
     current_user_id: int = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
 ):
-    """
-    获取当前用户的最近历史记录。
-
-    使用 get_recent_records_by_user 强制附加 WHERE user_id = ? 隔离约束，
-    确保不同用户之间的数据完全隔离（Requirements 4.3）。
-
-    参数：
-        limit      — 返回条数上限（默认 10）
-        has_scores — 若为 True，只返回 scores 字段非空（非 '{}'）的记录，
-                     用于 Dashboard 雷达图数据源查询
-    """
-    records = get_recent_records_by_user(
+    """获取当前用户的最近历史记录。"""
+    records = await get_recent_records_by_user(
+        db=db,
         user_id=current_user_id,
         limit=limit,
-        has_scores=has_scores if has_scores else None,
+        has_scores=has_scores,
     )
     return {"success": True, "records": records}
 
@@ -81,18 +69,14 @@ async def get_history(
 @router.get("/saved")
 async def get_saved_history(
     current_user_id: int = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
 ):
-    """
-    获取当前用户的已保存历史记录。
-
-    🚨 多租户铁律：从 JWT Token 中提取 user_id，只返回属于当前用户的记录。
-    向后兼容：user_id 为 NULL 的存量记录也允许访问。
-    """
-    records = get_recent_records_by_user(
+    """获取当前用户的已保存历史记录。"""
+    records = await get_recent_records_by_user(
+        db=db,
         user_id=current_user_id,
-        limit=200,  # 已保存记录上限
+        limit=200,
     )
-    # 进一步过滤：只返回 is_saved=True 的记录
     saved = [r for r in records if r.get("is_saved")]
     return {"success": True, "records": saved}
 
@@ -100,28 +84,76 @@ async def get_saved_history(
 @router.delete("/clear")
 async def clear_history(
     current_user_id: int = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """清空当前用户的所有历史记录。"""
+    deleted_count = await clear_records_by_user(db=db, user_id=current_user_id)
+    return {"success": True, "deleted_count": deleted_count}
+
+
+# ── session 端点必须在 /{record_id} 之前注册，否则 FastAPI 会把 "session" 当 int ──
+
+@router.put("/session/{session_id}")
+async def upsert_session(
+    session_id: str,
+    request: SessionUpsertRequest,
+    current_user_id: int = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
 ):
     """
-    清空当前用户的所有历史记录。
-
-    🚨 多租户铁律：只清空当前用户（由 JWT 解析）的记录，绝不清空全表。
+    按 session_id 幂等写入/更新历史记录（ChatDock 归档专用）。
     """
-    deleted_count = clear_records_by_user(user_id=current_user_id)
-    return {"success": True, "deleted_count": deleted_count}
+    record = await upsert_session_record(
+        db=db,
+        user_id=current_user_id,
+        session_id=session_id,
+        record_type=request.record_type,
+        user_input=request.user_input,
+        ai_result=request.ai_result,
+        scores=request.scores or None,
+        extra_data=request.extra_data or None,
+        chat_history=request.chat_history or None,
+        category=request.record_type,
+    )
+
+    # 执行上限策略
+    if request.record_type == "dashboard_chat":
+        await enforce_unsaved_cap(db=db, user_id=current_user_id, record_group="chat", cap=10)
+    elif request.record_type in ("resume_diagnosis", "career_plan", "interview_session"):
+        await enforce_unsaved_cap(db=db, user_id=current_user_id, record_group="feature", cap=10)
+
+    return {
+        "success": True,
+        "data": record,
+        "record_id": record["id"] if record else None,
+        "session_id": session_id,
+        "updated_at": record.get("updated_at") if record else None,
+    }
+
+
+@router.get("/session/{session_id}")
+async def get_session(
+    session_id: str,
+    current_user_id: int = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """按 session_id 获取历史记录（用于 Dashboard 恢复 ChatDock 对话）。"""
+    record = await get_record_by_session_id(
+        db=db, user_id=current_user_id, session_id=session_id
+    )
+    if not record:
+        raise HTTPException(status_code=404, detail="会话记录不存在")
+    return {"success": True, "data": record}
 
 
 @router.get("/{record_id}")
 async def get_history_by_id(
     record_id: int,
     current_user_id: int = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
 ):
-    """
-    获取指定 ID 的历史记录。
-
-    在返回数据前校验记录的 user_id 是否属于当前用户，
-    不匹配时返回 HTTP 403（Requirements 4.4）。
-    """
-    record = get_record_by_id(record_id)
+    """获取指定 ID 的历史记录（校验归属）。"""
+    record = await get_record_by_id(db=db, record_id=record_id)
     if not record:
         raise HTTPException(status_code=404, detail="记录不存在")
     _assert_record_ownership(record, current_user_id)
@@ -132,18 +164,14 @@ async def get_history_by_id(
 async def delete_history_record(
     record_id: int,
     current_user_id: int = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
 ):
-    """
-    删除指定 ID 的历史记录。
-
-    在执行删除前校验记录的 user_id 是否属于当前用户，
-    不匹配时返回 HTTP 403（Requirements 4.4）。
-    """
-    record = get_record_by_id(record_id)
+    """删除指定 ID 的历史记录（校验归属）。"""
+    record = await get_record_by_id(db=db, record_id=record_id)
     if not record:
         raise HTTPException(status_code=404, detail="记录不存在")
     _assert_record_ownership(record, current_user_id)
-    deleted = delete_record(record_id)
+    deleted = await delete_record(db=db, record_id=record_id)
     if not deleted:
         raise HTTPException(status_code=404, detail="记录不存在")
     return {"success": True, "deleted_id": record_id}
@@ -154,18 +182,36 @@ async def save_history_record(
     record_id: int,
     request: SaveRecordRequest,
     current_user_id: int = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
 ):
     """
-    切换指定历史记录的保存状态。
+    切换指定历史记录的保存状态（校验归属 + 收藏夹上限）。
 
-    在修改前校验记录的 user_id 是否属于当前用户，
-    不匹配时返回 HTTP 403（Requirements 4.4）。
+    业务规则：
+      - 取消收藏（is_saved=False）：不限制，直接执行
+      - 收藏（is_saved=True）：
+          1. 若该记录当前已经是收藏状态 → 幂等返回成功
+          2. 若用户当前收藏数 >= SAVED_CAP（10）→ 返回 409 Conflict
+          3. 否则正常收藏
+
+      该限制严格按 user_id 隔离，不统计全站。
+      不会自动删除/取消已有收藏，需要用户自行操作。
     """
-    record = get_record_by_id(record_id)
+    record = await get_record_by_id(db=db, record_id=record_id)
     if not record:
         raise HTTPException(status_code=404, detail="记录不存在")
     _assert_record_ownership(record, current_user_id)
-    updated = toggle_save_record(record_id, request.is_saved)
+
+    # 收藏夹上限检查（仅在"未收藏 → 收藏"路径生效）
+    if request.is_saved and not record.get("is_saved"):
+        saved_count = await count_saved_records_by_user(db=db, user_id=current_user_id)
+        if saved_count >= SAVED_CAP:
+            raise HTTPException(
+                status_code=409,
+                detail=f"收藏夹已满，最多可收藏 {SAVED_CAP} 条记录，请先取消收藏其他记录。",
+            )
+
+    updated = await toggle_save_record(db=db, record_id=record_id, is_saved=request.is_saved)
     if not updated:
         raise HTTPException(status_code=404, detail="记录不存在")
     return {"success": True, "data": updated}

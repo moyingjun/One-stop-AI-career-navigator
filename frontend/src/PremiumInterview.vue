@@ -1,11 +1,18 @@
 <script setup>
 import { ref, computed, nextTick, onMounted, onUnmounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
-import { ArrowLeft, Send, UserCircle, Cpu, Loader2, Shield, AlertTriangle, X, Sprout, Briefcase, Flame } from 'lucide-vue-next'
+import { ArrowLeft, Send, UserCircle, Cpu, Loader2, AlertTriangle, Sprout, Briefcase, Flame } from 'lucide-vue-next'
 import { marked } from 'marked'
-import CyberGlassCard from './components/CyberGlassCard.vue'
+import FeaturePageShell from './components/FeaturePageShell.vue'
+import ActionDock from './components/ActionDock.vue'
+import MetricCard from './components/MetricCard.vue'
+import SidebarEducationPlaceholder from './components/SidebarEducationPlaceholder.vue'
+import BaseModal from './components/BaseModal.vue'
+import CyberRadarChart from './components/CyberRadarChart.vue'
 import { streamInterviewChat } from '@/services/llm_service.js'
 import { getAuthHeaders } from '@/services/authService.js'
+import { showToast, resolveLoader } from '@/utils/uiFallbacks'
+import { upsertSession } from '@/services/historyClient.js'
 import { useUserStore } from '@/stores/userStore'
 
 const userStore = useUserStore()
@@ -96,6 +103,26 @@ const themeIcon = computed(() => {
   return Flame
 })
 
+// FeaturePageShell variant 与 stage badges：随难度切换主色调
+const themeVariant = computed(() => {
+  if (interviewDifficulty.value === 'beginner') return 'emerald'
+  if (interviewDifficulty.value === 'p8') return 'pink'
+  return 'cyan'
+})
+
+const stageBadges = computed(() => {
+  const tone = themeVariant.value
+  return [
+    { label: '训练舱', tone },
+    { label: '实时评分', tone },
+    { label: '复盘', tone }
+  ]
+})
+
+// 异步解析 StreamingLoader（缺失时降级到 InlineLoaderFallback）
+const StreamingLoaderComp = ref(null)
+resolveLoader().then((c) => { StreamingLoaderComp.value = c }).catch(() => {})
+
 const pressureScore = ref(50)
 const pressureColor = computed(() => {
   if (pressureScore.value >= 70) return 'from-green-500 to-emerald-400'
@@ -122,6 +149,39 @@ const mentorComment = ref('')
 const RADAR_LABELS = ['professional', 'logic', 'communication', 'problemSolving', 'potential', 'resilience']
 const RADAR_CENTER = 130
 const RADAR_MAX_RADIUS = 80
+
+// 压力分趋势 / 色调：>= 60 上升、<= 40 下降、其它持平；色调随分数切换
+const pressureTrend = computed(() => {
+  if (pressureScore.value >= 60) return 'up'
+  if (pressureScore.value <= 40) return 'down'
+  return 'flat'
+})
+
+const pressureTone = computed(() => {
+  if (pressureScore.value >= 70) return 'emerald'
+  if (pressureScore.value >= 40) return 'cyan'
+  return 'pink'
+})
+
+// 复盘弹窗用的雷达图数据（喂给 CyberRadarChart）
+const radarChartData = computed(() => ({
+  indicators: [
+    { name: '专业技能', max: 100 },
+    { name: '逻辑分析', max: 100 },
+    { name: '沟通表达', max: 100 },
+    { name: '问题解决', max: 100 },
+    { name: '综合潜力', max: 100 },
+    { name: '抗压韧性', max: 100 }
+  ],
+  values: [
+    radarScores.value.professional,
+    radarScores.value.logic,
+    radarScores.value.communication,
+    radarScores.value.problemSolving,
+    radarScores.value.potential,
+    radarScores.value.resilience
+  ]
+}))
 
 const radarPoints = computed(() => {
   const angles = RADAR_LABELS.map((_, i) => (i * 60 - 90) * Math.PI / 180)
@@ -319,6 +379,8 @@ const initInterview = async () => {
               const required = ['professional', 'logic', 'communication', 'problemSolving', 'potential', 'resilience']
               if (required.every(k => k in scores)) {
                 radarScores.value = { ...radarScores.value, ...scores }
+                // Phase 1：历史记录恢复时同步更新 Dashboard 雷达图
+                userStore.updateRadarFromInterview(scores)
               }
             } catch {}
           }
@@ -334,6 +396,10 @@ const initInterview = async () => {
           isInterviewEnded.value = true
           isEvaluationDone.value = true
           showResultModal.value = true
+          // 恢复 session_id，后续再保存时 upsert 到同一条记录
+          if (record.session_id) {
+            currentSessionId.value = record.session_id
+          }
           return
         }
       }
@@ -385,7 +451,7 @@ const startInterviewWithDifficulty = async () => {
     addMessage('ai', reply)
   } catch (error) {
     console.error('初始化面试失败:', error)
-    addMessage('ai', '👋 面试官正在赶来的路上，请重新点击发送开始面试哦~')
+    addMessage('ai', '面试官已就位，请输入你的第一段回答开始模拟。')
   } finally {
     isLoading.value = false
     isAiSpeaking.value = false
@@ -572,27 +638,27 @@ const endInterview = async () => {
       }
       mentorComment.value = resData.data.comment || '无评价。'
       
-      // 保存历史记录（失败不阻断 UI 流程）
+      // Phase 1：打通 Dashboard 右侧雷达图 —— 面试评估完成时写入 interview 快照
+      userStore.updateRadarFromInterview(radarScores.value)
+      
+      // 保存历史记录（session upsert，幂等，失败不阻断 UI 流程）
       try {
-        await fetch(`${API_BASE_URL}/history`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
-          body: JSON.stringify({
-            category: `interview_${interviewDifficulty.value}`,
-            user_input: `面试候选人：${candidateName.value}，岗位：${targetRole.value}`,
-            ai_result: mentorComment.value,
-            scores: JSON.stringify(radarScores.value),
-            chat_history: JSON.stringify(messages.value.map(m => ({ role: m.role, content: m.content }))),
-            extra_data: JSON.stringify({
-              resume_text: resumeText.value,
-              target_role: targetRole.value,
-              jd_text: interviewJd.value,
-              difficulty: interviewDifficulty.value
-            })
-          })
+        await upsertSession(currentSessionId.value, {
+          record_type: 'interview_session',
+          user_input: `面试候选人：${candidateName.value}，岗位：${targetRole.value}`,
+          ai_result: mentorComment.value,
+          scores: radarScores.value,
+          extra_data: {
+            resume_text: resumeText.value.slice(0, 3000),
+            target_role: targetRole.value,
+            jd_text: interviewJd.value.slice(0, 2000),
+            difficulty: interviewDifficulty.value
+          },
+          chat_history: messages.value.map(m => ({ role: m.role, content: m.content }))
         })
       } catch (saveErr) {
         console.error('保存历史记录失败:', saveErr)
+        showToast('保存历史记录失败', { type: 'error' })
       }
 
       setTimeout(() => {
@@ -652,7 +718,7 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="min-h-[100dvh] relative flex flex-col lg:flex-row overflow-hidden bg-[#020205] transition-all duration-1000" :class="{
+  <div class="min-h-[100dvh] relative overflow-hidden bg-[#020205] transition-all duration-1000" :class="{
     'ambient-negative': ambientMood === 'negative',
     'ambient-positive': ambientMood === 'positive',
     'ambient-neutral': ambientMood === 'neutral'
@@ -683,223 +749,306 @@ onUnmounted(() => {
       </button>
     </div>
 
-    <!-- 主内容 -->
-    <div class="relative z-10 flex w-full h-[100dvh] pt-14">
-      <!-- 左侧面板 -->
-      <CyberGlassCard variant="pink" headerless no-padding class="left-panel hidden lg:flex w-[30%] flex-col border-r border-white/10 relative transition-all duration-500" :class="isAiSpeaking ? 'opacity-60' : ''">
-        <!-- 专注模式遮罩 -->
-        <div v-if="isAiSpeaking" class="absolute inset-0 bg-black/40 backdrop-blur-sm z-10 flex items-center justify-center">
-          <div class="text-center">
-            <div class="w-12 h-12 rounded-full border flex items-center justify-center mx-auto mb-2" :class="[themeConfig.bg, themeConfig.border]">
-              <Cpu class="w-6 h-6 animate-pulse" :class="themeConfig.text" />
+    <!-- 主内容：FeaturePageShell 三段骨架 -->
+    <div class="relative z-10 w-full max-w-[1280px] mx-auto px-3 md:px-6 pt-14 pb-6">
+      <!-- 升学占位项（三页共享） -->
+      <div class="mb-3">
+        <SidebarEducationPlaceholder />
+      </div>
+
+      <FeaturePageShell
+        title="模拟面试"
+        subtitle="沉浸式 AI 面试官 · 实时表现评估 · 六维复盘"
+        :stage-badges="stageBadges"
+        :variant="themeVariant"
+        max-width="1280px"
+      >
+        <!-- ============ #control：难度选择 + 消息输入 ============ -->
+        <template #control>
+          <div class="interview-control space-y-4">
+            <!-- 难度选择（模式切换条） -->
+            <div>
+              <div class="flex items-center justify-between mb-2">
+                <div class="flex items-center gap-2">
+                  <span class="text-xs font-semibold text-gray-200">训练舱模式</span>
+                  <span class="text-[10px] text-gray-500 font-mono uppercase tracking-wider">SELECT DIFFICULTY</span>
+                </div>
+                <span class="text-[10px] text-gray-400 px-2 py-0.5 rounded-full border border-white/10 bg-white/[0.03]" data-test="stage-badge">
+                  当前：{{ interviewDifficulty === 'p8' ? 'P8 压力面试' : interviewDifficulty === 'beginner' ? '温和鼓励' : '标准专业' }}
+                </span>
+              </div>
+              <div class="grid grid-cols-3 gap-2">
+                <button
+                  type="button"
+                  @click="interviewDifficulty = 'beginner'"
+                  :disabled="messages.length > 0 && !isInterviewEnded"
+                  class="difficulty-btn px-3 py-2 rounded-lg text-xs font-semibold border-2 transition-all duration-200 flex items-center justify-center gap-1 disabled:opacity-50 disabled:cursor-not-allowed"
+                  :class="interviewDifficulty === 'beginner'
+                    ? 'difficulty-btn--selected border-emerald-400 bg-emerald-500/15 text-emerald-200 ring-2 ring-emerald-500/30 shadow-[0_0_18px_rgba(16,185,129,0.25)]'
+                    : 'border-white/10 hover:border-white/20 text-gray-400 hover:text-gray-200'"
+                  data-test="difficulty-beginner"
+                >
+                  <Sprout class="w-3.5 h-3.5" />
+                  <span>温和</span>
+                </button>
+                <button
+                  type="button"
+                  @click="interviewDifficulty = 'standard'"
+                  :disabled="messages.length > 0 && !isInterviewEnded"
+                  class="difficulty-btn px-3 py-2 rounded-lg text-xs font-semibold border-2 transition-all duration-200 flex items-center justify-center gap-1 disabled:opacity-50 disabled:cursor-not-allowed"
+                  :class="interviewDifficulty === 'standard'
+                    ? 'difficulty-btn--selected border-cyan-400 bg-cyan-500/15 text-cyan-200 ring-2 ring-cyan-500/30 shadow-[0_0_18px_rgba(34,211,238,0.25)]'
+                    : 'border-white/10 hover:border-white/20 text-gray-400 hover:text-gray-200'"
+                  data-test="difficulty-standard"
+                >
+                  <Briefcase class="w-3.5 h-3.5" />
+                  <span>标准</span>
+                </button>
+                <button
+                  type="button"
+                  @click="interviewDifficulty = 'p8'"
+                  :disabled="messages.length > 0 && !isInterviewEnded"
+                  class="difficulty-btn px-3 py-2 rounded-lg text-xs font-semibold border-2 transition-all duration-200 flex items-center justify-center gap-1 disabled:opacity-50 disabled:cursor-not-allowed"
+                  :class="interviewDifficulty === 'p8'
+                    ? 'difficulty-btn--selected border-pink-400 bg-pink-500/15 text-pink-200 ring-2 ring-pink-500/30 shadow-[0_0_18px_rgba(236,72,153,0.25)]'
+                    : 'border-white/10 hover:border-white/20 text-gray-400 hover:text-gray-200'"
+                  data-test="difficulty-p8"
+                >
+                  <Flame class="w-3.5 h-3.5" />
+                  <span>P8</span>
+                </button>
+              </div>
             </div>
-            <p class="text-xs" :class="themeConfig.text">AI 正在审视...</p>
-          </div>
-        </div>
 
-        <!-- 能力评估雷达 -->
-        <div class="p-4 border-b border-white/10 relative z-0">
-          <div class="flex items-center gap-2 mb-3">
-            <component :is="themeIcon" class="w-5 h-5" :class="themeConfig.text" />
-            <h2 class="text-sm font-bold" :class="themeConfig.text">能力评估雷达</h2>
-          </div>
-          <div class="radar-container aspect-square max-w-[240px] mx-auto p-2 relative overflow-visible">
-            <div class="sonar-sweep"></div>
-            <div class="sonar-sweep sonar-sweep-delay"></div>
-            <svg viewBox="0 0 260 260" overflow="visible" class="w-full h-full relative z-10">
-              <defs>
-                <linearGradient id="radarGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-                  <stop offset="0%" :stop-color="themeConfig.colorRgba" stop-opacity="0.6" />
-                  <stop offset="100%" :stop-color="themeConfig.color" stop-opacity="0.3" />
-                </linearGradient>
-              </defs>
-              <circle :cx="RADAR_CENTER" :cy="RADAR_CENTER" r="27" fill="none" :stroke="themeConfig.colorRgba.replace('0.6', '0.1')" stroke-width="0.5" />
-              <circle :cx="RADAR_CENTER" :cy="RADAR_CENTER" r="54" fill="none" :stroke="themeConfig.colorRgba.replace('0.6', '0.1')" stroke-width="0.5" />
-              <polygon :points="`${RADAR_CENTER},${RADAR_CENTER - RADAR_MAX_RADIUS} ${RADAR_CENTER + RADAR_MAX_RADIUS * 0.866},${RADAR_CENTER - RADAR_MAX_RADIUS * 0.5} ${RADAR_CENTER + RADAR_MAX_RADIUS * 0.866},${RADAR_CENTER + RADAR_MAX_RADIUS * 0.5} ${RADAR_CENTER},${RADAR_CENTER + RADAR_MAX_RADIUS} ${RADAR_CENTER - RADAR_MAX_RADIUS * 0.866},${RADAR_CENTER + RADAR_MAX_RADIUS * 0.5} ${RADAR_CENTER - RADAR_MAX_RADIUS * 0.866},${RADAR_CENTER - RADAR_MAX_RADIUS * 0.5}`" fill="none" :stroke="themeConfig.colorRgba.replace('0.6', '0.15')" stroke-width="1" />
-              <polygon :points="radarPoints" fill="url(#radarGrad)" :stroke="themeConfig.colorRgba.replace('0.6', '0.5')" stroke-width="1.5" class="radar-polygon" />
-              <circle v-for="(point, i) in radarPoints.split(' ')" :key="i" :cx="point.split(',')[0]" :cy="point.split(',')[1]" r="2" :fill="themeConfig.color" class="radar-dot" />
-              <text :x="RADAR_CENTER" :y="RADAR_CENTER - RADAR_MAX_RADIUS - 15" text-anchor="middle" :fill="themeConfig.color" font-size="10" font-weight="500">专业技能</text>
-              <text :x="RADAR_CENTER + RADAR_MAX_RADIUS * 0.866 + 20" :y="RADAR_CENTER - RADAR_MAX_RADIUS * 0.5 + 4" text-anchor="start" :fill="themeConfig.color" font-size="10" font-weight="500">逻辑分析</text>
-              <text :x="RADAR_CENTER + RADAR_MAX_RADIUS * 0.866 + 20" :y="RADAR_CENTER + RADAR_MAX_RADIUS * 0.5 + 4" text-anchor="start" :fill="themeConfig.color" font-size="10" font-weight="500">沟通表达</text>
-              <text :x="RADAR_CENTER" :y="RADAR_CENTER + RADAR_MAX_RADIUS + 22" text-anchor="middle" :fill="themeConfig.color" font-size="10" font-weight="500">问题解决</text>
-              <text :x="RADAR_CENTER - RADAR_MAX_RADIUS * 0.866 - 20" :y="RADAR_CENTER + RADAR_MAX_RADIUS * 0.5 + 4" text-anchor="end" :fill="themeConfig.color" font-size="10" font-weight="500">综合潜力</text>
-              <text :x="RADAR_CENTER - RADAR_MAX_RADIUS * 0.866 - 20" :y="RADAR_CENTER - RADAR_MAX_RADIUS * 0.5 + 4" text-anchor="end" :fill="themeConfig.color" font-size="10" font-weight="500">抗压韧性</text>
-            </svg>
-          </div>
-        </div>
+            <!-- 消息输入 -->
+            <div>
+              <label class="block text-xs font-semibold text-gray-300 mb-2">你的回答</label>
+              <textarea
+                v-model="userInput"
+                @keydown="handleEnter"
+                placeholder="输入你的回答...（Enter 发送，Shift+Enter 换行）"
+                rows="4"
+                :disabled="isLoading || strikeTerminated"
+                class="w-full rounded-xl px-4 py-3 text-sm resize-none focus:outline-none backdrop-blur-xl shadow-[inset_0_1px_1px_rgba(255,255,255,0.1)] transition-all duration-300 bg-black/60 text-gray-200 placeholder-gray-500 focus:ring-2 disabled:opacity-50 disabled:cursor-not-allowed border min-h-[110px]"
+                :class="[themeConfig.borderLight, 'focus:' + themeConfig.border, 'focus:ring-' + themeConfig.primary + '/20']"
+                data-test="message-input"
+              ></textarea>
 
-        <!-- 候选人档案 -->
-        <div class="flex-1 p-4 overflow-y-auto relative z-0">
-          <div class="flex items-center gap-2 mb-3">
-            <component :is="themeIcon" class="w-5 h-5" :class="themeConfig.text" />
-            <h2 class="text-sm font-bold" :class="themeConfig.text">候选人档案</h2>
+              <!-- Strike 警告 -->
+              <div v-if="strikeTerminated" class="mt-2 text-center">
+                <p class="text-red-400 font-semibold text-xs">🚫 检测到多次无效输入，面试已被强制终止！</p>
+              </div>
+              <div v-else-if="strikeCount > 0 && strikeCount < 3" class="mt-2 text-center">
+                <p class="text-amber-400 text-xs">⚠️ 警告 {{ strikeCount }}/3：检测到无效输入，再犯 {{ 3 - strikeCount }} 次将强制终止面试！</p>
+              </div>
+            </div>
           </div>
-          <!-- 求职意向优先展示块：有 targetRole 时显示在简历内容上方 -->
-          <div v-if="targetRole" class="mb-3 px-3 py-2 rounded-lg border" :class="themeConfig.borderLight">
-            <p class="text-[10px] text-gray-500 uppercase tracking-wider mb-0.5">求职意向</p>
-            <p class="text-sm font-semibold" :class="themeConfig.text">{{ targetRole }}</p>
-          </div>
+        </template>
 
-          <div class="animate-scan rounded-xl border p-4 max-h-[calc(100vh-500px)] overflow-y-auto backdrop-blur-xl shadow-[inset_0_1px_1px_rgba(255,255,255,0.1)] transition-all duration-500 hover:border-current hover:shadow-[0_0_30px_currentColor]" :class="isResumeValid ? ['bg-white/[0.02]', themeConfig.borderLight] : 'bg-amber-500/5 border-amber-500/20'">
-            <template v-if="isResumeValid">
-              <div class="text-gray-300 text-sm leading-relaxed whitespace-pre-wrap" v-html="formattedResumeHtml"></div>
-            </template>
-            <template v-else>
-              <div class="flex items-start gap-2">
-                <AlertTriangle class="w-4 h-4 text-amber-400 flex-shrink-0 mt-0.5" />
-                <div>
-                  <p class="text-xs text-amber-300 font-semibold mb-1">简历数据缺失</p>
-                  <p class="text-[11px] text-amber-400/70 leading-relaxed">系统已自动切换至【全栈盲测模式】。面试官将进行无差别跨域打击。</p>
+        <!-- ============ #result：对话流 + 压力分 MetricCard ============ -->
+        <template #result>
+          <div class="interview-result relative">
+            <!-- 专注模式脉冲光晕 -->
+            <div v-if="isAiSpeaking" class="absolute inset-0 pointer-events-none z-0">
+              <div class="focus-glow focus-glow-1"></div>
+              <div class="focus-glow focus-glow-2"></div>
+              <div class="focus-glow focus-glow-3"></div>
+            </div>
+
+            <div class="relative z-10 flex flex-col gap-3">
+              <!-- 顶部 Header：面试官身份 + 在线状态（独立面板，避免与 MetricCard 混淆） -->
+              <div class="interviewer-header rounded-xl border bg-black/35 backdrop-blur-xl px-3 py-2.5 md:px-4 md:py-3 flex items-center justify-between flex-wrap gap-2"
+                :class="themeConfig.borderLight">
+                <div class="flex items-center gap-2 md:gap-3">
+                  <div class="w-9 h-9 rounded-full flex items-center justify-center shadow-lg relative" :class="['bg-gradient-to-br', themeConfig.gradient, themeConfig.shadow]">
+                    <component :is="themeIcon" class="w-4 h-4 text-white" />
+                    <div v-if="isAiSpeaking" class="absolute -right-1 -top-1 flex items-center gap-0.5">
+                      <div class="voice-bar voice-bar-1"></div>
+                      <div class="voice-bar voice-bar-2"></div>
+                      <div class="voice-bar voice-bar-3"></div>
+                      <div class="voice-bar voice-bar-4"></div>
+                    </div>
+                  </div>
+                  <div>
+                    <h2 class="text-sm md:text-base font-bold text-white">{{ interviewDifficulty === 'p8' ? 'P8 级' : interviewDifficulty === 'beginner' ? '温和鼓励' : '标准专业' }} AI 面试官</h2>
+                    <p class="text-[10px] text-gray-400">{{ isAiSpeaking ? 'AI 正在审视你的回答…' : '沉浸式面试模式' }}</p>
+                  </div>
+                </div>
+                <div class="flex items-center gap-2 flex-shrink-0">
+                  <div class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse shadow-[0_0_8px_rgba(16,185,129,0.8)]"></div>
+                  <span class="text-[10px] md:text-xs font-mono font-semibold tracking-wider" :class="isAiSpeaking ? themeConfig.text : 'text-emerald-400'">{{ isAiSpeaking ? 'Thinking...' : 'DeepSeek V4 Online' }}</span>
                 </div>
               </div>
-            </template>
-          </div>
 
-          <!-- 岗位描述 -->
-          <div v-if="interviewJd" class="mt-4">
-            <div class="flex items-center gap-2 mb-3">
-              <svg class="w-5 h-5 text-cyan-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-                <polyline points="14 2 14 8 20 8" />
-              </svg>
-              <h2 class="text-sm font-bold text-cyan-400">目标岗位 (JD)</h2>
-            </div>
-            <div class="rounded-xl border border-cyan-500/20 bg-white/[0.02] backdrop-blur-xl p-4 max-h-[200px] overflow-y-auto shadow-[inset_0_1px_1px_rgba(255,255,255,0.1)]">
-              <p class="text-xs leading-relaxed whitespace-pre-wrap text-cyan-100/70">{{ interviewJd }}</p>
-            </div>
-          </div>
-        </div>
-      </CyberGlassCard>
-
-      <!-- 右侧主对话控制台 -->
-      <CyberGlassCard headerless variant="default" no-padding class="flex-1 flex flex-col relative z-[60] pointer-events-auto pb-[env(safe-area-inset-bottom)]">
-        <!-- 专注模式脉冲光晕 -->
-        <div v-if="isAiSpeaking" class="absolute inset-0 pointer-events-none z-0">
-          <div class="focus-glow focus-glow-1"></div>
-          <div class="focus-glow focus-glow-2"></div>
-          <div class="focus-glow focus-glow-3"></div>
-        </div>
-
-        <!-- Header -->
-        <div class="flex items-center justify-between px-4 py-3 md:px-6 md:py-4 border-b backdrop-blur-3xl shadow-[inset_0_1px_1px_rgba(255,255,255,0.1)] relative z-10" :class="themeConfig.borderLight + ' bg-white/[0.03]'">
-          <div class="flex items-center gap-2 md:gap-3 flex-shrink-0 cursor-pointer hover:opacity-80 transition-opacity duration-200 active:scale-95" @click="router.push('/')">
-            <div class="w-10 h-10 rounded-full flex items-center justify-center shadow-lg relative" :class="['bg-gradient-to-br', themeConfig.gradient, themeConfig.shadow]">
-              <component :is="themeIcon" class="w-5 h-5 text-white" />
-              <div v-if="isAiSpeaking" class="absolute -right-1 -top-1 flex items-center gap-0.5">
-                <div class="voice-bar voice-bar-1"></div>
-                <div class="voice-bar voice-bar-2"></div>
-                <div class="voice-bar voice-bar-3"></div>
-                <div class="voice-bar voice-bar-4"></div>
+              <!-- 压力分 MetricCard（仪表盘 + 三卡同高） -->
+              <div class="metrics-rail" data-test="pressure-score-card">
+                <div class="metrics-rail__head">
+                  <div class="flex items-center gap-2">
+                    <span class="metrics-rail__dot" aria-hidden="true"></span>
+                    <span class="text-[11px] font-mono uppercase tracking-wider text-gray-400">DASHBOARD · 实时仪表</span>
+                  </div>
+                  <span class="text-[10px] text-gray-500 font-mono">每轮自动刷新</span>
+                </div>
+                <div class="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                  <MetricCard
+                    :label="'实时表现评估'"
+                    :value="pressureScore"
+                    unit="/100"
+                    :trend="pressureTrend"
+                    :tone="pressureTone"
+                  >
+                    <span class="text-[11px]" :class="pressureScore >= 70 ? 'text-emerald-300' : pressureScore >= 40 ? 'text-cyan-300' : 'text-pink-300'">{{ pressureLabel }}</span>
+                  </MetricCard>
+                  <MetricCard
+                    :label="'已交互轮次'"
+                    :value="messages.filter(m => m.role === 'user').length"
+                    unit="轮"
+                    :tone="themeVariant"
+                  />
+                  <MetricCard
+                    :label="'警告 / 状态'"
+                    :value="strikeTerminated ? '已终止' : (strikeCount > 0 ? `${strikeCount}/3` : '正常')"
+                    :tone="strikeTerminated ? 'pink' : (strikeCount > 0 ? 'pink' : 'emerald')"
+                  />
+                </div>
               </div>
-            </div>
-            <div>
-              <h1 class="text-lg md:text-2xl font-bold whitespace-nowrap text-white">{{ interviewDifficulty === 'p8' ? 'P8 级' : interviewDifficulty === 'beginner' ? '温和鼓励' : '标准专业' }} AI 面试官系统</h1>
-              <p class="text-xs text-pink-400/50">{{ isAiSpeaking ? 'AI 正在审视你的回答...' : `沉浸式面试模式 · ${interviewDifficulty === 'p8' ? '压力刁难' : interviewDifficulty === 'beginner' ? '温和鼓励' : '标准专业'}难度` }}</p>
-            </div>
-          </div>
-          <div class="flex items-center gap-2 flex-shrink-0">
-            <div class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse shadow-[0_0_8px_rgba(16,185,129,0.8)]"></div>
-            <span class="text-xs md:text-sm font-mono hidden sm:inline-block font-semibold tracking-wider drop-shadow-[0_0_5px_rgba(52,211,153,0.4)]" :class="isAiSpeaking ? themeConfig.text : 'text-emerald-400'">{{ isAiSpeaking ? 'Thinking...' : 'DeepSeek V4 Online' }}</span>
-          </div>
-        </div>
 
-        <!-- 压力值进度条 -->
-        <div class="px-4 py-2 border-b border-white/5 bg-white/[0.01] relative z-10">
-          <div class="flex items-center justify-between mb-1">
-            <span class="text-[10px] text-gray-500">实时表现评估</span>
-            <span class="text-[10px] font-medium" :class="pressureScore >= 70 ? 'text-green-400' : pressureScore >= 40 ? 'text-yellow-400' : 'text-red-400'">{{ pressureLabel }}</span>
-          </div>
-          <div class="h-1.5 bg-white/5 rounded-full overflow-hidden">
-            <div class="h-full rounded-full transition-all duration-700 ease-out bg-gradient-to-r" :class="pressureColor" :style="{ width: pressureScore + '%' }"></div>
-          </div>
-        </div>
+              <!-- 对话气泡流 -->
+              <div ref="messagesContainer" class="messages-stream rounded-xl border bg-black/30 backdrop-blur-xl p-3 md:p-5 space-y-4 max-h-[55dvh] overflow-y-auto" :class="themeConfig.borderLight">
+                <!-- 训练舱待命空态：仅在还没消息时短暂出现，提升"训练舱"叙事 -->
+                <div v-if="messages.length === 0 && !isLoading" class="py-8 text-center">
+                  <div class="inline-flex items-center gap-2 px-3 py-1.5 rounded-full border border-white/10 bg-white/[0.03] text-[11px] text-gray-400 font-mono uppercase tracking-wider">
+                    <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+                    Training Pod · STANDBY
+                  </div>
+                  <p class="mt-3 text-sm text-gray-300">面试官已就位，请选择难度后进入训练舱。</p>
+                </div>
 
-        <!-- 消息流区 -->
-        <div ref="messagesContainer" class="flex-1 overflow-y-auto p-3 md:p-6 space-y-4 pb-24 md:pb-32 relative z-10">
-          <div v-for="(msg, index) in messages" :key="index" class="flex items-start gap-3 message-enter" :class="msg.role === 'user' ? 'flex-row-reverse' : 'flex-row'">
-            <!-- 头像 -->
-            <div class="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 border transition-all duration-300 relative" :class="msg.role === 'user' ? 'bg-white/10 border-white/20' : [themeConfig.bg, themeConfig.border + '/30']">
-              <component :is="msg.role === 'user' ? UserCircle : Cpu" class="w-4 h-4" :class="msg.role === 'user' ? 'text-gray-300' : themeConfig.text" />
-              <div v-if="msg.role === 'ai' && index === messages.length - 1 && isAiSpeaking" class="absolute -right-1 -top-1 flex items-center gap-0.5">
-                <div class="voice-bar-mini voice-bar-1"></div>
-                <div class="voice-bar-mini voice-bar-2"></div>
-                <div class="voice-bar-mini voice-bar-3"></div>
+                <div
+                  v-for="(msg, index) in messages"
+                  :key="index"
+                  class="flex items-start gap-3 message-enter"
+                  :class="msg.role === 'user' ? 'flex-row-reverse' : 'flex-row'"
+                  data-test="chat-bubble"
+                >
+                  <!-- 头像 -->
+                  <div class="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 border transition-all duration-300 relative" :class="msg.role === 'user' ? 'bg-white/10 border-white/20' : [themeConfig.bg, themeConfig.border + '/30']">
+                    <component :is="msg.role === 'user' ? UserCircle : Cpu" class="w-4 h-4" :class="msg.role === 'user' ? 'text-gray-300' : themeConfig.text" />
+                    <div v-if="msg.role === 'ai' && index === messages.length - 1 && isAiSpeaking" class="absolute -right-1 -top-1 flex items-center gap-0.5">
+                      <div class="voice-bar-mini voice-bar-1"></div>
+                      <div class="voice-bar-mini voice-bar-2"></div>
+                      <div class="voice-bar-mini voice-bar-3"></div>
+                    </div>
+                  </div>
+
+                  <!-- 消息气泡 -->
+                  <div
+                    class="max-w-[90%] md:max-w-[70%] rounded-2xl px-4 py-3 relative overflow-hidden transition-all duration-300"
+                    :class="[
+                      msg.role === 'user' ? 'bg-white/10 border border-white/20 text-gray-200 shadow-[inset_0_1px_1px_rgba(255,255,255,0.1)]' : 'bg-white/[0.03] border text-gray-200 shadow-[inset_0_1px_1px_rgba(255,255,255,0.1)]',
+                      msg.role === 'ai' ? themeConfig.borderLight : '',
+                      getEmotionClass(msg.content)
+                    ]"
+                  >
+                    <div v-if="msg.role === 'ai'" class="absolute left-0 top-3 bottom-3 w-[2px] rounded-full" :class="themeConfig.bg.replace('/20', '')"></div>
+
+                    <!-- 情绪图标 -->
+                    <div v-if="msg.role === 'ai' && getEmotionIcon(msg.content)" class="pl-3 mb-1 text-lg">{{ getEmotionIcon(msg.content) }}</div>
+
+                    <div v-if="msg.role === 'ai'" class="markdown-body chat-markdown pl-3 inline" :class="{ 'typewriter-effect': msg.isNew }">
+                      <span v-html="marked.parse(cleanMessage(msg.content))"></span>
+                      <span v-if="index === messages.length - 1 && isAiSpeaking" class="geek-cursor">█</span>
+                    </div>
+                    <p v-else class="text-sm leading-relaxed whitespace-pre-wrap">{{ msg.content }}</p>
+                    <p class="text-[10px] text-gray-500 mt-1.5 text-right" :class="msg.role === 'ai' ? 'pl-3' : ''">{{ msg.timestamp }}</p>
+                  </div>
+                </div>
+
+                <!-- Loading 动画 -->
+                <div v-if="isLoading" class="flex items-start gap-3 message-enter" data-test="loading-indicator">
+                  <div class="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 border relative" :class="[themeConfig.bg, themeConfig.border + '/30']">
+                    <Loader2 class="w-4 h-4 animate-spin" :class="themeConfig.text" />
+                    <div class="absolute -right-1 -top-1 flex items-center gap-0.5">
+                      <div class="voice-bar voice-bar-1"></div>
+                      <div class="voice-bar voice-bar-2"></div>
+                      <div class="voice-bar voice-bar-3"></div>
+                      <div class="voice-bar voice-bar-4"></div>
+                    </div>
+                  </div>
+                  <div class="rounded-2xl px-5 py-3 border backdrop-blur-xl shadow-[inset_0_1px_1px_rgba(255,255,255,0.1)]" :class="['bg-white/[0.03]', themeConfig.borderLight]">
+                    <component v-if="StreamingLoaderComp" :is="StreamingLoaderComp" />
+                    <div v-else class="flex items-center gap-1.5">
+                      <div class="w-2 h-2 rounded-full animate-bounce" :class="themeConfig.bg.replace('/20', '')" style="animation-delay: 0s;"></div>
+                      <div class="w-2 h-2 rounded-full animate-bounce" :class="themeConfig.bg.replace('/20', '')" style="animation-delay: 0.2s;"></div>
+                      <div class="w-2 h-2 rounded-full animate-bounce" :class="themeConfig.bg.replace('/20', '')" style="animation-delay: 0.4s;"></div>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- 错误透传区（onError 收到的 message 直接渲染，不做包装） -->
+                <div v-if="evaluateError" class="flex items-start gap-3 message-enter" data-test="error-display">
+                  <div class="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 border bg-amber-500/15 border-amber-500/40">
+                    <AlertTriangle class="w-4 h-4 text-amber-400" />
+                  </div>
+                  <div class="rounded-2xl px-4 py-3 border border-amber-500/30 bg-amber-500/5 text-sm text-amber-200 leading-relaxed">{{ evaluateError }}</div>
+                </div>
               </div>
+
+              <!-- ActionDock：Send 主操作 + End / Retry 次操作 -->
+              <ActionDock align="right">
+                <template #secondary>
+                  <button
+                    v-if="evaluateError"
+                    @click="retryEvaluate"
+                    class="px-4 py-2 rounded-xl text-sm font-medium transition-all duration-300 flex items-center gap-2 bg-amber-500/10 border border-amber-500/30 text-amber-300 hover:bg-amber-500/20 hover:border-amber-500/50"
+                    data-test="retry-button"
+                  >
+                    <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
+                    重新评估
+                  </button>
+
+                  <button
+                    v-else-if="!isEvaluationDone"
+                    @click="endInterview"
+                    :disabled="isLoading || messages.filter(m => m.role === 'user').length < 1"
+                    :title="messages.filter(m => m.role === 'user').length < 1 ? '至少完成一轮回答后才能结束面试并生成复盘' : '结束面试并生成复盘'"
+                    class="px-4 py-2 rounded-xl text-sm font-semibold transition-all duration-300 flex items-center gap-2 disabled:bg-none disabled:bg-gray-600/30 disabled:text-gray-400 disabled:shadow-none disabled:cursor-not-allowed bg-gradient-to-r from-red-500 to-orange-500 text-white shadow-lg shadow-red-500/30 hover:shadow-xl hover:shadow-red-500/50 hover:scale-[1.02] active:scale-[0.98]"
+                    data-test="end-interview-button"
+                  >
+                    <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>
+                    <span>结束面试</span>
+                  </button>
+
+                  <button
+                    v-if="isEvaluationDone"
+                    @click="showResultModal = true"
+                    class="px-4 py-2 rounded-xl text-sm font-semibold transition-all duration-300 flex items-center gap-2 bg-gradient-to-r from-cyan-500 to-blue-500 text-white shadow-lg shadow-cyan-500/30 hover:shadow-xl hover:shadow-cyan-500/50"
+                    data-test="replay-button"
+                  >
+                    查看复盘报告
+                  </button>
+                </template>
+
+                <template #primary>
+                  <button
+                    @click="sendMessage"
+                    :disabled="isLoading || !userInput.trim() || strikeTerminated || isInterviewEnded"
+                    class="send-btn px-5 py-2.5 md:px-6 md:py-3 rounded-xl font-semibold text-sm shadow-lg transition-all duration-300 hover:scale-[1.02] active:scale-[0.98] disabled:bg-none disabled:bg-gray-600/30 disabled:text-gray-400 disabled:shadow-none disabled:cursor-not-allowed disabled:hover:scale-100 flex items-center gap-2 overflow-hidden relative text-white"
+                    :class="['bg-gradient-to-r', themeConfig.gradient, themeConfig.shadow, 'hover:shadow-xl']"
+                    data-test="send-button"
+                  >
+                    <span class="send-btn-shimmer"></span>
+                    <Loader2 v-if="isLoading" class="w-4 h-4 animate-spin relative z-10" />
+                    <Send v-else class="w-4 h-4 relative z-10" />
+                    <span class="relative z-10">{{ isLoading ? '生成追问中...' : '发送' }}</span>
+                  </button>
+                </template>
+              </ActionDock>
             </div>
-
-            <!-- 消息气泡 -->
-            <div class="max-w-[90%] md:max-w-[70%] rounded-2xl px-4 py-3 relative overflow-hidden transition-all duration-300" :class="[msg.role === 'user' ? 'bg-white/10 border border-white/20 text-gray-200 shadow-[inset_0_1px_1px_rgba(255,255,255,0.1)]' : 'bg-white/[0.03] border text-gray-200 shadow-[inset_0_1px_1px_rgba(255,255,255,0.1)]', msg.role === 'ai' ? themeConfig.borderLight : '', getEmotionClass(msg.content)]">
-              <div v-if="msg.role === 'ai'" class="absolute left-0 top-3 bottom-3 w-[2px] rounded-full" :class="themeConfig.bg.replace('/20', '')"></div>
-              
-              <!-- 情绪图标 -->
-              <div v-if="msg.role === 'ai' && getEmotionIcon(msg.content)" class="pl-3 mb-1 text-lg">{{ getEmotionIcon(msg.content) }}</div>
-              
-              <div v-if="msg.role === 'ai'" class="markdown-body chat-markdown pl-3 inline" :class="{ 'typewriter-effect': msg.isNew }">
-                <span v-html="marked.parse(cleanMessage(msg.content))"></span>
-                <span v-if="index === messages.length - 1 && isAiSpeaking" class="geek-cursor">█</span>
-              </div>
-              <p v-else class="text-sm leading-relaxed whitespace-pre-wrap">{{ msg.content }}</p>
-              <p class="text-[10px] text-gray-500 mt-1.5 text-right" :class="msg.role === 'ai' ? 'pl-3' : ''">{{ msg.timestamp }}</p>
-            </div>
           </div>
-
-          <!-- Loading 动画 -->
-          <div v-if="isLoading" class="flex items-start gap-3 message-enter">
-            <div class="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 border relative" :class="[themeConfig.bg, themeConfig.border + '/30']">
-              <Loader2 class="w-4 h-4 animate-spin" :class="themeConfig.text" />
-              <div class="absolute -right-1 -top-1 flex items-center gap-0.5">
-                <div class="voice-bar voice-bar-1"></div>
-                <div class="voice-bar voice-bar-2"></div>
-                <div class="voice-bar voice-bar-3"></div>
-                <div class="voice-bar voice-bar-4"></div>
-              </div>
-            </div>
-            <div class="rounded-2xl px-5 py-3 border backdrop-blur-xl shadow-[inset_0_1px_1px_rgba(255,255,255,0.1)]" :class="['bg-white/[0.03]', themeConfig.borderLight]">
-              <div class="flex items-center gap-1.5">
-                <div class="w-2 h-2 rounded-full animate-bounce" :class="themeConfig.bg.replace('/20', '')" style="animation-delay: 0s;"></div>
-                <div class="w-2 h-2 rounded-full animate-bounce" :class="themeConfig.bg.replace('/20', '')" style="animation-delay: 0.2s;"></div>
-                <div class="w-2 h-2 rounded-full animate-bounce" :class="themeConfig.bg.replace('/20', '')" style="animation-delay: 0.4s;"></div>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <!-- 底部输入区 -->
-        <div class="border-t backdrop-blur-3xl shadow-[inset_0_1px_1px_rgba(255,255,255,0.1)] p-4 relative z-10" :class="themeConfig.borderLight + ' bg-white/[0.03]'">
-          <div v-if="strikeTerminated" class="text-center py-3">
-            <p class="text-red-400 font-semibold text-sm">🚫 检测到多次无效输入，面试已被强制终止！</p>
-          </div>
-          <div v-else-if="strikeCount > 0 && strikeCount < 3" class="mb-2 text-center">
-            <p class="text-amber-400 text-xs">⚠️ 警告 {{ strikeCount }}/3：检测到无效输入，再犯 {{ 3 - strikeCount }} 次将强制终止面试！</p>
-          </div>
-          <div class="flex items-end gap-3">
-            <textarea v-model="userInput" @keydown="handleEnter" placeholder="输入你的回答..." rows="2" :disabled="isLoading || strikeTerminated" class="flex-1 rounded-xl px-4 py-3 text-base resize-none focus:outline-none backdrop-blur-xl shadow-[inset_0_1px_1px_rgba(255,255,255,0.1)] transition-all duration-300 bg-black/60 text-gray-200 placeholder-gray-500 focus:ring-2 disabled:opacity-50 disabled:cursor-not-allowed" :class="[themeConfig.borderLight, 'border', 'focus:' + themeConfig.border, 'focus:ring-' + themeConfig.primary + '/20']"></textarea>
-            <button @click="sendMessage" :disabled="isLoading || !userInput.trim() || strikeTerminated" class="send-btn px-4 py-2.5 md:px-6 md:py-3 rounded-xl font-semibold text-sm shadow-lg transition-all duration-300 hover:scale-[1.02] disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100 flex items-center gap-2 overflow-hidden relative text-white" :class="['bg-gradient-to-r', themeConfig.gradient, themeConfig.shadow, 'hover:shadow-xl']">
-              <span class="send-btn-shimmer"></span>
-              <Send class="w-4 h-4 relative z-10" />
-              <span class="relative z-10">发送回答</span>
-            </button>
-          </div>
-          <!-- 结束面试按钮 / 评估Loading / 重试 -->
-          <div class="flex justify-center mt-3">
-            <button v-if="evaluateError" @click="retryEvaluate" class="px-5 py-2.5 rounded-xl text-sm font-medium transition-all duration-300 flex items-center gap-2 bg-amber-500/10 border border-amber-500/30 text-amber-400 hover:bg-amber-500/20 hover:border-amber-500/50">
-              <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
-              重新评估
-            </button>
-
-            <button v-else-if="!isEvaluationDone" @click="endInterview" :disabled="isLoading || messages.length === 0" class="px-5 py-2.5 rounded-xl text-sm font-semibold transition-all duration-300 flex items-center gap-2 disabled:opacity-30 disabled:cursor-not-allowed bg-gradient-to-r from-red-500 to-orange-500 text-white shadow-lg shadow-red-500/30 hover:shadow-xl hover:shadow-red-500/50 hover:scale-[1.02]">
-              <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>
-              <span>结束面试，生成六维报告</span>
-            </button>
-
-            <button v-if="isEvaluationDone" @click="showResultModal = true" class="px-5 py-2.5 rounded-xl text-sm font-semibold transition-all duration-300 flex items-center gap-2 bg-gradient-to-r from-cyan-500 to-blue-500 text-white shadow-lg shadow-cyan-500/30 hover:shadow-xl hover:shadow-cyan-500/50">
-              查看评估报告
-            </button>
-          </div>
-        </div>
-      </CyberGlassCard>
+        </template>
+      </FeaturePageShell>
     </div>
-
     <!-- 难度选择 Modal -->
     <Teleport to="body">
       <transition name="result-pop">
@@ -983,76 +1132,57 @@ onUnmounted(() => {
       </transition>
     </Teleport>
 
-    <!-- 评估结果 Modal -->
-    <Teleport to="body">
-      <transition name="result-pop">
-        <div v-if="showResultModal" class="fixed inset-0 z-[9999] bg-black/80 backdrop-blur-xl flex items-center justify-center p-4">
-          <div class="result-modal bg-gradient-to-br from-[#0a0a15] to-[#0f0f1a] border rounded-3xl p-6 md:p-8 max-w-lg w-full shadow-2xl relative overflow-hidden" :class="themeConfig.border + '/30', themeConfig.shadow">
-            <!-- 关闭按钮 -->
-            <button @click="closeResultModal" class="absolute top-4 right-4 text-gray-500 hover:text-white transition-colors">
-              <X class="w-5 h-5" />
-            </button>
+    <!-- 评估结果 / 复盘 Modal（基于 BaseModal 扩展，复用既有 CyberRadarChart） -->
+    <BaseModal
+      :model-value="showResultModal"
+      max-width="max-w-lg"
+      @update:model-value="(v) => { if (!v) closeResultModal() }"
+      @close="closeResultModal"
+    >
+      <div class="result-modal p-6 md:p-8 relative overflow-hidden" :class="themeConfig.shadow">
+        <!-- 标题 -->
+        <div class="text-center mb-6">
+          <h2 class="text-2xl font-bold mb-2" :class="themeConfig.text">能力评估报告</h2>
+          <p class="text-gray-500 text-sm">AI 面试官已生成您的专属评估</p>
+        </div>
 
-            <!-- 标题 -->
-            <div class="text-center mb-6">
-              <h2 class="text-2xl font-bold mb-2" :class="themeConfig.text">能力评估报告</h2>
-              <p class="text-gray-500 text-sm">AI 面试官已生成您的专属评估</p>
-            </div>
+        <!-- 雷达图：复用既有 CyberRadarChart.vue，不修改该文件 -->
+        <div
+          class="rounded-xl border backdrop-blur-xl p-4 mb-6 relative overflow-hidden"
+          :class="[themeConfig.borderLight, 'bg-white/[0.02]']"
+          data-test="replay-radar-container"
+        >
+          <CyberRadarChart :chart-data="radarChartData" />
+        </div>
 
-            <!-- 雷达图 -->
-            <div class="radar-container aspect-square rounded-xl border backdrop-blur-xl p-4 mb-6 relative overflow-hidden" :class="[themeConfig.borderLight, 'bg-white/[0.02]']">
-              <div class="sonar-sweep"></div>
-              <svg viewBox="0 0 260 260" overflow="visible" class="w-full h-full relative z-10">
-                <defs>
-                  <linearGradient id="modalRadarGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-                    <stop offset="0%" :stop-color="themeConfig.colorRgba" stop-opacity="0.6" />
-                    <stop offset="100%" :stop-color="themeConfig.color" stop-opacity="0.3" />
-                  </linearGradient>
-                </defs>
-                <circle :cx="RADAR_CENTER" :cy="RADAR_CENTER" r="27" fill="none" :stroke="themeConfig.colorRgba.replace('0.6', '0.1')" stroke-width="0.5" />
-                <circle :cx="RADAR_CENTER" :cy="RADAR_CENTER" r="54" fill="none" :stroke="themeConfig.colorRgba.replace('0.6', '0.1')" stroke-width="0.5" />
-                <polygon :points="`${RADAR_CENTER},${RADAR_CENTER - RADAR_MAX_RADIUS} ${RADAR_CENTER + RADAR_MAX_RADIUS * 0.866},${RADAR_CENTER - RADAR_MAX_RADIUS * 0.5} ${RADAR_CENTER + RADAR_MAX_RADIUS * 0.866},${RADAR_CENTER + RADAR_MAX_RADIUS * 0.5} ${RADAR_CENTER},${RADAR_CENTER + RADAR_MAX_RADIUS} ${RADAR_CENTER - RADAR_MAX_RADIUS * 0.866},${RADAR_CENTER + RADAR_MAX_RADIUS * 0.5} ${RADAR_CENTER - RADAR_MAX_RADIUS * 0.866},${RADAR_CENTER - RADAR_MAX_RADIUS * 0.5}`" fill="none" :stroke="themeConfig.colorRgba.replace('0.6', '0.15')" stroke-width="1" />
-                <polygon :points="radarPoints" fill="url(#modalRadarGrad)" :stroke="themeConfig.colorRgba.replace('0.6', '0.5')" stroke-width="1.5" class="radar-polygon" />
-                <circle v-for="(point, i) in radarPoints.split(' ')" :key="i" :cx="point.split(',')[0]" :cy="point.split(',')[1]" r="3" :fill="themeConfig.color" />
-                <text :x="RADAR_CENTER" :y="RADAR_CENTER - RADAR_MAX_RADIUS - 15" text-anchor="middle" :fill="themeConfig.color" font-size="9" font-weight="500">专业技能</text>
-                <text :x="RADAR_CENTER + RADAR_MAX_RADIUS * 0.866 + 20" :y="RADAR_CENTER - RADAR_MAX_RADIUS * 0.5 + 4" text-anchor="start" :fill="themeConfig.color" font-size="9" font-weight="500">逻辑分析</text>
-                <text :x="RADAR_CENTER + RADAR_MAX_RADIUS * 0.866 + 20" :y="RADAR_CENTER + RADAR_MAX_RADIUS * 0.5 + 4" text-anchor="start" :fill="themeConfig.color" font-size="9" font-weight="500">沟通表达</text>
-                <text :x="RADAR_CENTER" :y="RADAR_CENTER + RADAR_MAX_RADIUS + 22" text-anchor="middle" :fill="themeConfig.color" font-size="9" font-weight="500">问题解决</text>
-                <text :x="RADAR_CENTER - RADAR_MAX_RADIUS * 0.866 - 20" :y="RADAR_CENTER + RADAR_MAX_RADIUS * 0.5 + 4" text-anchor="end" :fill="themeConfig.color" font-size="9" font-weight="500">综合潜力</text>
-                <text :x="RADAR_CENTER - RADAR_MAX_RADIUS * 0.866 - 20" :y="RADAR_CENTER - RADAR_MAX_RADIUS * 0.5 + 4" text-anchor="end" :fill="themeConfig.color" font-size="9" font-weight="500">抗压韧性</text>
-              </svg>
-            </div>
-
-            <!-- 分数展示 -->
-            <div class="grid grid-cols-6 gap-1 mb-6">
-              <div v-for="(label, i) in ['专业技能', '逻辑分析', '沟通表达', '问题解决', '综合潜力', '抗压韧性']" :key="i" class="text-center">
-                <div class="text-base font-bold" :class="themeConfig.text">{{ radarScores[RADAR_LABELS[i]] }}</div>
-                <div class="text-[9px] text-gray-500">{{ label }}</div>
-              </div>
-            </div>
-
-            <!-- 导师结语 -->
-            <div class="rounded-xl p-4 mb-6" :class="[themeConfig.bg.replace('/20', '/10'), themeConfig.borderLight]">
-              <div class="flex items-center gap-2 mb-2">
-                <span class="text-lg">👑</span>
-                <span class="text-sm font-semibold" :class="themeConfig.text">导师结语</span>
-              </div>
-              <p class="text-sm text-gray-300 leading-relaxed">{{ mentorComment }}</p>
-            </div>
-
-            <!-- 操作按钮 -->
-            <div class="flex gap-3">
-              <button @click="closeResultModal" class="flex-1 py-3 rounded-xl text-sm font-medium border border-white/10 text-gray-400 hover:bg-white/5 transition-all">
-                关闭
-              </button>
-              <button @click="goToCareerPlanning" class="flex-1 py-3 rounded-xl text-sm font-semibold bg-gradient-to-r from-cyan-500 to-blue-500 text-white shadow-lg shadow-cyan-500/30 hover:shadow-xl transition-all">
-                生成职业规划
-              </button>
-            </div>
+        <!-- 分数展示 -->
+        <div class="grid grid-cols-6 gap-1 mb-6">
+          <div v-for="(label, i) in ['专业技能', '逻辑分析', '沟通表达', '问题解决', '综合潜力', '抗压韧性']" :key="i" class="text-center">
+            <div class="text-base font-bold" :class="themeConfig.text">{{ radarScores[RADAR_LABELS[i]] }}</div>
+            <div class="text-[9px] text-gray-500">{{ label }}</div>
           </div>
         </div>
-      </transition>
-    </Teleport>
+
+        <!-- 导师结语 -->
+        <div class="rounded-xl p-4 mb-6" :class="[themeConfig.bg.replace('/20', '/10'), themeConfig.borderLight]">
+          <div class="flex items-center gap-2 mb-2">
+            <span class="text-lg">👑</span>
+            <span class="text-sm font-semibold" :class="themeConfig.text">导师结语</span>
+          </div>
+          <p class="text-sm text-gray-300 leading-relaxed">{{ mentorComment }}</p>
+        </div>
+
+        <!-- 操作按钮 -->
+        <div class="flex gap-3">
+          <button @click="closeResultModal" class="flex-1 py-3 rounded-xl text-sm font-medium border border-white/10 text-gray-400 hover:bg-white/5 transition-all">
+            关闭
+          </button>
+          <button @click="goToCareerPlanning" class="flex-1 py-3 rounded-xl text-sm font-semibold bg-gradient-to-r from-cyan-500 to-blue-500 text-white shadow-lg shadow-cyan-500/30 hover:shadow-xl transition-all">
+            生成职业规划
+          </button>
+        </div>
+      </div>
+    </BaseModal>
   </div>
 </template>
 
@@ -1211,10 +1341,87 @@ onUnmounted(() => {
   pointer-events: none;
 }
 
+/* ── 训练舱仪表盘 metrics-rail ────────────────────────────── */
+.metrics-rail {
+  position: relative;
+  border-radius: 12px;
+  padding: 8px 10px 10px;
+  background: linear-gradient(180deg, rgba(255,255,255,0.018), rgba(255,255,255,0));
+  border: 1px solid rgba(255,255,255,0.05);
+}
+.metrics-rail__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 2px 4px 8px;
+  border-bottom: 1px dashed rgba(255,255,255,0.06);
+  margin-bottom: 8px;
+}
+.metrics-rail__dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: #22d3ee;
+  box-shadow: 0 0 8px rgba(34,211,238,0.65);
+  animation: metrics-rail-pulse 2.4s ease-in-out infinite;
+}
+@keyframes metrics-rail-pulse {
+  0%, 100% { opacity: 0.55; transform: scale(1); }
+  50%      { opacity: 1;    transform: scale(1.18); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .metrics-rail__dot { animation: none; }
+}
+
 /* 移动端响应式：隐藏左侧面板，仅显示对话区 */
 @media (max-width: 767px) {
   .left-panel {
     display: none;
   }
+}
+
+/* ── 难度选择「模式切换」当前选中态强化 ────────────────── */
+.difficulty-btn {
+  position: relative;
+  transition: transform 0.18s ease-out, border-color 0.2s, background-color 0.2s, box-shadow 0.2s, color 0.2s;
+}
+.difficulty-btn:not(:disabled):hover {
+  transform: translateY(-1px);
+}
+.difficulty-btn:not(:disabled):active {
+  transform: translateY(0) scale(0.98);
+}
+.difficulty-btn--selected::after {
+  /* 选中态左侧短色条：让 "当前模式" 一眼可识别 */
+  content: '';
+  position: absolute;
+  left: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 3px;
+  height: 14px;
+  border-radius: 2px;
+  background: currentColor;
+  opacity: 0.8;
+}
+
+/* ── 面试官身份卡：与 MetricCard 保持视觉差异 ────────────── */
+.interviewer-header {
+  position: relative;
+  background-image:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.02), rgba(255, 255, 255, 0)),
+    radial-gradient(circle at 0% 0%, rgba(34, 211, 238, 0.06), transparent 60%);
+  box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.04);
+}
+.interviewer-header::before {
+  content: '';
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(34, 211, 238, 0.45), transparent);
+  border-top-left-radius: 12px;
+  border-top-right-radius: 12px;
+  pointer-events: none;
 }
 </style>

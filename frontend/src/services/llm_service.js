@@ -166,9 +166,11 @@ function processBlock(block, onMessage, onMeta, onDone, fireError) {
   }
 
   switch (eventName) {
-    case 'reply': {
+    case 'reply':
+    case 'message': {
       // ⚠️  只传增量内容（delta），不传完整字符串
       //     Vue 组件层面 rawContent += delta，避免全量重绘
+      //     'message' 是 interview_agent 使用的事件名，兼容处理
       const delta = parsed?.payload?.content ?? parsed?.content ?? ''
       if (delta) onMessage(delta)
       break

@@ -20,7 +20,7 @@ from Service.Agents.prompts.agent_prompts import (
     AGENT_SYSTEM_PROMPTS,
     build_agent_user_prompt,
 )
-from Service.Utils.llm_client import stream_chat
+from Service.Utils.llm_client import LLMClientError, stream_chat
 from Service.Utils.sse_utils import sse_done, sse_error, sse_event, sse_meta, sse_warning
 
 
@@ -72,6 +72,7 @@ async def stream_dispatcher_response(
     jd_text: str = "",
     user_id: Optional[int] = None,
     db=None,  # AsyncSession，游客模式时为 None
+    persist: bool = False,  # 是否自动保存到历史（Dashboard ChatDock 默认不保存）
 ) -> AsyncGenerator[str, None]:
     """
     Agent Dispatcher 流式响应生成器。
@@ -175,23 +176,26 @@ async def stream_dispatcher_response(
             full_text += content_chunk
             yield sse_event("reply", {"payload": {"content": content_chunk}})
 
+    except LLMClientError as exc:
+        yield sse_error(str(exc))
     except Exception as exc:
         import httpx
         if isinstance(exc, httpx.ReadTimeout):
             yield sse_error("模型思考超时，请稍后重试")
         elif isinstance(exc, httpx.ConnectError):
-            yield sse_error("无法连接模型服务，请检查网络或 DeepSeek 配置")
+            yield sse_error("无法连接模型服务，请检查网络或 LLM 配置")
         else:
-            print(f"[DispatcherAgent] 流式对话异常: {exc}")
-            yield sse_error(f"系统异常：{exc}")
+            print(f"[DispatcherAgent] 流式对话未预期异常: {type(exc).__name__}: {exc}")
+            yield sse_error("模型服务暂时不可用，请稍后重试")
 
-    # ── 写入历史记录 ──
+    # ── 写入历史记录（仅当 persist=True 时自动保存）──
     record_id = None
-    if full_text:
+    if full_text and persist and user_id is not None and db is not None:
         try:
             from Service.Utils.databases.db import insert_record
 
-            record_id = insert_record(
+            record_id = await insert_record(
+                db=db,
                 category=f"agent_{agent_type.value}",
                 user_input=user_input[:200],
                 ai_result=full_text[:5000],

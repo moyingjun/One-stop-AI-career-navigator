@@ -8,7 +8,7 @@ Service/Agents/base_agent.py — Agent 基类
 import time
 from typing import AsyncGenerator, List, Optional
 
-from Service.Utils.llm_client import complete_chat, stream_chat
+from Service.Utils.llm_client import LLMClientError, complete_chat, stream_chat
 from Service.Utils.sse_utils import sse_done, sse_error, sse_reply
 
 
@@ -63,16 +63,17 @@ class BaseAgent:
                 full_text += content_chunk
                 yield sse_reply(content_chunk)
 
+        except LLMClientError as exc:
+            yield sse_error(str(exc))
         except Exception as exc:
             import httpx
             if isinstance(exc, httpx.ReadTimeout):
                 yield sse_error("大模型思考超时，请稍后重试")
             elif isinstance(exc, httpx.ConnectError):
-                yield sse_error("无法连接模型服务，请检查网络或 DeepSeek 配置")
-            elif isinstance(exc, RuntimeError):
-                yield sse_error(str(exc))
+                yield sse_error("无法连接模型服务，请检查网络或 LLM 配置")
             else:
-                yield sse_error(f"系统异常：{exc}")
+                print(f"[{self.__class__.__name__}] stream 未预期异常: {type(exc).__name__}: {exc}")
+                yield sse_error("模型服务暂时不可用，请稍后重试")
 
         # 将完整文本和 done 事件通过 on_stream_complete 回调处理
         record_id = await self.on_stream_complete(full_text, **kwargs)
@@ -111,6 +112,9 @@ class BaseAgent:
                 temperature=self.temperature,
                 max_tokens=self.max_tokens,
             )
-        except Exception as exc:
+        except LLMClientError as exc:
             print(f"[{self.__class__.__name__}] 非流式调用失败: {exc}")
+            return None
+        except Exception as exc:
+            print(f"[{self.__class__.__name__}] 非流式调用未预期异常: {type(exc).__name__}: {exc}")
             return None

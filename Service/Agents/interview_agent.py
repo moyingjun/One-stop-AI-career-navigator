@@ -16,7 +16,7 @@ from Service.Agents.prompts.interview_prompts import (
     EVALUATE_SYSTEM_PROMPT,
     build_interview_messages,
 )
-from Service.Utils.llm_client import stream_chat
+from Service.Utils.llm_client import LLMClientError, stream_chat
 
 
 class InterviewChatAgent(BaseAgent):
@@ -82,12 +82,15 @@ class InterviewChatAgent(BaseAgent):
                 yield f'event: message\ndata: {json.dumps({"content": content_chunk}, ensure_ascii=False)}\n\n'
                 last_yield_time = time.time()
 
+        except LLMClientError as exc:
+            yield f'event: error\ndata: {json.dumps({"content": str(exc)}, ensure_ascii=False)}\n\n'
         except Exception as exc:
             import httpx
             if isinstance(exc, httpx.ReadTimeout):
                 yield 'event: error\ndata: {"content":"模型思考超时，请稍后重试"}\n\n'
             else:
-                yield 'event: error\ndata: {"content":"服务器内部错误，请稍后重试"}\n\n'
+                print(f"[InterviewChatAgent] 未预期异常: {type(exc).__name__}: {exc}")
+                yield 'event: error\ndata: {"content":"模型服务暂时不可用，请稍后重试"}\n\n'
         finally:
             yield 'event: done\ndata: {}\n\n'
 
