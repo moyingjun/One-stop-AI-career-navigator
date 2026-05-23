@@ -39,15 +39,23 @@ import {
   Database,
   Save,
   CheckCircle2,
-  Loader2
+  Loader2,
+  Wand2,
+  ClipboardCopy,
+  CornerDownRight,
+  RefreshCcw,
+  X
 } from 'lucide-vue-next'
 import { useEditor, EditorContent } from '@tiptap/vue-3'
 import StarterKit from '@tiptap/starter-kit'
 import BaseModal from '@/components/BaseModal.vue'
 import { showToast } from '@/utils/uiFallbacks'
 import { exportDocxFromDocument } from '@/utils/docxExport.js'
+import { getAuthHeaders } from '@/services/authService.js'
+import { useLlmProviderStore } from '@/stores/llmProviderStore.js'
 
 const router = useRouter()
+const llmProviderStore = useLlmProviderStore()
 
 // ─────────────────────────────────────────────
 // 常量与字典
@@ -209,6 +217,10 @@ const editor = useEditor({
     activeDoc.value.plainText = plain
     activeDoc.value.updatedAt = Date.now()
     scheduleAutosave()
+  },
+  onSelectionUpdate: () => {
+    // 让"AI 润色"按钮可以根据选区是否非空实时启用/禁用
+    refreshSelection()
   }
 })
 
@@ -580,6 +592,291 @@ const exportDocx = async () => {
 }
 
 // ─────────────────────────────────────────────
+// AI 润色（Task D1）：基于 Tiptap 选区 → /api/document/rewrite
+// ─────────────────────────────────────────────
+
+const REWRITE_MAX_CHARS = 3000
+const REWRITE_CUSTOM_INSTRUCTION_MAX = 300
+const REWRITE_API_URL = '/api/document/rewrite'
+
+const REWRITE_STYLES = [
+  { value: 'professional', label: '更专业', tone: 'cyan' },
+  { value: 'concise', label: '更简洁', tone: 'emerald' },
+  { value: 'data_driven', label: '更数据化', tone: 'purple' },
+  { value: 'resume_polished', label: '更适合简历', tone: 'pink' }
+]
+
+// 改写力度（D1.1 兼容字段，仅前端不再展示）。三档不允许编造事实，差异仅在改写自由度。
+const REWRITE_LEVELS = [
+  {
+    value: 'conservative',
+    label: '保守',
+    desc: '只修语病和表达，不重组句子'
+  },
+  {
+    value: 'balanced',
+    label: '平衡',
+    desc: '优化结构和专业表达，不新增事实'
+  },
+  {
+    value: 'enhanced',
+    label: '强化',
+    desc: '更积极的简历化措辞，并提示可补充方向，不替你编造数字与经历'
+  }
+]
+
+// D1.2：模式（润色 / 补全建议 / 创意草稿）
+const REWRITE_MODES = [
+  {
+    value: 'polish',
+    label: '润色',
+    desc: '只优化表达，不新增事实',
+    allowReplace: true
+  },
+  {
+    value: 'suggest',
+    label: '补全建议',
+    desc: '指出缺失信息，给出补充问题，不直接给最终正文',
+    allowReplace: false
+  },
+  {
+    value: 'draft',
+    label: '创意草稿',
+    desc: '生成更完整候选写法，新增内容必须用【待补充】/【待确认】占位',
+    allowReplace: true
+  }
+]
+
+// D1.2：表达增强度 0-100。区间说明仅用于 UI 提示，后端按 strength 数值决定档位。
+const REWRITE_STRENGTH_MIN = 0
+const REWRITE_STRENGTH_MAX = 100
+const REWRITE_STRENGTH_DEFAULT = 50
+
+// 选中文本（响应式）+ 选区位置（用于替换 / 插入）
+const selectedText = ref('')
+const selectionFrom = ref(0)
+const selectionTo = ref(0)
+
+// AI 面板可见性 + 加载态 + 错误态
+const aiPanelOpen = ref(false)
+const aiStyle = ref('professional')
+const aiLevel = ref('balanced')                         // D1.1 兼容字段（已不再用于 UI）
+const aiMode = ref('polish')                            // D1.2：润色 / 补全建议 / 创意草稿
+const aiStrength = ref(REWRITE_STRENGTH_DEFAULT)        // D1.2：表达增强度 0-100
+const aiCustomInstruction = ref('')                     // 用户额外要求（≤ 300 字）
+const aiLoading = ref(false)
+const aiSuggestion = ref('')
+const aiError = ref('')
+
+// 用于 textarea v-model 校验的派生计数（仅 UI 提示，超长由后端兜底拒绝）
+const aiCustomInstructionLength = computed(() => (aiCustomInstruction.value || '').length)
+const aiCustomInstructionTooLong = computed(
+  () => aiCustomInstructionLength.value > REWRITE_CUSTOM_INSTRUCTION_MAX
+)
+
+// D1.2 派生：当前模式 / 当前模式是否允许"替换选区" / 强度档位文案
+const currentMode = computed(
+  () => REWRITE_MODES.find((m) => m.value === aiMode.value) || REWRITE_MODES[0]
+)
+const allowReplaceForCurrentMode = computed(() => currentMode.value.allowReplace)
+const aiStrengthBandLabel = computed(() => {
+  const v = aiStrength.value
+  if (v <= 30) return '保守润色'
+  if (v <= 70) return '专业改写'
+  return '扩展草稿'
+})
+
+// 选区是否合法（有选中文本）
+const hasSelection = computed(() => selectedText.value.trim().length > 0)
+
+const refreshSelection = () => {
+  if (!editor.value) {
+    selectedText.value = ''
+    selectionFrom.value = 0
+    selectionTo.value = 0
+    return
+  }
+  const { state } = editor.value
+  const { from, to, empty } = state.selection
+  if (empty || from === to) {
+    selectedText.value = ''
+    selectionFrom.value = from
+    selectionTo.value = to
+    return
+  }
+  selectionFrom.value = from
+  selectionTo.value = to
+  selectedText.value = state.doc.textBetween(from, to, '\n', '\n')
+}
+
+const openAiPanel = () => {
+  if (!activeDoc.value) {
+    showToast('请先创建并选中需要润色的文字', { type: 'error' })
+    return
+  }
+  refreshSelection()
+  if (!hasSelection.value) {
+    showToast('请先选中一段文字', { type: 'error' })
+    return
+  }
+  if (selectedText.value.trim().length > REWRITE_MAX_CHARS) {
+    showToast('选中文本过长，请缩短后再润色', { type: 'error' })
+    return
+  }
+  aiSuggestion.value = ''
+  aiError.value = ''
+  aiPanelOpen.value = true
+}
+
+const closeAiPanel = () => {
+  aiPanelOpen.value = false
+}
+
+const requestAiRewrite = async () => {
+  if (aiLoading.value) return
+  refreshSelection()
+  if (!hasSelection.value) {
+    showToast('请先选中一段文字', { type: 'error' })
+    return
+  }
+  const text = selectedText.value
+  if (text.trim().length > REWRITE_MAX_CHARS) {
+    showToast('选中文本过长，请缩短后再润色', { type: 'error' })
+    return
+  }
+  if (aiCustomInstructionTooLong.value) {
+    showToast(`自定义要求超过 ${REWRITE_CUSTOM_INSTRUCTION_MAX} 字，请缩短后再生成`, { type: 'error' })
+    return
+  }
+
+  aiLoading.value = true
+  aiError.value = ''
+  aiSuggestion.value = ''
+
+  try {
+    const customRaw = (aiCustomInstruction.value || '').trim()
+    const resp = await fetch(REWRITE_API_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+      body: JSON.stringify({
+        text,
+        style: aiStyle.value,
+        rewrite_mode: aiMode.value,
+        rewrite_strength: aiStrength.value,
+        rewrite_level: aiLevel.value,           // 兼容字段，仅在 strength 缺省时被后端使用
+        custom_instruction: customRaw ? customRaw : null,
+        provider_id: llmProviderStore.getCurrentProviderId() || undefined
+      })
+    })
+
+    if (!resp.ok) {
+      let msg = 'AI 润色失败，请稍后重试'
+      try {
+        const data = await resp.json()
+        if (data && typeof data.detail === 'string' && data.detail) msg = data.detail
+      } catch { /* ignore */ }
+      aiError.value = msg
+      showToast(msg, { type: 'error' })
+      return
+    }
+
+    const data = await resp.json()
+    const result = (data && typeof data.result === 'string') ? data.result.trim() : ''
+    if (!result) {
+      aiError.value = 'AI 未返回有效内容'
+      showToast('AI 未返回有效内容', { type: 'error' })
+      return
+    }
+    aiSuggestion.value = result
+  } catch (err) {
+    console.error('[DocWorkbench] AI 润色失败:', err)
+    aiError.value = 'AI 润色失败，请稍后重试'
+    showToast('AI 润色失败，请稍后重试', { type: 'error' })
+  } finally {
+    aiLoading.value = false
+  }
+}
+
+const replaceSelectionWithSuggestion = () => {
+  if (!editor.value || !aiSuggestion.value) return
+  // suggest 模式不允许整体替换，避免把建议清单当成正文
+  if (!allowReplaceForCurrentMode.value) {
+    showToast('当前模式为「补全建议」，不建议直接替换；请使用"插入到下方"或"复制建议"', { type: 'error' })
+    return
+  }
+  const from = selectionFrom.value
+  const to = selectionTo.value
+  if (from === to) {
+    showToast('原选区已失效，请重新选中后再替换', { type: 'error' })
+    return
+  }
+  // draft 模式：包含【待补充】/【待确认】占位时，先提示用户确认（Ctrl+Z 仍可撤回）
+  if (aiMode.value === 'draft' && /【待补充|【待确认/.test(aiSuggestion.value)) {
+    const ok = window.confirm(
+      '草稿中可能包含【待补充】/【待确认】占位，请确认后使用。\n\n' +
+      '点击「确定」继续替换，替换后可用 Ctrl+Z 撤回。'
+    )
+    if (!ok) return
+  }
+  // 使用 Tiptap chain：聚焦 + 设置选区 + insertContentAt 替换
+  // insertContentAt(range, content) 会以一次 transaction 写入 history，保证 Ctrl+Z 可撤回
+  editor.value
+    .chain()
+    .focus()
+    .insertContentAt({ from, to }, aiSuggestion.value)
+    .run()
+  showToast('已替换选中内容，可使用 Ctrl+Z 撤回', { type: 'success' })
+  aiPanelOpen.value = false
+  // 触发自动保存（保险，因为 Tiptap onUpdate 也会触发，但这里强制状态推进）
+  saveStatus.value = 'unsaved'
+  scheduleAutosave()
+}
+
+const insertSuggestionBelow = () => {
+  if (!editor.value || !aiSuggestion.value) return
+  const insertAt = selectionTo.value || editor.value.state.doc.content.size
+  // 在原选区结束位置后另起一段插入：先插入换行，再插入正文
+  editor.value
+    .chain()
+    .focus()
+    .insertContentAt(insertAt, '\n' + aiSuggestion.value)
+    .run()
+  showToast('已在下方插入 AI 建议', { type: 'success' })
+  aiPanelOpen.value = false
+  saveStatus.value = 'unsaved'
+  scheduleAutosave()
+}
+
+const copySuggestion = async () => {
+  if (!aiSuggestion.value) return
+  try {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      await navigator.clipboard.writeText(aiSuggestion.value)
+    } else {
+      // 退化方案：用临时 textarea + execCommand
+      const ta = document.createElement('textarea')
+      ta.value = aiSuggestion.value
+      ta.style.position = 'fixed'
+      ta.style.left = '-9999px'
+      document.body.appendChild(ta)
+      ta.select()
+      document.execCommand('copy')
+      document.body.removeChild(ta)
+    }
+    showToast('已复制建议', { type: 'success' })
+  } catch (err) {
+    console.error('[DocWorkbench] 复制失败:', err)
+    showToast('复制失败，请手动选中后复制', { type: 'error' })
+  }
+}
+
+const discardSuggestion = () => {
+  aiSuggestion.value = ''
+  aiError.value = ''
+  aiPanelOpen.value = false
+}
+
+// ─────────────────────────────────────────────
 // 工具栏命令（封装 Tiptap chain）
 // ─────────────────────────────────────────────
 
@@ -667,7 +964,7 @@ watch(filterType, () => {
             <h1 class="text-lg md:text-xl font-bold text-white" data-test="docs-workbench-title">
               文档工作台
             </h1>
-            <p class="text-xs text-gray-500">Document Workbench · MVP</p>
+            <p class="text-xs text-gray-500">简历草稿 · 求职笔记 · 升学资料 · 本地草稿箱 · 自动保存</p>
           </div>
 
           <!-- 自动保存状态 -->
@@ -790,18 +1087,20 @@ watch(filterType, () => {
 
           <!-- ─────────────── 中间：编辑器 ─────────────── -->
           <section class="md:col-span-6">
-            <div class="dw-panel flex flex-col" style="min-height: 70vh;">
+            <div class="dw-panel dw-editor-shell flex flex-col">
               <!-- 空态 -->
               <div
                 v-if="!activeDoc"
-                class="flex-1 flex flex-col items-center justify-center text-center px-6 py-16"
+                class="flex-1 flex flex-col items-center justify-center text-center px-6 py-12"
               >
                 <div class="w-14 h-14 rounded-2xl border border-cyan-400/30 bg-cyan-500/10 flex items-center justify-center mb-4">
                   <FileEdit class="w-7 h-7 text-cyan-300" />
                 </div>
-                <h3 class="text-base font-semibold text-white mb-2">还没有打开任何文档</h3>
-                <p class="text-sm text-gray-500 mb-5 max-w-xs leading-relaxed">
-                  点击左侧「新建文档」开始你的第一份草稿。所有内容会保存在你本地浏览器，不会上传服务器。
+                <h3 class="text-lg font-semibold text-white mb-2">开始创建你的第一份文档</h3>
+                <p class="text-sm text-gray-400 mb-5 max-w-sm leading-relaxed">
+                  可以用于简历草稿、求职笔记或升学资料整理。
+                  <br />
+                  内容会自动保存在你本地浏览器，不会上传服务器。
                 </p>
                 <button
                   type="button"
@@ -809,85 +1108,306 @@ watch(filterType, () => {
                   class="inline-flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold text-white bg-gradient-to-r from-cyan-500 to-purple-500 shadow-lg shadow-cyan-500/20 hover:shadow-cyan-500/40 transition-all"
                 >
                   <Plus class="w-4 h-4" />
-                  新建一份简历草稿
+                  新建简历草稿
                 </button>
               </div>
 
               <!-- 编辑器主体 -->
               <template v-else>
-                <!-- 标题 + 类型选择 -->
-                <div class="px-4 pt-4 pb-2 flex flex-col gap-2">
-                  <input
-                    type="text"
-                    :value="activeDoc.title"
-                    @input="onTitleInput"
-                    placeholder="文档标题"
-                    class="w-full bg-transparent border-0 outline-none text-xl md:text-2xl font-bold text-white placeholder-gray-600 focus:ring-0"
-                    data-test="docs-title-input"
-                  />
-                  <div class="flex items-center gap-1.5 flex-wrap">
-                    <span class="text-[11px] text-gray-500 font-mono uppercase tracking-wider mr-1">TYPE</span>
+                <div class="dw-paper">
+                  <!-- 标题 + 类型选择 -->
+                  <div class="dw-paper__head px-4 pt-5 pb-2 flex flex-col gap-2">
+                    <input
+                      type="text"
+                      :value="activeDoc.title"
+                      @input="onTitleInput"
+                      placeholder="文档标题"
+                      class="dw-title-input w-full bg-transparent border-0 outline-none text-xl md:text-2xl font-bold text-white placeholder-gray-600 focus:ring-0"
+                      data-test="docs-title-input"
+                    />
+                    <div class="flex items-center gap-1.5 flex-wrap">
+                      <span class="text-[11px] text-gray-500 font-mono uppercase tracking-wider mr-1">TYPE</span>
+                      <button
+                        v-for="t in DOC_TYPES"
+                        :key="t.value"
+                        type="button"
+                        @click="onTypeChange(t.value)"
+                        class="dw-type-chip"
+                        :class="[
+                          activeDoc.type === t.value ? 'dw-type-chip--active' : '',
+                          activeDoc.type === t.value ? [TYPE_TONE_MAP[t.tone].border, TYPE_TONE_MAP[t.tone].bg, TYPE_TONE_MAP[t.tone].text] : ''
+                        ]"
+                      >
+                        <component :is="t.icon" class="w-3 h-3" />
+                        {{ t.label }}
+                      </button>
+                    </div>
+                  </div>
+
+                  <!-- 工具栏 -->
+                  <div class="dw-toolbar px-4 py-2 flex items-center gap-1 flex-wrap">
+                    <button type="button" class="dw-tb" :class="isActive('bold') ? 'dw-tb--active' : ''" @click="toggleBold" title="加粗">
+                      <Bold class="w-3.5 h-3.5" />
+                    </button>
+                    <button type="button" class="dw-tb" :class="isActive('italic') ? 'dw-tb--active' : ''" @click="toggleItalic" title="斜体">
+                      <Italic class="w-3.5 h-3.5" />
+                    </button>
+                    <button type="button" class="dw-tb" :class="isActive('heading', { level: 2 }) ? 'dw-tb--active' : ''" @click="toggleH2" title="标题">
+                      <Heading2 class="w-3.5 h-3.5" />
+                    </button>
+                    <span class="dw-tb-sep"></span>
+                    <button type="button" class="dw-tb" :class="isActive('bulletList') ? 'dw-tb--active' : ''" @click="toggleBulletList" title="无序列表">
+                      <List class="w-3.5 h-3.5" />
+                    </button>
+                    <button type="button" class="dw-tb" :class="isActive('orderedList') ? 'dw-tb--active' : ''" @click="toggleOrderedList" title="有序列表">
+                      <ListOrdered class="w-3.5 h-3.5" />
+                    </button>
+                    <button type="button" class="dw-tb" :class="isActive('blockquote') ? 'dw-tb--active' : ''" @click="toggleBlockquote" title="引用">
+                      <Quote class="w-3.5 h-3.5" />
+                    </button>
+                    <span class="dw-tb-sep"></span>
                     <button
-                      v-for="t in DOC_TYPES"
-                      :key="t.value"
                       type="button"
-                      @click="onTypeChange(t.value)"
-                      class="dw-type-chip"
-                      :class="[
-                        activeDoc.type === t.value ? 'dw-type-chip--active' : '',
-                        activeDoc.type === t.value ? [TYPE_TONE_MAP[t.tone].border, TYPE_TONE_MAP[t.tone].bg, TYPE_TONE_MAP[t.tone].text] : ''
-                      ]"
+                      class="dw-tb dw-tb-ai"
+                      :class="aiPanelOpen ? 'dw-tb--active' : ''"
+                      :disabled="!hasSelection"
+                      :title="hasSelection ? 'AI 润色选中文本' : '请先选中一段文字'"
+                      @click="openAiPanel"
+                      data-test="docs-ai-rewrite-trigger"
                     >
-                      <component :is="t.icon" class="w-3 h-3" />
-                      {{ t.label }}
+                      <Wand2 class="w-3.5 h-3.5" />
+                      <span class="dw-tb-ai__label">AI 润色</span>
+                    </button>
+                    <span class="dw-tb-sep"></span>
+                    <button type="button" class="dw-tb" @click="undoCmd" title="撤销">
+                      <Undo2 class="w-3.5 h-3.5" />
+                    </button>
+                    <button type="button" class="dw-tb" @click="redoCmd" title="重做">
+                      <Redo2 class="w-3.5 h-3.5" />
                     </button>
                   </div>
-                </div>
 
-                <!-- 工具栏 -->
-                <div class="px-4 py-2 flex items-center gap-1 flex-wrap border-y border-white/5 bg-white/[0.02]">
-                  <button type="button" class="dw-tb" :class="isActive('bold') ? 'dw-tb--active' : ''" @click="toggleBold" title="加粗">
-                    <Bold class="w-3.5 h-3.5" />
-                  </button>
-                  <button type="button" class="dw-tb" :class="isActive('italic') ? 'dw-tb--active' : ''" @click="toggleItalic" title="斜体">
-                    <Italic class="w-3.5 h-3.5" />
-                  </button>
-                  <button type="button" class="dw-tb" :class="isActive('heading', { level: 2 }) ? 'dw-tb--active' : ''" @click="toggleH2" title="标题">
-                    <Heading2 class="w-3.5 h-3.5" />
-                  </button>
-                  <span class="dw-tb-sep"></span>
-                  <button type="button" class="dw-tb" :class="isActive('bulletList') ? 'dw-tb--active' : ''" @click="toggleBulletList" title="无序列表">
-                    <List class="w-3.5 h-3.5" />
-                  </button>
-                  <button type="button" class="dw-tb" :class="isActive('orderedList') ? 'dw-tb--active' : ''" @click="toggleOrderedList" title="有序列表">
-                    <ListOrdered class="w-3.5 h-3.5" />
-                  </button>
-                  <button type="button" class="dw-tb" :class="isActive('blockquote') ? 'dw-tb--active' : ''" @click="toggleBlockquote" title="引用">
-                    <Quote class="w-3.5 h-3.5" />
-                  </button>
-                  <span class="dw-tb-sep"></span>
-                  <button type="button" class="dw-tb" @click="undoCmd" title="撤销">
-                    <Undo2 class="w-3.5 h-3.5" />
-                  </button>
-                  <button type="button" class="dw-tb" @click="redoCmd" title="重做">
-                    <Redo2 class="w-3.5 h-3.5" />
-                  </button>
-                </div>
-
-                <!-- 编辑区 -->
-                <div class="flex-1 px-4 pb-4 pt-3 overflow-y-auto" data-test="docs-editor-area">
-                  <EditorContent :editor="editor" />
+                  <!-- 编辑区（限制内容宽度，模拟纸张） -->
+                  <div class="dw-paper__body flex-1 px-4 pb-6 pt-4 overflow-y-auto" data-test="docs-editor-area">
+                    <EditorContent :editor="editor" />
+                  </div>
                 </div>
               </template>
             </div>
           </section>
 
           <!-- ─────────────── 右侧：文档信息 + 后续预告 ─────────────── -->
-          <aside class="md:col-span-3 flex flex-col gap-4">
-            <div class="dw-panel p-4">
+          <aside class="md:col-span-3 flex flex-col gap-3">
+            <!-- AI 润色面板（仅在 aiPanelOpen 时显示） -->
+            <div
+              v-if="aiPanelOpen"
+              class="dw-panel dw-ai-panel p-3.5"
+              data-test="docs-ai-panel"
+            >
+              <div class="flex items-center gap-2 mb-3">
+                <Wand2 class="w-3.5 h-3.5 text-purple-300" />
+                <h2 class="dw-side-title">AI 润色</h2>
+                <span class="dw-side-subtitle">REWRITE</span>
+                <button
+                  type="button"
+                  class="ml-auto p-1 rounded-md hover:bg-white/5 text-gray-500 hover:text-white transition-colors"
+                  @click="closeAiPanel"
+                  title="关闭"
+                  aria-label="关闭 AI 润色"
+                >
+                  <X class="w-3.5 h-3.5" />
+                </button>
+              </div>
+
+              <!-- 选区预览 -->
+              <div class="dw-ai-selection mb-3">
+                <p class="text-[10px] text-gray-500 uppercase tracking-wider mb-1">选中文本（{{ selectedText.length }} / {{ REWRITE_MAX_CHARS }}）</p>
+                <p class="text-[12px] text-gray-300 leading-snug whitespace-pre-wrap">{{ selectedText.slice(0, 240) }}<span v-if="selectedText.length > 240" class="text-gray-500">…</span></p>
+              </div>
+
+              <!-- 风格选择 -->
+              <p class="text-[10px] text-gray-500 uppercase tracking-wider mb-1.5">风格</p>
+              <div class="flex flex-wrap gap-1.5 mb-3">
+                <button
+                  v-for="s in REWRITE_STYLES"
+                  :key="s.value"
+                  type="button"
+                  class="dw-chip"
+                  :class="aiStyle === s.value ? 'dw-chip--active' : ''"
+                  @click="aiStyle = s.value"
+                  :data-test="`docs-ai-style-${s.value}`"
+                >
+                  {{ s.label }}
+                </button>
+              </div>
+
+              <!-- 模式：润色 / 补全建议 / 创意草稿（D1.2） -->
+              <div class="mb-3">
+                <div class="flex items-center justify-between mb-1.5">
+                  <p class="text-[10px] text-gray-500 uppercase tracking-wider">模式</p>
+                  <span class="text-[10px] text-gray-500">{{ currentMode.label }}</span>
+                </div>
+                <div class="dw-mode-seg" role="radiogroup" aria-label="模式">
+                  <button
+                    v-for="m in REWRITE_MODES"
+                    :key="m.value"
+                    type="button"
+                    role="radio"
+                    :aria-checked="aiMode === m.value"
+                    class="dw-mode-seg__btn"
+                    :class="aiMode === m.value ? 'dw-mode-seg__btn--active' : ''"
+                    @click="aiMode = m.value"
+                    :data-test="`docs-ai-mode-${m.value}`"
+                  >
+                    {{ m.label }}
+                  </button>
+                </div>
+                <p class="mt-1.5 text-[11px] text-gray-500 leading-relaxed">
+                  {{ currentMode.desc }}
+                </p>
+              </div>
+
+              <!-- 表达增强度（D1.2，0-100） -->
+              <div class="mb-3">
+                <div class="flex items-center justify-between mb-1.5">
+                  <p class="text-[10px] text-gray-500 uppercase tracking-wider">表达增强度</p>
+                  <span class="text-[10px] text-purple-200/85 font-mono">
+                    {{ aiStrength }} · {{ aiStrengthBandLabel }}
+                  </span>
+                </div>
+                <input
+                  type="range"
+                  :min="REWRITE_STRENGTH_MIN"
+                  :max="REWRITE_STRENGTH_MAX"
+                  step="1"
+                  v-model.number="aiStrength"
+                  class="dw-strength-slider"
+                  data-test="docs-ai-strength"
+                  aria-label="表达增强度"
+                />
+                <div class="flex justify-between text-[10px] text-gray-500 mt-0.5 px-0.5">
+                  <span>0</span>
+                  <span>30</span>
+                  <span>70</span>
+                  <span>100</span>
+                </div>
+                <p class="mt-1 text-[10px] text-gray-500 leading-relaxed">
+                  0-30 保守润色 · 31-70 专业改写 · 71-100 扩展草稿。
+                  改写力度控制表达强度，不代表允许编造事实。
+                </p>
+              </div>
+
+              <!-- 自定义要求（D1.1） -->
+              <div class="mb-3">
+                <div class="flex items-center justify-between mb-1.5">
+                  <p class="text-[10px] text-gray-500 uppercase tracking-wider">自定义要求 · 可选</p>
+                  <span
+                    class="text-[10px] font-mono"
+                    :class="aiCustomInstructionTooLong ? 'text-red-300' : 'text-gray-500'"
+                  >
+                    {{ aiCustomInstructionLength }} / {{ REWRITE_CUSTOM_INSTRUCTION_MAX }}
+                  </span>
+                </div>
+                <textarea
+                  v-model="aiCustomInstruction"
+                  rows="2"
+                  :maxlength="REWRITE_CUSTOM_INSTRUCTION_MAX"
+                  placeholder="例如：写得更像 Java 后端简历，突出项目职责，不要夸大经历"
+                  class="dw-ai-custom-input"
+                  data-test="docs-ai-custom-instruction"
+                ></textarea>
+              </div>
+
+              <!-- 生成按钮 -->
+              <button
+                type="button"
+                class="dw-export-btn dw-ai-generate"
+                :disabled="aiLoading || aiCustomInstructionTooLong"
+                @click="requestAiRewrite"
+                data-test="docs-ai-generate"
+              >
+                <Loader2 v-if="aiLoading" class="w-4 h-4 animate-spin" />
+                <RefreshCcw v-else class="w-4 h-4" />
+                <span>{{ aiLoading ? '生成中...' : (aiSuggestion ? '重新生成' : '生成建议') }}</span>
+              </button>
+
+              <!-- 事实安全锁提示 -->
+              <p class="mt-2 flex items-start gap-1 text-[11px] text-emerald-300/85 leading-relaxed" data-test="docs-ai-safety-hint">
+                <CheckCircle2 class="w-3 h-3 flex-shrink-0 mt-0.5" />
+                <span>事实安全锁已开启：AI 不会编造公司、学校、奖项、数字或项目成果。扩展内容会用【待补充】标记。</span>
+              </p>
+
+              <!-- 错误状态 -->
+              <p
+                v-if="aiError"
+                class="mt-3 text-[12px] text-red-300/90 leading-relaxed"
+                data-test="docs-ai-error"
+              >
+                {{ aiError }}
+              </p>
+
+              <!-- 建议结果 -->
+              <div v-if="aiSuggestion" class="mt-3">
+                <p class="text-[10px] text-gray-500 uppercase tracking-wider mb-1">AI 建议</p>
+                <div
+                  class="dw-ai-suggestion text-[13px] text-gray-100 leading-relaxed whitespace-pre-wrap"
+                  data-test="docs-ai-suggestion"
+                >
+                  {{ aiSuggestion }}
+                </div>
+
+                <!-- 动作按钮（suggest 模式不展示"替换选区"，避免把建议清单当正文） -->
+                <div class="mt-3 grid grid-cols-2 gap-2">
+                  <button
+                    v-if="allowReplaceForCurrentMode"
+                    type="button"
+                    class="dw-ai-action dw-ai-action--primary"
+                    @click="replaceSelectionWithSuggestion"
+                    data-test="docs-ai-replace"
+                  >
+                    <CheckCircle2 class="w-3.5 h-3.5" />
+                    替换选区
+                  </button>
+                  <button
+                    type="button"
+                    class="dw-ai-action"
+                    @click="insertSuggestionBelow"
+                    data-test="docs-ai-insert"
+                  >
+                    <CornerDownRight class="w-3.5 h-3.5" />
+                    插入到下方
+                  </button>
+                  <button
+                    type="button"
+                    class="dw-ai-action"
+                    @click="copySuggestion"
+                    data-test="docs-ai-copy"
+                  >
+                    <ClipboardCopy class="w-3.5 h-3.5" />
+                    复制建议
+                  </button>
+                  <button
+                    type="button"
+                    class="dw-ai-action dw-ai-action--ghost"
+                    @click="discardSuggestion"
+                    data-test="docs-ai-discard"
+                  >
+                    <X class="w-3.5 h-3.5" />
+                    放弃
+                  </button>
+                </div>
+              </div>
+
+              <p class="mt-3 text-[10px] text-gray-500 leading-relaxed">
+                选中文本不会被发送到第三方知识库或保存为历史记录，仅用于本次改写。
+              </p>
+            </div>
+
+            <div class="dw-panel p-3.5">
               <div class="flex items-center gap-2 mb-3">
                 <span class="w-1.5 h-1.5 rounded-full bg-cyan-400 shadow-[0_0_8px_rgba(34,211,238,0.6)]"></span>
-                <h2 class="text-xs font-mono uppercase tracking-wider text-gray-300">DOC INFO</h2>
+                <h2 class="dw-side-title">文档信息</h2>
+                <span class="dw-side-subtitle">DOC INFO</span>
               </div>
 
               <dl class="space-y-3 text-sm">
@@ -928,10 +1448,11 @@ watch(filterType, () => {
             </div>
 
             <!-- 导出操作 -->
-            <div class="dw-panel p-4">
+            <div class="dw-panel p-3.5">
               <div class="flex items-center gap-2 mb-3">
                 <Download class="w-3.5 h-3.5 text-cyan-300" />
-                <h2 class="text-xs font-mono uppercase tracking-wider text-gray-300">EXPORT</h2>
+                <h2 class="dw-side-title">导出</h2>
+                <span class="dw-side-subtitle">EXPORT</span>
               </div>
 
               <div class="flex flex-col gap-2">
@@ -978,20 +1499,21 @@ watch(filterType, () => {
             </div>
 
             <!-- 后续功能预告 -->
-            <div class="dw-panel p-4">
+            <div class="dw-panel p-3.5">
               <div class="flex items-center gap-2 mb-2">
                 <Sparkles class="w-3.5 h-3.5 text-purple-300" />
-                <h2 class="text-xs font-mono uppercase tracking-wider text-gray-300">UPCOMING</h2>
+                <h2 class="dw-side-title">即将开放</h2>
+                <span class="dw-side-subtitle">UPCOMING</span>
               </div>
               <ul class="space-y-1.5 text-[13px] text-gray-400">
                 <li class="flex items-center gap-2">
-                  <Sparkles class="w-3.5 h-3.5 text-purple-300/70" />
-                  AI 优化 / 改写
+                  <Database class="w-3.5 h-3.5 text-pink-300/70" />
+                  加入个人知识库
                   <span class="ml-auto text-[10px] font-mono text-gray-500">soon</span>
                 </li>
                 <li class="flex items-center gap-2">
-                  <Database class="w-3.5 h-3.5 text-pink-300/70" />
-                  加入个人知识库
+                  <FileText class="w-3.5 h-3.5 text-cyan-300/70" />
+                  导出 DOCX 简历模板
                   <span class="ml-auto text-[10px] font-mono text-gray-500">soon</span>
                 </li>
               </ul>
@@ -1175,9 +1697,335 @@ watch(filterType, () => {
   box-shadow: none;
 }
 
+/* ─── 右侧面板小节标题 ─── */
+.dw-side-title {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: rgba(229, 231, 235, 0.92);
+}
+.dw-side-subtitle {
+  font-size: 10px;
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.32);
+}
+
+/* ─── 编辑器外壳：动态高度，避免空文档时一整片黑洞 ─── */
+.dw-editor-shell {
+  min-height: 56vh;
+  height: 100%;
+}
+
+/* ─── 纸张容器：把标题 / 工具栏 / 正文限制在 760px 居中带 ─── */
+.dw-paper {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  max-width: 760px;
+  margin: 0 auto;
+  flex: 1;
+  position: relative;
+}
+.dw-paper__head {
+  position: relative;
+}
+.dw-paper__head::after {
+  /* 标题与工具栏之间的低对比分隔 */
+  content: '';
+  position: absolute;
+  left: 16px;
+  right: 16px;
+  bottom: 0;
+  height: 1px;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgba(255, 255, 255, 0.08) 30%,
+    rgba(255, 255, 255, 0.08) 70%,
+    transparent
+  );
+}
+.dw-paper__body {
+  /* 让正文有"纸张缩进"的轻微视觉提示 */
+  position: relative;
+}
+
+/* ─── 工具栏容器：sticky 在编辑区顶部，使其在长文档时仍然可见 ─── */
+.dw-toolbar {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: rgba(0, 0, 0, 0.42);
+  backdrop-filter: blur(10px);
+  border-top: 1px solid rgba(255, 255, 255, 0.04);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+}
+
+/* ─── 工具栏按钮 hover/active 增强 ─── */
+.dw-tb {
+  position: relative;
+}
+.dw-tb:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: #fff;
+  transform: translateY(-0.5px);
+}
+.dw-tb:active:not(:disabled) {
+  transform: translateY(0) scale(0.96);
+}
+.dw-tb--active {
+  background: rgba(34, 211, 238, 0.16);
+  border-color: rgba(34, 211, 238, 0.5);
+  color: rgb(207, 250, 254);
+  box-shadow: 0 0 12px rgba(34, 211, 238, 0.18);
+}
+
+/* ─── 标题输入：聚焦时下边线提示 ─── */
+.dw-title-input {
+  padding-bottom: 4px;
+  border-bottom: 1px solid transparent;
+  transition: border-color 0.18s ease;
+}
+.dw-title-input:focus {
+  border-bottom-color: rgba(34, 211, 238, 0.35);
+}
+
+/* ─── 工具栏 AI 润色按钮：可宽 + 文字标签 ─── */
+.dw-tb-ai {
+  width: auto;
+  padding: 0 10px;
+  gap: 5px;
+  color: rgb(216, 180, 254);
+  border-color: rgba(168, 85, 247, 0.35);
+  background: rgba(168, 85, 247, 0.08);
+}
+.dw-tb-ai:hover:not(:disabled) {
+  background: rgba(168, 85, 247, 0.16);
+  color: #fff;
+  border-color: rgba(168, 85, 247, 0.55);
+  box-shadow: 0 0 14px rgba(168, 85, 247, 0.22);
+}
+.dw-tb-ai:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+  background: rgba(255, 255, 255, 0.02);
+  border-color: rgba(255, 255, 255, 0.08);
+  color: rgba(255, 255, 255, 0.45);
+}
+.dw-tb-ai__label {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+/* ─── 右侧 AI 面板 ─── */
+.dw-ai-panel {
+  border-color: rgba(168, 85, 247, 0.30);
+  box-shadow: 0 0 22px rgba(168, 85, 247, 0.12), inset 0 1px 1px rgba(255, 255, 255, 0.04);
+  background: linear-gradient(180deg, rgba(168, 85, 247, 0.05), rgba(0, 0, 0, 0.32));
+}
+.dw-ai-selection {
+  border: 1px dashed rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  padding: 8px 10px;
+  background: rgba(255, 255, 255, 0.02);
+  max-height: 96px;
+  overflow: hidden;
+}
+.dw-ai-suggestion {
+  border: 1px solid rgba(34, 211, 238, 0.25);
+  border-radius: 10px;
+  padding: 10px 12px;
+  background: rgba(34, 211, 238, 0.04);
+  max-height: 280px;
+  overflow-y: auto;
+}
+.dw-ai-generate {
+  /* 复用 .dw-export-btn 颜色，但加点紫色 accent */
+  background: rgba(168, 85, 247, 0.10);
+  border-color: rgba(168, 85, 247, 0.40);
+  color: rgb(216, 180, 254);
+}
+.dw-ai-generate:hover:not(:disabled) {
+  background: rgba(168, 85, 247, 0.18);
+  border-color: rgba(168, 85, 247, 0.6);
+  box-shadow: 0 0 16px rgba(168, 85, 247, 0.20);
+  color: #fff;
+}
+
+/* ─── AI 4 个动作按钮 ─── */
+.dw-ai-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 7px 10px;
+  border-radius: 9px;
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  background: rgba(255, 255, 255, 0.03);
+  color: rgba(229, 231, 235, 0.85);
+  font-size: 12px;
+  font-weight: 500;
+  transition: all 0.18s ease;
+  cursor: pointer;
+}
+.dw-ai-action:hover {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(255, 255, 255, 0.22);
+  color: #fff;
+}
+.dw-ai-action:active {
+  transform: scale(0.97);
+}
+.dw-ai-action--primary {
+  background: rgba(34, 211, 238, 0.12);
+  border-color: rgba(34, 211, 238, 0.45);
+  color: rgb(207, 250, 254);
+}
+.dw-ai-action--primary:hover {
+  background: rgba(34, 211, 238, 0.22);
+  border-color: rgba(34, 211, 238, 0.7);
+  box-shadow: 0 0 14px rgba(34, 211, 238, 0.22);
+  color: #fff;
+}
+.dw-ai-action--ghost {
+  color: rgba(229, 231, 235, 0.55);
+}
+
+/* ─── 改写力度三段切换（D1.1） ─── */
+.dw-level-seg {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 4px;
+  padding: 3px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.02);
+}
+.dw-level-seg__btn {
+  padding: 6px 8px;
+  font-size: 12px;
+  font-weight: 500;
+  text-align: center;
+  border-radius: 7px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: rgba(229, 231, 235, 0.65);
+  cursor: pointer;
+  transition: all 0.18s ease;
+}
+.dw-level-seg__btn:hover {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.06);
+}
+.dw-level-seg__btn--active {
+  background: rgba(168, 85, 247, 0.18);
+  border-color: rgba(168, 85, 247, 0.5);
+  color: rgb(233, 213, 255);
+  box-shadow: 0 0 10px rgba(168, 85, 247, 0.18);
+}
+
+/* ─── 自定义要求 textarea（D1.1） ─── */
+.dw-ai-custom-input {
+  width: 100%;
+  resize: none;
+  padding: 8px 10px;
+  border-radius: 9px;
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  background: rgba(0, 0, 0, 0.32);
+  color: rgba(229, 231, 235, 0.95);
+  font-size: 12px;
+  line-height: 1.55;
+  outline: none;
+  transition: border-color 0.18s ease, box-shadow 0.18s ease;
+}
+.dw-ai-custom-input::placeholder {
+  color: rgba(255, 255, 255, 0.25);
+}
+.dw-ai-custom-input:focus {
+  border-color: rgba(168, 85, 247, 0.5);
+  box-shadow: 0 0 0 3px rgba(168, 85, 247, 0.12);
+}
+
+/* ─── 模式三段控件（D1.2） ─── */
+.dw-mode-seg {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 4px;
+  padding: 3px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.02);
+}
+.dw-mode-seg__btn {
+  padding: 6px 8px;
+  font-size: 12px;
+  font-weight: 500;
+  text-align: center;
+  border-radius: 7px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: rgba(229, 231, 235, 0.65);
+  cursor: pointer;
+  transition: all 0.18s ease;
+}
+.dw-mode-seg__btn:hover {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.06);
+}
+.dw-mode-seg__btn--active {
+  background: rgba(34, 211, 238, 0.16);
+  border-color: rgba(34, 211, 238, 0.5);
+  color: rgb(207, 250, 254);
+  box-shadow: 0 0 10px rgba(34, 211, 238, 0.18);
+}
+
+/* ─── 表达增强度滑条（D1.2） ─── */
+.dw-strength-slider {
+  width: 100%;
+  -webkit-appearance: none;
+  appearance: none;
+  height: 4px;
+  border-radius: 999px;
+  background: linear-gradient(
+    to right,
+    rgba(34, 211, 238, 0.55) 0%,
+    rgba(168, 85, 247, 0.65) 50%,
+    rgba(236, 72, 153, 0.7) 100%
+  );
+  outline: none;
+  cursor: pointer;
+}
+.dw-strength-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #fff;
+  border: 2px solid rgba(168, 85, 247, 0.7);
+  box-shadow: 0 0 8px rgba(168, 85, 247, 0.45);
+  cursor: pointer;
+  transition: transform 0.12s ease;
+}
+.dw-strength-slider::-webkit-slider-thumb:hover {
+  transform: scale(1.12);
+}
+.dw-strength-slider::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #fff;
+  border: 2px solid rgba(168, 85, 247, 0.7);
+  box-shadow: 0 0 8px rgba(168, 85, 247, 0.45);
+  cursor: pointer;
+}
+
 /* ─── Tiptap ProseMirror 视觉规范（暗色 + 紫青 accent） ─── */
 :deep(.ProseMirror) {
-  min-height: 50vh;
+  min-height: 36vh;
   outline: none;
   color: rgba(229, 231, 235, 0.92);
   font-size: 14px;
@@ -1250,7 +2098,7 @@ watch(filterType, () => {
   margin: 1em 0;
 }
 :deep(.ProseMirror p.is-editor-empty:first-child::before) {
-  content: '在这里开始书写...';
+  content: '开始撰写你的简历、笔记或升学资料...';
   color: rgba(255, 255, 255, 0.18);
   pointer-events: none;
   height: 0;
@@ -1276,6 +2124,12 @@ watch(filterType, () => {
 @media (max-width: 767px) {
   .dw-panel {
     border-radius: 12px;
+  }
+  .dw-paper {
+    max-width: 100%;
+  }
+  .dw-editor-shell {
+    min-height: 50vh;
   }
 }
 </style>

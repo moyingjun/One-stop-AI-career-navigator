@@ -26,6 +26,7 @@ from Router import (
     agent_dispatcher,
     auth,
     careerPlan,
+    document,
     history_router,
     interview,
     jobResume,
@@ -102,3 +103,4 @@ app.include_router(knowledge_base.router)       # 新版 /api/kb/*（带鉴权�
 app.include_router(history_router.router)
 app.include_router(auth.router)
 app.include_router(llm_provider_router.router)
+app.include_router(document.router)
