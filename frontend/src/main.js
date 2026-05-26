@@ -17,12 +17,17 @@ import App from './App.vue'
 import router from './router'
 import { useUserStore } from './stores/userStore'
 import { useLlmProviderStore } from './stores/llmProviderStore'
+import { loadAccentTheme } from './utils/accentTheme.js'
 
 const pinia = createPinia()
 
 const app = createApp(App)
 app.use(pinia)
 app.use(router)
+
+// 应用启动:同步恢复用户选择的 Accent 主题色,确保 mount 之前 :root CSS 变量已就位,
+// 避免首屏闪一下默认色再切换。
+loadAccentTheme()
 
 // 应用启动时统一恢复用户画像 + 雷达快照（Phase 1 radar 打通）。
 // 必须在 app.use(pinia) 之后、app.mount() 之前调用，

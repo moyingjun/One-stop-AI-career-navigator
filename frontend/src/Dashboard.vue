@@ -3,6 +3,8 @@ import { ref, computed, onMounted, onUnmounted, nextTick, watch } from 'vue'
 import { useDebounceFn } from '@vueuse/core'
 import { llmService, streamChat } from '@/services/llm_service.js'
 import { normalizeRecordType, resolveHistoryRoute, getRecordColorClass, RECORD_TYPES } from '@/utils/historyRecordTypes.js'
+import { buildSearchUrl, openInNewTab } from '@/utils/searchIntent.js'
+import { ACCENT_THEME_LIST, setAccentTheme, getCurrentAccentName } from '@/utils/accentTheme.js'
 import { getAuthHeaders } from '@/services/authService.js'
 import { useRouter, useRoute } from 'vue-router'
 import { vAutoAnimate } from '@formkit/auto-animate/vue'
@@ -24,6 +26,7 @@ import { formatRecordTime, getRecordTimestamp } from '@/utils/dateFormat.js'
 import CyberRadarChart from '@/components/CyberRadarChart.vue'
 import SetupModal from '@/components/SetupModal.vue'
 import DataSourceModal from '@/components/DataSourceModal.vue'
+import BaseModal from '@/components/BaseModal.vue'
 import ChatPreviewModal from '@/components/ChatPreviewModal.vue'
 import KnowledgePanel from '@/components/KnowledgePanel.vue'
 import ChatDock from '@/components/chat/ChatDock.vue'
@@ -259,6 +262,24 @@ const careerRecords = computed(() => {
     .slice(0, 10)
 })
 
+// 「今日建议」三条快捷搜索入口(本轮新增):
+//   - text:面板上展示的文字
+//   - dotClass:小圆点颜色(沿用旧视觉,不引入新色板)
+// 点击行为:走 utils/searchIntent.js 的 buildSearchUrl,在新标签页打开 cn.bing.com。
+// 第一版只做跳转搜索,不联网抓取、不接 RAG、不做摘要。
+const dailyTips = [
+  { text: '简历优化建议已就绪',     dotClass: 'bg-cyan-400/60   group-hover/item:shadow-[0_0_8px_rgba(34,211,238,0.8)]' },
+  { text: '专属院校政策更新 3 条',   dotClass: 'bg-purple-400/60 group-hover/item:shadow-[0_0_8px_rgba(168,85,247,0.8)]' },
+  { text: '面试模拟热度 TOP1',       dotClass: 'bg-amber-400/60  group-hover/item:shadow-[0_0_8px_rgba(251,191,36,0.8)]' }
+]
+
+const handleDailyTipClick = (tip) => {
+  const targetJob = userStore.targetJob || localStorage.getItem('target_job') || ''
+  const url = buildSearchUrl({ text: tip.text }, targetJob)
+  // 新标签页打开,带 noopener,noreferrer;不在当前页跳转,不破坏 Dashboard 状态
+  openInNewTab(url)
+}
+
 // 新手启航舱卡片配置（静态数据，不依赖任何响应式数据源）
 // Requirements: 7.1, 7.2, 7.3, 7.4, 8.3
 const onboardingCards = [
@@ -438,6 +459,17 @@ const pendingFileName = ref('')
 const showSetupModal = ref(false)
 // DataSourceModal 弹窗控制（数据面板设置，与 SetupModal 解耦）
 const showDataSourceModal = ref(false)
+
+// AccentSettings 弹窗控制(系统设置 → 主题色 Accent Color)
+const showAccentSettingsModal = ref(false)
+// 当前选中的 accent 名(响应式;切换后立即更新色块的"已选中"高亮)
+const currentAccentName = ref(getCurrentAccentName())
+const accentThemeList = ACCENT_THEME_LIST    // 模板里直接 v-for
+const handlePickAccentTheme = (name) => {
+  const theme = setAccentTheme(name)         // 立即写 :root CSS 变量 + localStorage
+  currentAccentName.value = theme.name
+  showToastMsg(`已切换主题色:${theme.label}`, 1500)
+}
 // KnowledgePanel 悬浮面板控制
 const showKnowledgePanel = ref(false)
 
@@ -811,7 +843,12 @@ const handleSidebarItemClick = (item, menu) => {
     return
   }
 
-  if (item.label === '功能模板' || item.label === '插件集成' || item.label === '系统设置' || menu.category === '我的项目') {
+  if (item.label === '系统设置') {
+    showAccentSettingsModal.value = true
+    return
+  }
+
+  if (item.label === '功能模板' || item.label === '插件集成' || menu.category === '我的项目') {
     showComingSoonToast()
     return
   }
@@ -1547,7 +1584,7 @@ onUnmounted(() => {
                   v-for="(item, index) in menu.items"
                   :key="index"
                   class="menu-item flex items-center gap-3 py-1.5 px-2 rounded-lg hover:bg-white/10 hover:bg-gradient-to-r hover:from-purple-500/10 hover:to-transparent transition-all duration-300 cursor-pointer hover:translate-x-2 hover:text-white group"
-                  :class="{ 'bg-gradient-to-r from-purple-500/15 to-purple-500/5 text-white shadow-[0_0_15px_rgba(168,85,247,0.4)] border border-purple-500/30': item.label === activeMenu }"
+                  :class="{ 'sidebar-item--active': item.label === activeMenu }"
                   @click="handleSidebarItemClick(item, menu)"
                 >
                   <component :is="iconMap[item.icon]" class="w-5 h-5 text-gray-400 group-hover:text-purple-400 transition-colors duration-300" />
@@ -2010,22 +2047,25 @@ onUnmounted(() => {
                 <div class="bg-white/[0.015] backdrop-blur-xl border border-white/5 rounded-2xl p-4 shadow-[inset_0_0_20px_rgba(255,255,255,0.01)] transition-all duration-500 hover:-translate-y-1 hover:bg-white/[0.03] hover:border-purple-500/20 hover:shadow-[0_10px_30px_rgba(168,85,247,0.1)] group">
                   <div class="flex items-center justify-between mb-2">
                     <h3 class="text-xs font-semibold text-gray-300">今日建议</h3>
-                    <span class="text-xs text-gray-500">3 条</span>
+                    <span class="text-xs text-gray-500">{{ dailyTips.length }} 条</span>
                   </div>
                   <div class="space-y-1.5">
-                    <div class="flex items-center gap-2 group/item cursor-default">
-                      <div class="w-1.5 h-1.5 rounded-full bg-cyan-400/60 group-hover/item:shadow-[0_0_8px_rgba(34,211,238,0.8)] transition-all duration-300 flex-shrink-0"></div>
-                      <span class="text-xs text-gray-400">简历优化建议已就绪</span>
-                    </div>
-                    <div class="flex items-center gap-2 group/item cursor-default">
-                      <div class="w-1.5 h-1.5 rounded-full bg-purple-400/60 group-hover/item:shadow-[0_0_8px_rgba(168,85,247,0.8)] transition-all duration-300 flex-shrink-0"></div>
-                      <span class="text-xs text-gray-400">专属院校政策更新 3 条</span>
-                    </div>
-                    <div class="flex items-center gap-2 group/item cursor-default">
-                      <div class="w-1.5 h-1.5 rounded-full bg-amber-400/60 group-hover/item:shadow-[0_0_8px_rgba(251,191,36,0.8)] transition-all duration-300 flex-shrink-0"></div>
-                      <span class="text-xs text-gray-400">面试模拟热度 TOP1</span>
-                    </div>
+                    <!-- 每条建议都是一个快捷搜索入口:点击在新标签页打开 cn.bing.com,
+                         关键词由 utils/searchIntent.js 按主题自动拼接 -->
+                    <button
+                      v-for="(tip, tIdx) in dailyTips"
+                      :key="tIdx"
+                      type="button"
+                      @click="handleDailyTipClick(tip)"
+                      :title="`点击搜索:${tip.text}`"
+                      class="daily-tip-row w-full flex items-center gap-2 cursor-pointer group/item rounded-md px-1 py-0.5 text-left transition-all duration-200 hover:bg-white/[0.04] hover:shadow-[inset_0_0_12px_rgba(168,85,247,0.08)] focus:outline-none focus:ring-1 focus:ring-cyan-400/40"
+                    >
+                      <div :class="['w-1.5 h-1.5 rounded-full transition-all duration-300 flex-shrink-0', tip.dotClass]"></div>
+                      <span class="text-xs text-gray-400 group-hover/item:text-gray-200 transition-colors flex-1 truncate">{{ tip.text }}</span>
+                      <Search class="daily-tip-row__icon w-3 h-3 transition-colors flex-shrink-0" />
+                    </button>
                   </div>
+                  <p class="mt-2 text-[10px] text-gray-500/70 italic">点击搜索相关资料</p>
                 </div>
 
                 <!-- 卡片 3：动态多维数据栈（Widget Stack） -->
@@ -2036,7 +2076,7 @@ onUnmounted(() => {
                       <button @click="activeDataTab = 'interview'" :class="activeDataTab === 'interview' ? 'bg-pink-500/20 text-pink-300 border-pink-500/30' : 'text-gray-500 hover:text-gray-300 border-transparent'" class="px-2 py-1 rounded text-xs font-medium transition-all border">面试评估</button>
                       <button @click="activeDataTab = 'career'" :class="activeDataTab === 'career' ? 'bg-blue-500/20 text-blue-300 border-blue-500/30' : 'text-gray-500 hover:text-gray-300 border-transparent'" class="px-2 py-1 rounded text-xs font-medium transition-all border">综合规划</button>
                     </div>
-                    <span class="text-xs text-cyan-500/70 cursor-pointer hover:text-cyan-400" @click="showDataSourceModal = true">数据面板设置 &gt;</span>
+                    <span class="text-xs accent-link cursor-pointer" @click="showDataSourceModal = true">数据面板设置 &gt;</span>
                   </div>
 
                   <!-- 雷达图 fetch 失败提示：保留现有数据，不重置为零（Requirements 10.2） -->
@@ -2386,6 +2426,47 @@ onUnmounted(() => {
     <!-- KnowledgePanel 悬浮面板：知识库资产背包 -->
     <KnowledgePanel v-model="showKnowledgePanel" />
 
+    <!-- AccentSettings 弹窗:系统设置 → 主题色 Accent Color -->
+    <BaseModal v-model="showAccentSettingsModal" max-width="max-w-md">
+      <div class="p-6">
+        <header class="flex items-center justify-between mb-1">
+          <h2 class="text-base font-semibold text-gray-100">主题强调色</h2>
+          <button
+            type="button"
+            @click="showAccentSettingsModal = false"
+            class="w-7 h-7 rounded-md border border-white/10 text-gray-400 hover:text-white hover:bg-white/5 flex items-center justify-center transition-colors"
+            aria-label="关闭"
+          >
+            <X class="w-4 h-4" />
+          </button>
+        </header>
+        <p class="text-xs text-gray-500 mb-4">选择全站主强调色,刷新后自动恢复。</p>
+        <ul class="grid grid-cols-1 gap-2">
+          <li v-for="t in accentThemeList" :key="t.name">
+            <button
+              type="button"
+              @click="handlePickAccentTheme(t.name)"
+              class="accent-row w-full flex items-center gap-3 px-3 py-2.5 rounded-xl border transition-all duration-200 cursor-pointer text-left"
+              :class="t.name === currentAccentName
+                ? 'accent-row--active border-transparent bg-white/[0.04]'
+                : 'border-white/10 hover:border-white/20 hover:bg-white/[0.03]'"
+              :style="`--row-rgb: ${t.rgb}`"
+            >
+              <span class="accent-swatch w-7 h-7 rounded-full flex-shrink-0" />
+              <div class="flex-1 min-w-0">
+                <div class="text-sm font-medium text-gray-100">{{ t.label }}</div>
+                <div class="text-[11px] font-mono text-gray-500">rgb({{ t.rgb }})</div>
+              </div>
+              <CheckCircle v-if="t.name === currentAccentName" class="w-4 h-4 accent-row__check" />
+            </button>
+          </li>
+        </ul>
+        <p class="mt-4 text-[11px] text-gray-500/80">
+          已应用到:侧边栏当前选中项、今日建议 hover 图标、确认按钮等关键 accent 点。
+        </p>
+      </div>
+    </BaseModal>
+
     <!-- CareerPreviewPanel 浮窗：职业规划快速预览（支持上一条/下一条翻阅） -->
     <CareerPreviewPanel
       :visible="showCareerPreview"
@@ -2398,6 +2479,52 @@ onUnmounted(() => {
 </template>
 
 <style scoped>
+/* ── 全站主强调色 (Accent Color) 命中点 ──────────────────
+   :root 的 --accent-rgb / --accent-color / --accent-soft / --accent-border
+   由 utils/accentTheme.js 在 boot 时和切换时写入。
+   下面这些类把"原本写死紫/青色"的 accent 点统一改为消费 CSS 变量,
+   因此用户在系统设置里切换主题色后立刻可见。 */
+
+/* 侧边栏当前选中项 */
+.sidebar-item--active {
+  color: #fff;
+  background-image: linear-gradient(to right, rgba(var(--accent-rgb), 0.18), rgba(var(--accent-rgb), 0.04));
+  border: 1px solid var(--accent-border);
+  box-shadow: 0 0 15px rgba(var(--accent-rgb), 0.40);
+}
+
+/* 今日建议 hover 时显现的搜索小图标 */
+.daily-tip-row__icon {
+  color: rgba(var(--accent-rgb), 0);
+}
+.daily-tip-row:hover .daily-tip-row__icon,
+.group\/item:hover .daily-tip-row__icon {
+  color: rgba(var(--accent-rgb), 0.8);
+}
+
+/* "数据面板设置 >" 等小链接 */
+.accent-link {
+  color: rgba(var(--accent-rgb), 0.7);
+  transition: color 0.18s ease;
+}
+.accent-link:hover {
+  color: var(--accent-color);
+}
+
+/* AccentSettings 弹窗里的色块行 */
+.accent-row { transition: all 0.18s ease; }
+.accent-row .accent-swatch {
+  background: rgb(var(--row-rgb));
+  box-shadow: 0 0 10px rgba(var(--row-rgb), 0.35), inset 0 0 6px rgba(255,255,255,0.06);
+}
+.accent-row--active {
+  border-color: rgb(var(--row-rgb)) !important;
+  box-shadow: 0 0 0 1px rgb(var(--row-rgb)), 0 0 16px rgba(var(--row-rgb), 0.30);
+}
+.accent-row__check {
+  color: rgb(var(--row-rgb));
+}
+
 .app-container {
   background-color: #050505;
 }
