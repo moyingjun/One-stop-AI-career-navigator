@@ -34,9 +34,11 @@ const API_BASE_URL = '/api'
  * @param {Function} options.onMeta    — 收到 event:meta 时调用，参数为解析后的 meta 对象
  * @param {Function} options.onDone    — 收到 event:done 时调用，参数为 done payload（含 record_id）
  * @param {Function} options.onError   — 收到 event:error 或网络异常时调用，参数为错误消息字符串
+ * @param {AbortSignal} [options.signal] — 可选 AbortSignal,用于主动取消正在进行的流(传递给 fetch);
+ *                                         AbortError 会被静默处理,不会触发 onError
  * @returns {Promise<void>}
  */
-export async function streamChat({ endpoint, payload, onMessage, onMeta, onDone, onError }) {
+export async function streamChat({ endpoint, payload, onMessage, onMeta, onDone, onError, signal }) {
   // 确保回调函数存在（防御性默认值）
   const _onMessage = onMessage || (() => {})
   const _onMeta    = onMeta    || (() => {})
@@ -61,7 +63,8 @@ export async function streamChat({ endpoint, payload, onMessage, onMeta, onDone,
         'Content-Type': 'application/json',
         ...getAuthHeaders()
       },
-      body: JSON.stringify(payload)
+      body: JSON.stringify(payload),
+      signal
     })
 
     if (!response.ok) {

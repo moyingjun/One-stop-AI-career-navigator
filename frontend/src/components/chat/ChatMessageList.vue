@@ -1,7 +1,17 @@
 <script setup>
 import { ref, nextTick, watch } from 'vue'
 import { Bot, Loader2 } from 'lucide-vue-next'
-import { marked } from 'marked'
+import { renderSafeMarkdown } from '@/utils/safeMarkdown.js'
+
+/**
+ * ChatMessageList.vue —— 主聊天消息列表(P0 安全渲染版)
+ *
+ * 安全说明:
+ *   - LLM / RAG 输出可能包含 raw HTML(<img onerror>、<script>、伪装链接等),
+ *     直接 v-html 等同于把第三方/用户输入直接插入 DOM,存在 XSS 风险。
+ *   - 现统一通过 renderSafeMarkdown 清洗:禁止 raw HTML、链接协议白名单、二次正则兜底。
+ *   - 不影响普通 Markdown(粗体、列表、代码块、引用、表格等)的展示。
+ */
 
 const props = defineProps({
   messages: { type: Array, default: () => [] },
@@ -54,7 +64,7 @@ defineExpose({ scrollToBottom })
           <Bot class="w-4 h-4 text-cyan-400" />
         </div>
         <div class="max-w-[80%] bg-gradient-to-r from-gray-800/50 to-gray-900/50 border border-white/10 rounded-xl p-3">
-          <div class="text-sm text-gray-200 chat-markdown" v-html="marked.parse(message.content || '')"></div>
+          <div class="text-sm text-gray-200 chat-markdown" v-html="renderSafeMarkdown(message.content || '')"></div>
           <p class="text-xs text-gray-500 mt-1">{{ message.timestamp }}</p>
         </div>
       </div>

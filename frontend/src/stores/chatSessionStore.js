@@ -53,6 +53,9 @@ export const useChatSessionStore = defineStore('chatSession', {
     /** 归档按钮是否可点击 */
     canArchive: (state) => {
       if (state.isArchiving) return false
+      // streaming 中禁止归档:此时最后一条 AI 消息可能仍在持续追加,
+      // 归档结果会是不完整的快照,且与 store 状态机存在 race。
+      if (state.isLoading) return false
       if (!state.messages.some(m => (m.content || '').trim())) return false
       if (state.archivedRecordId && !state.isDirty) return false
       return true

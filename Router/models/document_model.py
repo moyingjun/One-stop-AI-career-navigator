@@ -4,7 +4,9 @@ Router/models/document_model.py — 文档工作台请求 / 响应模型
 
 from __future__ import annotations
 
-from typing import Optional
+import json
+from enum import Enum
+from typing import Any, Optional
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -108,3 +110,99 @@ class RewriteResponse(BaseModel):
 
     success: bool
     result: str = ""
+
+
+# ─────────────────────────────────────────────
+# 简历抽取(extract-resume)— Resume Preview Builder MVP
+# ─────────────────────────────────────────────
+
+# Requirement 4.2 / 4.9:plain_text 上限 200000 字符
+MAX_EXTRACT_PLAIN_TEXT_CHARS = 200_000
+# Requirement 4.2:content_json 序列化后上限 1 MiB
+MAX_EXTRACT_CONTENT_JSON_BYTES = 1024 * 1024
+# Requirement 4.3:warnings 元素枚举集合
+ALLOWED_EXTRACT_WARNING_CODES = {
+    "empty_input",
+    "json_parse_failed",
+    "extraction_timeout",
+    "fabrication_suspected",
+    "non_resume_content_detected",
+}
+
+
+class FieldStatus(str, Enum):
+    """Resume_JSON 中每个原子字段的状态枚举(Requirement 2.4 / 2.5)。"""
+
+    confirmed = "confirmed"
+    inferred_from_text = "inferred_from_text"
+    missing = "missing"
+    needs_confirmation = "needs_confirmation"
+
+
+class ExtractResumeRequest(BaseModel):
+    """
+    Extract_Resume_API 请求体(Requirement 4.2 / 4.9)。
+
+    校验:
+      - document_id 长度 1..128
+      - plain_text 长度 ≤ 200000
+      - content_json 序列化后 ≤ 1 MiB
+      - provider_id 长度 1..64 或 None
+    """
+
+    document_id: str = Field(..., min_length=1, max_length=128)
+    plain_text: str = Field(..., max_length=MAX_EXTRACT_PLAIN_TEXT_CHARS)
+    content_json: dict = Field(default_factory=dict)
+    provider_id: Optional[str] = Field(default=None, max_length=64)
+
+    @field_validator("content_json")
+    @classmethod
+    def _check_content_json_size(cls, value: dict) -> dict:
+        if not isinstance(value, dict):
+            raise ValueError("content_json 必须是对象")
+        try:
+            serialized = json.dumps(value, ensure_ascii=False)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"content_json 序列化失败: {exc}")
+        if len(serialized.encode("utf-8")) > MAX_EXTRACT_CONTENT_JSON_BYTES:
+            raise ValueError("content_json 序列化后超过 1 MiB 上限")
+        return value
+
+    @field_validator("provider_id")
+    @classmethod
+    def _check_provider_id(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        if not isinstance(value, str):
+            raise ValueError("provider_id 必须是字符串或 null")
+        # 全空白等价未填
+        if not value.strip():
+            return None
+        return value
+
+
+class ExtractResumeResponse(BaseModel):
+    """
+    Extract_Resume_API 响应体(Requirement 4.3)。
+
+    - resume_json 永不为 null;失败时为安全骨架。
+    - warnings 元素必须取自固定枚举集合。
+    - debug_request_id:仅在 DEBUG_MODE=true 时返回非空,用于前端 console 与
+      后端 debug/resume_extract/{rid}_* 取证文件关联。生产环境恒为 None。
+    """
+
+    success: bool
+    resume_json: dict = Field(default_factory=dict)
+    warnings: list[str] = Field(default_factory=list)
+    missing_questions: list[str] = Field(default_factory=list)
+    debug_request_id: Optional[str] = None
+
+    @field_validator("warnings")
+    @classmethod
+    def _check_warnings(cls, value: list[str]) -> list[str]:
+        if not isinstance(value, list):
+            raise ValueError("warnings 必须是数组")
+        for code in value:
+            if code not in ALLOWED_EXTRACT_WARNING_CODES:
+                raise ValueError(f"非法 warning code: {code}")
+        return value

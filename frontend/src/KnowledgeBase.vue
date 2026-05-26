@@ -49,10 +49,14 @@ import {
 import { useEditor, EditorContent } from '@tiptap/vue-3'
 import StarterKit from '@tiptap/starter-kit'
 import BaseModal from '@/components/BaseModal.vue'
+import ResumeBuilderWorkspace from '@/components/ResumeBuilderWorkspace.vue'
 import { showToast } from '@/utils/uiFallbacks'
 import { exportDocxFromDocument } from '@/utils/docxExport.js'
 import { getAuthHeaders } from '@/services/authService.js'
 import { useLlmProviderStore } from '@/stores/llmProviderStore.js'
+import { canOpenWorkspace } from '@/utils/stripUnicodeWhitespace.js'
+import { truncatePlainText } from '@/utils/truncatePlainText.js'
+import { useResumeBuilderStore } from '@/stores/resumeBuilderStore.js'
 
 const router = useRouter()
 const llmProviderStore = useLlmProviderStore()
@@ -877,6 +881,100 @@ const discardSuggestion = () => {
 }
 
 // ─────────────────────────────────────────────
+// Resume Preview Builder 接入
+// ─────────────────────────────────────────────
+
+const resumeBuilderStore = useResumeBuilderStore()
+
+/** 当前文档的草稿是否足够生成预览(去除 Unicode 空白后 ≥ 10 字符)。Requirement 1.4。 */
+const canOpenResumeWorkspace = computed(() => {
+  if (!activeDoc.value) return false
+  return canOpenWorkspace(activeDoc.value.plainText || '')
+})
+
+/** Workspace 显隐 */
+const resumeWorkspaceOpen = ref(false)
+/** 当前传入 Workspace 的 draft 快照(只读,关闭后不再变化) */
+const resumeWorkspaceDraft = ref(null)
+/** 「确认覆盖」二次确认弹窗 */
+const showOverwriteResumeModal = ref(false)
+/** 暂存的 draft(在二次确认弹窗里使用) */
+const pendingResumeDraft = ref(null)
+
+/**
+ * 构造透传给 Workspace 的 draft 快照。
+ *
+ * 严格只读:不会写回 activeDoc。
+ * 失败时返回 { error: '<字段名>' } 用于 Toast 提示。
+ */
+const buildResumeDraftPayload = () => {
+  const doc = activeDoc.value
+  if (!doc) return { error: 'document_id' }
+  if (!doc.id) return { error: 'document_id' }
+  const plainText = typeof doc.plainText === 'string' ? doc.plainText : ''
+  let contentJson
+  try {
+    // 深拷贝避免 Workspace 内可能的意外修改影响 Tiptap state
+    contentJson = JSON.parse(JSON.stringify(doc.contentJson || {}))
+  } catch (err) {
+    return { error: 'content_json' }
+  }
+  // 草稿截断到 50000 字符
+  return {
+    payload: {
+      document_id: doc.id,
+      plain_text: truncatePlainText(plainText),
+      content_json: contentJson,
+      provider_id: llmProviderStore.getCurrentProviderId() || null
+    }
+  }
+}
+
+const openResumeWorkspaceWith = (draft) => {
+  resumeWorkspaceDraft.value = draft
+  resumeWorkspaceOpen.value = true
+}
+
+const onClickGenerateResumePreview = () => {
+  if (!canOpenResumeWorkspace.value) return
+
+  const result = buildResumeDraftPayload()
+  if (result.error) {
+    showToast(`文档数据读取失败:${result.error}`, { type: 'error' })
+    return
+  }
+
+  // 已有 dirty 状态 → 弹「确认覆盖 / 取消」
+  if (resumeBuilderStore.isDirty && resumeBuilderStore.documentId === result.payload.document_id) {
+    pendingResumeDraft.value = result.payload
+    showOverwriteResumeModal.value = true
+    return
+  }
+
+  openResumeWorkspaceWith(result.payload)
+}
+
+const onConfirmOverwriteResume = async () => {
+  showOverwriteResumeModal.value = false
+  const draft = pendingResumeDraft.value
+  pendingResumeDraft.value = null
+  if (!draft) return
+  // 强制重抽
+  await resumeBuilderStore.reextractFromDraft(draft)
+  openResumeWorkspaceWith(draft)
+}
+
+const onCancelOverwriteResume = () => {
+  showOverwriteResumeModal.value = false
+  pendingResumeDraft.value = null
+}
+
+const onCloseResumeWorkspace = () => {
+  resumeWorkspaceOpen.value = false
+  // draft 快照保留以便用户再次打开同一份文档时能 reuse,但不写回 activeDoc
+}
+
+// ─────────────────────────────────────────────
 // 工具栏命令（封装 Tiptap chain）
 // ─────────────────────────────────────────────
 
@@ -1177,6 +1275,18 @@ watch(filterType, () => {
                     >
                       <Wand2 class="w-3.5 h-3.5" />
                       <span class="dw-tb-ai__label">AI 润色</span>
+                    </button>
+                    <span class="dw-tb-sep"></span>
+                    <button
+                      type="button"
+                      class="dw-tb dw-tb-ai dw-tb-resume"
+                      :disabled="!canOpenResumeWorkspace"
+                      :title="canOpenResumeWorkspace ? '从当前草稿生成结构化简历预览' : '请先在文档中填写简历草稿'"
+                      @click="onClickGenerateResumePreview"
+                      data-test="docs-resume-builder-trigger"
+                    >
+                      <Sparkles class="w-3.5 h-3.5" />
+                      <span class="dw-tb-ai__label">生成简历预览</span>
                     </button>
                     <span class="dw-tb-sep"></span>
                     <button type="button" class="dw-tb" @click="undoCmd" title="撤销">
@@ -1557,6 +1667,45 @@ watch(filterType, () => {
         </div>
       </div>
     </BaseModal>
+
+    <!-- 「生成简历预览」覆盖确认弹窗(Requirement 1.5 / 1.6) -->
+    <BaseModal
+      v-model="showOverwriteResumeModal"
+      max-width="max-w-sm"
+      @close="onCancelOverwriteResume"
+    >
+      <div class="p-6">
+        <h3 class="text-base font-semibold text-white mb-2">覆盖现有结构化结果?</h3>
+        <p class="text-sm text-gray-400 leading-relaxed mb-5">
+          当前已有未保存的结构化编辑。点击「确认覆盖」将丢弃这些编辑并重新抽取。
+        </p>
+        <div class="flex gap-3">
+          <button
+            type="button"
+            @click="onCancelOverwriteResume"
+            class="flex-1 py-2.5 rounded-xl text-sm font-medium border border-white/10 text-gray-300 hover:bg-white/5 transition-all"
+            data-test="docs-resume-overwrite-cancel"
+          >
+            取消
+          </button>
+          <button
+            type="button"
+            @click="onConfirmOverwriteResume"
+            class="flex-1 py-2.5 rounded-xl text-sm font-semibold text-white bg-gradient-to-r from-cyan-500 to-purple-500 shadow-lg shadow-cyan-500/20 hover:shadow-cyan-500/40 transition-all"
+            data-test="docs-resume-overwrite-confirm"
+          >
+            确认覆盖
+          </button>
+        </div>
+      </div>
+    </BaseModal>
+
+    <!-- 简历预览构建器 全屏 Modal -->
+    <ResumeBuilderWorkspace
+      v-model="resumeWorkspaceOpen"
+      :draft="resumeWorkspaceDraft"
+      @close="onCloseResumeWorkspace"
+    />
   </div>
 </template>
 
@@ -1800,6 +1949,26 @@ watch(filterType, () => {
   color: rgb(216, 180, 254);
   border-color: rgba(168, 85, 247, 0.35);
   background: rgba(168, 85, 247, 0.08);
+}
+
+/* ─── 工具栏「生成简历预览」按钮 ─── */
+.dw-tb-resume {
+  color: rgb(165, 243, 252);
+  border-color: rgba(34, 211, 238, 0.45);
+  background: rgba(34, 211, 238, 0.08);
+}
+.dw-tb-resume:hover:not(:disabled) {
+  background: rgba(34, 211, 238, 0.18);
+  color: #fff;
+  box-shadow: 0 0 14px rgba(34, 211, 238, 0.2);
+}
+.dw-tb-resume:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  background: rgba(255, 255, 255, 0.02);
+  border-color: rgba(255, 255, 255, 0.08);
+  color: rgba(255, 255, 255, 0.45);
+  box-shadow: none;
 }
 .dw-tb-ai:hover:not(:disabled) {
   background: rgba(168, 85, 247, 0.16);

@@ -199,12 +199,19 @@ async def complete_chat(
     max_tokens: int = 4096,
     timeout: float = 60.0,
     provider_id: Optional[str] = None,
+    extra_body: Optional[dict] = None,
+    allow_reasoning_fallback: bool = False,
 ) -> Optional[str]:
     """
     非流式调用 LLM，返回完整回复字符串。
 
     Args:
         provider_id — 可选，指定 Provider；不传或不存在时使用默认 Provider。
+        extra_body — 可选，附加到 request payload 顶层的字段（如 Mimo 的
+                     {"thinking": {"type": "disabled"}}）。无关 provider 会忽略未识别字段，
+                     失败概率极低；调用方可按 provider 决定是否传入。
+        allow_reasoning_fallback — 默认 False。仅结构化抽取这种后台任务可设为 True，
+                     普通 chat / 面试 / 职业规划绝不能开启，避免把模型思维链当作正文返回给用户。
 
     Raises:
         LLMClientError — 不可恢复的 LLM 调用失败
@@ -215,6 +222,13 @@ async def complete_chat(
         messages, stream=False, provider=provider,
         temperature=temperature, max_tokens=max_tokens,
     )
+    # 注入 extra_body(如 Mimo thinking disabled);保留原 payload 字段不被覆盖
+    if isinstance(extra_body, dict):
+        for k, v in extra_body.items():
+            if k in payload:
+                # 已存在的核心字段(messages / model / stream / temperature / max_tokens)不被外部覆盖
+                continue
+            payload[k] = v
 
     try:
         async with httpx.AsyncClient(timeout=timeout, proxy=None) as client:
@@ -243,7 +257,7 @@ async def complete_chat(
     choices = data.get("choices")
     if not isinstance(choices, list) or len(choices) == 0:
         keys = list(data.keys()) if isinstance(data, dict) else type(data).__name__
-        print(f"[llm_client] complete_chat 响应缺少 choices，顶层 keys={keys}")
+        print(f"[llm_client] complete_chat 响应缺少 choices,顶层 keys={keys}")
         raise LLMClientError("模型响应缺少 choices 字段")
 
     first_choice = choices[0]
@@ -255,15 +269,32 @@ async def complete_chat(
         raise LLMClientError("choices[0].message 字段缺失或格式错误")
 
     content = message.get("content")
-    if isinstance(content, str) and content:
+    reasoning_content = message.get("reasoning_content")
+
+    has_content = isinstance(content, str) and content.strip()
+    has_reasoning = isinstance(reasoning_content, str) and reasoning_content.strip()
+
+    # 主路径:正常 content 字段。打印长度,不打印原文,避免泄露用户数据。
+    if has_content:
+        print(f"[llm_client] complete_chat content_len={len(content)}")
         return content
 
-    if message.get("reasoning_content") and not content:
-        print("[llm_client] complete_chat 响应只含 reasoning_content，无 content，返回 None")
+    # fallback 路径:仅结构化抽取等后台任务允许;普通聊天必须保持 None。
+    if has_reasoning:
+        if allow_reasoning_fallback:
+            print(
+                f"[llm_client] complete_chat content_empty reasoning_len={len(reasoning_content)}"
+                f" 使用 reasoning_content fallback"
+            )
+            return reasoning_content
+        print(
+            f"[llm_client] complete_chat content_empty reasoning_len={len(reasoning_content)}"
+            " allow_reasoning_fallback=False 不回退"
+        )
         return None
 
-    if content is None:
-        print(f"[llm_client] complete_chat message.content 为 None，message keys={list(message.keys())}")
-        return None
-
-    return content
+    # 既无 content 也无 reasoning_content
+    print(
+        f"[llm_client] complete_chat 响应无 content,message keys={list(message.keys())}"
+    )
+    return None

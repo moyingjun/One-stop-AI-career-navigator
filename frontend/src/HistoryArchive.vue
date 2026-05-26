@@ -18,6 +18,12 @@ import {
 import CustomDropdown from '@/components/CustomDropdown.vue'
 import { getAuthHeaders } from '@/services/authService.js'
 import { showToast } from '@/utils/uiFallbacks.js'
+import {
+  normalizeRecordType,
+  matchesFilter,
+  resolveHistoryRoute,
+  getRecordColorClass
+} from '@/utils/historyRecordTypes.js'
 
 const router = useRouter()
 
@@ -67,19 +73,10 @@ const filteredRecords = computed(() => {
     records = records.filter(r => r.is_saved === 1 || r.is_saved === true)
   }
 
-  // 类型过滤
+  // 类型过滤:走 utils/historyRecordTypes.js 的 matchesFilter,
+  // 不再在本文件维护重复的 record_type / category 兼容判断。
   if (filterCategory.value !== 'all') {
-    if (filterCategory.value === 'interview') {
-      records = records.filter(r => r.record_type === 'interview_session' || r.category?.startsWith('interview'))
-    } else if (filterCategory.value === 'dashboard_chat') {
-      records = records.filter(r => r.record_type === 'dashboard_chat' || r.category === 'dashboard_chat' || r.category?.startsWith('agent_'))
-    } else if (filterCategory.value === 'career_plan') {
-      records = records.filter(r => r.record_type === 'career_plan' || r.category === 'career_planning' || r.category === 'career_plan')
-    } else if (filterCategory.value === 'resume_diagnosis') {
-      records = records.filter(r => r.record_type === 'resume_diagnosis' || r.category === 'resume_diagnosis')
-    } else {
-      records = records.filter(r => r.category === filterCategory.value || r.record_type === filterCategory.value)
-    }
+    records = records.filter(r => matchesFilter(r, filterCategory.value))
   }
 
   // 搜索过滤（保留原有逻辑）
@@ -94,55 +91,35 @@ const filteredRecords = computed(() => {
   return records
 })
 
-const getCategoryLabel = (cat, record) => {
-  // 优先按 record_type 判断（新系统）
-  const rt = record?.record_type
-  if (rt === 'dashboard_chat') return 'Agent 对话'
-  if (rt === 'resume_diagnosis') return '简历诊断'
-  if (rt === 'career_plan') return '职业规划'
-  if (rt === 'interview_session') return '模拟面试'
-  // 兼容旧 category 字段
-  if (cat === 'resume_diagnosis') return '简历诊断'
-  if (cat === 'career_planning' || cat === 'career_plan') return '职业规划'
-  if (cat === 'interview_evaluate') return '面试评估'
-  if (cat?.startsWith?.('interview')) return '模拟面试'
-  if (cat?.startsWith?.('agent_')) return 'Agent 对话'
-  if (cat === 'general_chat') return '职场助理'
-  return cat || '未知记录'
+// 历史卡片显示三件套(label / icon / color)统一从 normalizeRecordType 派生:
+//   - normalizeRecordType(record).label    → 中文标签
+//   - normalizeRecordType(record).iconKey  → 'file-text' / 'bot' / 'compass' / 'message-square' / 'bookmark' / 'history'
+//   - getRecordColorClass(record)          → Tailwind 三件套(text/border/bg)
+// 调用方负责把 iconKey 映射到具体 lucide 图标组件。
+const ICON_BY_KEY = {
+  'file-text':      FileText,
+  'bot':            Bot,
+  'compass':        Compass,
+  'message-square': Bot,        // dashboard_chat 用 Bot 沿用既有视觉
+  'bookmark':       Bookmark,
+  'history':        History
 }
 
-const getCategoryIcon = (cat) => {
-  if (cat === 'resume_diagnosis') return FileText
-  if (cat?.startsWith?.('interview')) return Bot
-  if (cat === 'career_planning') return Compass
-  if (cat?.startsWith?.('agent_')) return Bookmark
-  return History
+const getCategoryLabel = (record) => normalizeRecordType(record).label
+
+const getCategoryIcon = (record) => {
+  const key = normalizeRecordType(record).iconKey
+  return ICON_BY_KEY[key] || History
 }
 
-const getCategoryColor = (cat) => {
-  if (cat === 'resume_diagnosis') return 'text-purple-400 border-purple-500/30 bg-purple-500/5'
-  if (cat?.startsWith?.('interview')) return 'text-pink-400 border-pink-500/30 bg-pink-500/5'
-  if (cat === 'career_planning') return 'text-cyan-400 border-cyan-500/30 bg-cyan-500/5'
-  if (cat?.startsWith?.('agent_')) return 'text-emerald-400 border-emerald-500/30 bg-emerald-500/5'
-  return 'text-gray-400 border-gray-500/30 bg-gray-500/5'
-}
+const getCategoryColor = (record) => getRecordColorClass(record)
 
 const goToRecord = (record) => {
-  const rt = record.record_type
-  const cat = record.category
-  // 新 record_type 优先路由
-  if (rt === 'resume_diagnosis' || cat === 'resume_diagnosis')
-    return router.push(`/resume-diagnosis?id=${record.id}`)
-  if (rt === 'interview_session' || cat?.startsWith?.('interview'))
-    return router.push(`/interview?id=${record.id}`)
-  if (rt === 'career_plan' || cat === 'career_planning')
-    return router.push(`/career-planning?id=${record.id}`)
-  // dashboard_chat 类型：通过 session_id 恢复完整 ChatDock 对话
-  if (rt === 'dashboard_chat' && record.session_id)
-    return router.push(`/dashboard?session_id=${record.session_id}`)
-  // 旧 Agent 对话 + 通用聊天 → Dashboard 恢复上下文（兼容旧记录）
-  if (cat?.startsWith?.('agent_') || cat === 'general_chat')
-    return router.push(`/dashboard?chat_id=${record.id}`)
+  // 路由判断也走 utils:UNKNOWN 类型返回 null,本组件不动作。
+  const target = resolveHistoryRoute(record)
+  if (target?.name === 'route') {
+    router.push(target.path)
+  }
 }
 
 const markBusy = (recordId, busy) => {
@@ -340,8 +317,8 @@ onMounted(loadHistory)
             >
               <div class="flex items-center justify-between mb-3">
                 <div class="flex items-center gap-2 min-w-0">
-                  <component :is="getCategoryIcon(record.category)" class="w-4 h-4 flex-shrink-0" :class="getCategoryColor(record.category).split(' ')[0]" />
-                  <span class="text-xs px-2 py-0.5 rounded-full border truncate font-bold" :class="getCategoryColor(record.category)">{{ getCategoryLabel(record.category, record) }}</span>
+                  <component :is="getCategoryIcon(record)" class="w-4 h-4 flex-shrink-0" :class="getCategoryColor(record).split(' ')[0]" />
+                  <span class="text-xs px-2 py-0.5 rounded-full border truncate font-bold" :class="getCategoryColor(record)">{{ getCategoryLabel(record) }}</span>
                 </div>
                 <span class="text-[10px] text-gray-600 flex-shrink-0 ml-2">{{ record.created_at }}</span>
               </div>

@@ -19,13 +19,11 @@ import ChatComposer from './ChatComposer.vue'
 
 const props = defineProps({
   placeholder: { type: String, default: '' },
-  knowledgeId: { type: String, default: '' },
-  knowledgeFileName: { type: String, default: '' },
   carouselText: { type: String, default: '' },
   carouselFade: { type: Boolean, default: true }
 })
 
-const emit = defineEmits(['send', 'file-upload', 'clear-knowledge', 'toast'])
+const emit = defineEmits(['send', 'toast', 'new-chat'])
 
 const chatStore = useChatSessionStore()
 const composerRef = ref(null)
@@ -41,10 +39,6 @@ async function toggleDock() {
 
 function handleSend(text) {
   emit('send', text)
-}
-
-function handleFileUpload(file) {
-  emit('file-upload', file)
 }
 
 async function handleArchive() {
@@ -66,8 +60,12 @@ async function handleArchive() {
 }
 
 function handleNewChat() {
-  chatStore.clearSession()
-  nextTick(() => composerRef.value?.focus())
+  // 不再在组件内 clearSession,统一交给 Dashboard 处理:
+  //   1. abort 当前正在 streaming 的 SSE 请求
+  //   2. clearSession + 生成新的 currentSessionId
+  //   3. focus 输入框
+  // 这样可以避免新建会话时旧流仍在 onMessage 中 += 内容污染新会话。
+  emit('new-chat')
 }
 
 /** 外部可调用：聚焦输入框 */
@@ -185,13 +183,9 @@ defineExpose({ focus, setInput, scrollToBottom })
           ref="composerRef"
           :isLoading="chatStore.isLoading"
           :placeholder="placeholder"
-          :knowledgeId="knowledgeId"
-          :knowledgeFileName="knowledgeFileName"
           :carouselText="carouselText"
           :carouselFade="carouselFade"
           @send="handleSend"
-          @file-upload="handleFileUpload"
-          @clear-knowledge="emit('clear-knowledge')"
         />
       </div>
     </transition>

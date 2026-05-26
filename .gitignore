@@ -32,3 +32,6 @@ Thumbs.db
 *.zip
 *.rar
 *.7z
+
+# Resume Builder 取证产物(开发时本地可见,绝不入库)
+debug/

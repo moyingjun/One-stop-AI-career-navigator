@@ -44,3 +44,12 @@ RAG_EMBEDDING_DEVICE: str = os.getenv("RAG_EMBEDDING_DEVICE", "cpu")
 RAG_CHUNK_SIZE: int = int(os.getenv("RAG_CHUNK_SIZE", "800"))
 RAG_CHUNK_OVERLAP: int = int(os.getenv("RAG_CHUNK_OVERLAP", "120"))
 RAG_MAX_UPLOAD_MB: int = int(os.getenv("RAG_MAX_UPLOAD_MB", "20"))
+
+# ─────────────────────────────────────────────
+# 调试取证开关(Resume Builder 取证 — 仅开发环境启用)
+# ─────────────────────────────────────────────
+# 开启后 /api/document/extract-resume 会把每次请求的 raw_first / raw_retry / parsed /
+# normalized / response / error 写到 debug/resume_extract/{request_id}_*.* 文件,
+# 同时在响应中附带 debug_request_id 给前端打日志。
+# 生产环境必须保持 false。
+DEBUG_MODE: bool = (os.getenv("DEBUG_MODE", "false").strip().lower() in ("1", "true", "yes", "on"))

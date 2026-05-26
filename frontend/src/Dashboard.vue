@@ -1,12 +1,12 @@
 ﻿<script setup>
 import { ref, computed, onMounted, onUnmounted, nextTick, watch } from 'vue'
 import { useDebounceFn } from '@vueuse/core'
-import { llmService } from '@/services/llm_service.js'
+import { llmService, streamChat } from '@/services/llm_service.js'
+import { normalizeRecordType, resolveHistoryRoute, getRecordColorClass, RECORD_TYPES } from '@/utils/historyRecordTypes.js'
 import { getAuthHeaders } from '@/services/authService.js'
 import { useRouter, useRoute } from 'vue-router'
 import { vAutoAnimate } from '@formkit/auto-animate/vue'
 import QrcodeVue from 'qrcode.vue'
-import { ACCEPTED_EXTENSIONS, validateFile } from '@/utils/fileConstants.js'
 import { marked } from 'marked'
 
 // Pinia store
@@ -103,11 +103,10 @@ const restoreAutoRadar = () => {
 // ── 数据面板选择记录后的联动 ────────────────────────────────
 const handleDataSourceSelect = (record) => {
   if (!record) return
-  const cat = record.category || ''
-  const rt = record.record_type || ''
+  const t = normalizeRecordType(record).type
 
   // 简历诊断记录
-  if (rt === 'resume_diagnosis' || cat === 'resume_diagnosis') {
+  if (t === RECORD_TYPES.RESUME_DIAGNOSIS) {
     activeDataTab.value = 'resume'
     if (hasNonZeroScores(record.scores)) {
       manualResumeRecord.value = record
@@ -121,7 +120,7 @@ const handleDataSourceSelect = (record) => {
   }
 
   // 模拟面试记录
-  if (rt === 'interview_session' || cat?.startsWith?.('interview')) {
+  if (t === RECORD_TYPES.INTERVIEW) {
     activeDataTab.value = 'interview'
     if (hasNonZeroScores(record.scores)) {
       manualInterviewRecord.value = record
@@ -135,7 +134,7 @@ const handleDataSourceSelect = (record) => {
   }
 
   // 职业规划记录：切到 career tab，打开预览浮窗，不更新 radar
-  if (rt === 'career_plan' || cat === 'career_planning' || cat === 'career_plan' || cat === '职业规划') {
+  if (t === RECORD_TYPES.CAREER_PLAN) {
     activeDataTab.value = 'career'
     showDataSourceModal.value = false
     // 定位到该记录在 careerRecords 中的位置
@@ -222,15 +221,10 @@ const goCareerFull = (recordId = null) => {
   }
 }
 
-// ── 历史记录类型标签（优先 record_type，兼容旧 category）──
-const getRecordTypeLabel = (record) => {
-  const rt = record.record_type
-  if (rt === 'resume_diagnosis') return '简历诊断'
-  if (rt === 'career_plan') return '职业规划'
-  if (rt === 'interview_session') return '模拟面试'
-  if (rt === 'dashboard_chat') return 'Agent 对话'
-  return getCategoryLabel(record.category)
-}
+// ── 历史记录类型标签 / 颜色 ──
+// 单一事实源:走 utils/historyRecordTypes.js 的 normalizeRecordType。
+// 旧 category 兼容、新 record_type 映射、未知类型兜底全部收敛到那一处。
+const getRecordTypeLabel = (record) => normalizeRecordType(record).label
 
 const isLocalDev = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
 const API_BASE_URL = isLocalDev ? 'http://127.0.0.1:8000/api' : '/api'
@@ -245,43 +239,21 @@ const bentoRecordsPool = ref([])
 // 按类型分类 & 排序的最近 10 条记录（computed 派生）
 const resumeRadarRecords = computed(() => {
   return bentoRecordsPool.value
-    .filter(r => {
-      const rt = r.record_type
-      const cat = r.category
-      const isResume = rt === 'resume_diagnosis'
-        || cat === 'resume_diagnosis'
-        || cat === '简历诊断'
-      return isResume && hasNonZeroScores(r.scores)
-    })
+    .filter(r => normalizeRecordType(r).type === RECORD_TYPES.RESUME_DIAGNOSIS && hasNonZeroScores(r.scores))
     .sort((a, b) => getRecordTimestamp(b) - getRecordTimestamp(a))
     .slice(0, 10)
 })
 
 const interviewRadarRecords = computed(() => {
   return bentoRecordsPool.value
-    .filter(r => {
-      const rt = r.record_type
-      const cat = r.category
-      const isInterview = rt === 'interview_session'
-        || cat === 'interview'
-        || (typeof cat === 'string' && cat.startsWith('interview'))
-        || cat === '模拟面试'
-      return isInterview && hasNonZeroScores(r.scores)
-    })
+    .filter(r => normalizeRecordType(r).type === RECORD_TYPES.INTERVIEW && hasNonZeroScores(r.scores))
     .sort((a, b) => getRecordTimestamp(b) - getRecordTimestamp(a))
     .slice(0, 10)
 })
 
 const careerRecords = computed(() => {
   return bentoRecordsPool.value
-    .filter(r => {
-      const rt = r.record_type
-      const cat = r.category
-      return rt === 'career_plan'
-        || cat === 'career_plan'
-        || cat === 'career_planning'
-        || cat === '职业规划'
-    })
+    .filter(r => normalizeRecordType(r).type === RECORD_TYPES.CAREER_PLAN)
     // career 不要求 scores
     .sort((a, b) => getRecordTimestamp(b) - getRecordTimestamp(a))
     .slice(0, 10)
@@ -381,27 +353,12 @@ const loadDashboardBentoRecords = async () => {
   }
 }
 
-const getCategoryLabel = (cat) => {
-  if (cat === 'resume_diagnosis') return '简历诊断'
-  if (cat === 'interview_beginner') return '温和面试'
-  if (cat === 'interview_standard') return '标准面试'
-  if (cat === 'interview_p8') return 'P8压力面'
-  if (cat.startsWith('interview')) return '面试评估'
-  if (cat === 'career_planning') return '职业规划'
-  if (cat === 'general_chat') return '职业助手'
-  return cat
-}
+// getCategoryLabel / getCategoryColor 历史上接受 category 字符串,
+// 现在统一收敛到 utils/historyRecordTypes.js,接受完整 record 即可。
+// 保留同名函数避免影响模板/旧调用,但内部一律走 normalizeRecordType。
+const getCategoryLabel = (record) => normalizeRecordType(record).label
 
-const getCategoryColor = (cat) => {
-  if (cat === 'resume_diagnosis') return 'text-purple-400 border-purple-500/30 bg-purple-500/5'
-  if (cat === 'interview_beginner') return 'text-emerald-400 border-emerald-500/30 bg-emerald-500/5'
-  if (cat === 'interview_standard') return 'text-blue-400 border-blue-500/30 bg-blue-500/5'
-  if (cat === 'interview_p8') return 'text-pink-400 border-pink-500/30 bg-pink-500/5'
-  if (cat.startsWith('interview')) return 'text-pink-400 border-pink-500/30 bg-pink-500/5'
-  if (cat === 'career_planning') return 'text-cyan-400 border-cyan-500/30 bg-cyan-500/5'
-  if (cat === 'general_chat') return 'text-cyan-400 border-cyan-500/30 bg-cyan-500/5'
-  return 'text-gray-400 border-gray-500/30 bg-gray-500/5'
-}
+const getCategoryColor = (record) => getRecordColorClass(record)
 
 const getDifficultyBadge = (record) => {
   if (!record.extra_data) return null
@@ -429,15 +386,23 @@ const showChatPreviewModal = ref(false)
 const chatPreviewRecordId = ref(null)
 
 const goToHistory = (record) => {
-  // agent_ 类别（如 general_chat）：打开对话预览弹窗（Requirements 13.5）
-  if (record.category && record.category.startsWith('agent_')) {
+  // 单一事实源走 utils/historyRecordTypes.js,
+  // 这里只针对 legacy_chat 在 Dashboard 内部用 ChatPreviewModal 展开(Requirement 13.5),
+  // 其它类型一律 router.push 到对应路由。
+  const norm = normalizeRecordType(record)
+
+  if (norm.type === RECORD_TYPES.LEGACY_CHAT) {
+    // agent_*/general_chat 等旧聊天记录:打开 ChatPreviewModal,而非整页跳转
     showChatPreviewModal.value = true
     chatPreviewRecordId.value = record.id
     return
   }
-  if (record.category === 'resume_diagnosis') router.push(`/resume-diagnosis?id=${record.id}`)
-  else if (record.category === 'interview_evaluate') router.push(`/interview?id=${record.id}`)
-  else if (record.category === 'career_planning') router.push(`/career-planning?id=${record.id}`)
+
+  const target = resolveHistoryRoute(record)
+  if (target?.name === 'route') {
+    router.push(target.path)
+  }
+  // UNKNOWN 类型不动,避免把用户带到错的页面
 }
 
 /**
@@ -468,10 +433,6 @@ const globalResumeStatus = ref(
 const showResumeDialog = ref(false)
 const pendingResumeText = ref('')
 const pendingFileName = ref('')
-
-const knowledgeId = ref(localStorage.getItem('dashboard_knowledge_id') || '')
-const knowledgeFileName = ref(localStorage.getItem('dashboard_knowledge_file_name') || '')
-const isKnowledgeUploading = ref(false)
 
 // SetupModal 弹窗控制
 const showSetupModal = ref(false)
@@ -574,60 +535,6 @@ const handleMouseMove = (e) => {
   mouseX.value = x
   mouseY.value = y
 }
-
-const uploadKnowledgeFile = async (file) => {
-  if (!file || isKnowledgeUploading.value) return
-
-  const { valid, error: validationError } = validateFile(file)
-  if (!valid) {
-    showToastMsg(validationError)
-    return
-  }
-
-  isKnowledgeUploading.value = true
-  try {
-    const formData = new FormData()
-    formData.append('file', file)
-
-    const response = await fetch(`${API_BASE_URL}/knowledge/upload`, {
-      method: 'POST',
-      body: formData
-    })
-
-    if (!response.ok) {
-      let message = `HTTP ${response.status}`
-      try {
-        const errorData = await response.json()
-        message = errorData.detail || message
-      } catch {}
-      throw new Error(message)
-    }
-
-    const data = await response.json()
-    if (!data.success || !data.knowledge_id) {
-      throw new Error(data.message || '知识库挂载失败')
-    }
-
-    knowledgeId.value = data.knowledge_id
-    knowledgeFileName.value = data.filename || file.name
-    localStorage.setItem('dashboard_knowledge_id', knowledgeId.value)
-    localStorage.setItem('dashboard_knowledge_file_name', knowledgeFileName.value)
-  } catch (error) {
-    console.error('知识库上传失败', error)
-    showToastMsg(error.message || '知识库上传失败，请稍后重试')
-  } finally {
-    isKnowledgeUploading.value = false
-  }
-}
-
-const clearKnowledge = () => {
-  knowledgeId.value = ''
-  knowledgeFileName.value = ''
-  localStorage.removeItem('dashboard_knowledge_id')
-  localStorage.removeItem('dashboard_knowledge_file_name')
-}
-
-
 
 const confirmResumeUpdate = () => {
   localStorage.setItem('resume_text', pendingResumeText.value.trim())
@@ -958,9 +865,26 @@ const userChatInput = ref('')
 const isChatLoading = computed(() => chatStore.isLoading)
 const uploadedGlobalResume = ref('')
 const chatContainerRef = ref(null)
+
+// ── ChatDock 流式生命周期管控 ────────────────────────────
+// 每次发送消息生成一个 runId,onMeta/onMessage/onDone/onError/finally 都校验:
+//   1. runId 仍是 activeChatRunId(否则旧流已被新流取代,丢弃回调)
+//   2. currentSessionId 仍等于发送时记录的 sessionIdAtStart(否则用户已切换会话,丢弃)
+// 同时持有一个 AbortController,新建对话时 abort() 切断旧流。
+const chatAbortController = ref(null)
+const activeChatRunId = ref(0)
+let _runIdCounter = 0
+const nextRunId = () => {
+  _runIdCounter = (_runIdCounter + 1) | 0
+  return _runIdCounter
+}
+
+// 「保存并新建」按钮使用的 record id:必须来自后端归档结果(archivedRecordId),
+// 绝对不能再从 currentSessionId 取(后者是前端会话 id,与后端 record_id 是两个概念)。
+// 该按钮只有在用户先点击「归档本次对话」拿到 record_id 后才有意义,否则走兜底逻辑。
 const currentRecordId = computed({
-  get: () => chatStore.currentSessionId,
-  set: (val) => { chatStore.currentSessionId = val }
+  get: () => chatStore.archivedRecordId,
+  set: (val) => { chatStore.archivedRecordId = val }
 })
 const showNewChatModal = ref(false)
 
@@ -994,6 +918,26 @@ const sendGeneralChatMessage = async (inputText) => {
   chatStore.isLoading = true
   scrollChatToBottom()
 
+  // 本次流的身份标识:
+  //   - runId 唯一标识本次 streamChat 调用,任何异步回调都先校验 runId 是否还是 activeChatRunId
+  //   - sessionIdAtStart 锁定发送时的 session;任何回调若发现 currentSessionId 已变,直接丢弃
+  // 这样可以彻底避免「新建会话 / 二次发送时旧流 onMessage 仍在 += 内容污染新会话」。
+  const runId = nextRunId()
+  const sessionIdAtStart = chatStore.currentSessionId
+  activeChatRunId.value = runId
+
+  // 一个 AbortController 控制本次 fetch;新建对话时调用 abort() 立即切断流。
+  // 上一轮如果还有未释放的 controller,先把它 abort 掉(理论上 isLoading 守卫已经挡住,
+  // 但保险起见做幂等清理)。
+  try { chatAbortController.value?.abort() } catch (_) { /* 忽略 */ }
+  const controller = new AbortController()
+  chatAbortController.value = controller
+
+  /** 校验回调是否仍属于当前 active run。不属于直接丢弃,不写 store。 */
+  const isStillActive = () =>
+    runId === activeChatRunId.value &&
+    chatStore.currentSessionId === sessionIdAtStart
+
   try {
     const payload = {
       user_input: userMessage,
@@ -1004,8 +948,6 @@ const sendGeneralChatMessage = async (inputText) => {
           content: message.content || ''
         }))
     }
-
-    if (knowledgeId.value) payload.knowledge_id = knowledgeId.value
 
     const savedResume = uploadedGlobalResume.value || localStorage.getItem('resume_text') || ''
     if (savedResume) payload.resume_text = savedResume
@@ -1021,87 +963,84 @@ const sendGeneralChatMessage = async (inputText) => {
     const providerId = llmProviderStore.getCurrentProviderId()
     if (providerId) payload.provider_id = providerId
 
-    const response = await fetch(API_BASE_URL + '/agent/chat', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
-      body: JSON.stringify(payload)
+    await streamChat({
+      endpoint: '/agent/chat',
+      payload,
+      signal: controller.signal,
+      onMeta: (meta) => {
+        if (!isStillActive()) return
+        if (meta?.agent_label) aiMessage.agentLabel = meta.agent_label
+      },
+      onMessage: (delta) => {
+        if (!isStillActive()) return
+        if (!delta) return
+        aiMessage.content += delta
+        scrollChatToBottom()
+      },
+      onDone: (_donePayload) => {
+        if (!isStillActive()) return
+        // 注意:done.record_id 是后端落库 id,不应当作前端 currentSessionId 使用。
+        // currentSessionId 永远保持前端生成的 session id,record_id 只允许进入 archivedRecordId
+        // (而 archivedRecordId 由「归档本次对话」按钮显式触发的 markArchived(record_id) 写入)。
+        // 这里不再把 record_id 写到 currentSessionId,避免新建对话时残留旧流的服务端 id。
+      },
+      onError: (msg) => {
+        if (!isStillActive()) return
+        aiMessage.content += (aiMessage.content ? '\n\n' : '') + (msg || 'Agent 暂时无法连接,请稍后重试。')
+        scrollChatToBottom()
+      }
     })
 
-    if (!response.ok) throw new Error('HTTP ' + response.status)
-    if (!response.body) throw new Error('浏览器未返回可读取的数据流')
-
-    const reader = response.body.getReader()
-    const decoder = new TextDecoder('utf-8')
-    let buffer = ''
-
-    const handleSseBlock = (block) => {
-      const lines = block.split('\n')
-      const eventLine = lines.find((line) => line.startsWith('event:'))
-      const dataLines = lines.filter((line) => line.startsWith('data:'))
-      const eventName = eventLine ? eventLine.replace('event:', '').trim() : 'reply'
-
-      if (!dataLines.length) return
-
-      try {
-        const rawData = dataLines.map((line) => line.replace('data:', '').trim()).join('\n')
-        const data = JSON.parse(rawData)
-        const content = data.payload?.content || ''
-
-        if (eventName === 'meta' && data.payload?.agent_label) {
-          aiMessage.agentLabel = data.payload.agent_label
-          return
-        }
-
-        if (eventName === 'reply' && content) {
-          aiMessage.content += content
-          scrollChatToBottom()
-          return
-        }
-
-        if ((eventName === 'warning' || eventName === 'error') && content) {
-          aiMessage.content += '\n\n' + content
-          scrollChatToBottom()
-          return
-        }
-
-        if (eventName === 'done') {
-          chatStore.currentSessionId = data.payload?.record_id || chatStore.currentSessionId
-        }
-      } catch (parseError) {
-        console.warn('SSE 数据解析失败', parseError, block)
-      }
-    }
-
-    while (true) {
-      const { value, done } = await reader.read()
-      if (done) break
-
-      buffer += decoder.decode(value, { stream: true })
-      const blocks = buffer.split('\n\n')
-      buffer = blocks.pop() || ''
-      blocks.forEach(handleSseBlock)
-    }
-
-    if (buffer.trim()) handleSseBlock(buffer)
-
-    if (!aiMessage.content.trim()) {
+    if (isStillActive() && !aiMessage.content.trim()) {
       aiMessage.content = '模型没有返回有效内容，请稍后再试。'
     }
   } catch (error) {
-    console.error('发送 Agent 聊天消息失败', error)
-    aiMessage.content = error.message || 'Agent 暂时无法连接，请稍后重试。'
+    // streamChat 内部已对 AbortError 做静默处理,这里仅处理同步抛出的异常
+    if (error?.name === 'AbortError') {
+      // 主动取消,不弹错误 toast,不写 store
+    } else if (isStillActive()) {
+      console.error('发送 Agent 聊天消息失败', error)
+      aiMessage.content = error.message || 'Agent 暂时无法连接，请稍后重试。'
+    }
   } finally {
-    chatStore.isLoading = false
-    chatStore.persistLocal()
-    scrollChatToBottom()
+    // 只有当本次 run 仍是 active run 时才释放 isLoading;否则旧流的 finally 不应把新流的状态提前关掉。
+    if (isStillActive()) {
+      chatStore.isLoading = false
+      chatStore.persistLocal()
+      scrollChatToBottom()
+      // 流自然结束,清掉 controller 引用(同一引用还可能被新 run 替换)
+      if (chatAbortController.value === controller) {
+        chatAbortController.value = null
+      }
+    }
   }
 }
 
 const forceStartNew = () => {
+  // 切断当前可能仍在 streaming 的请求,使旧流的回调全部失效:
+  //   1. abort fetch 让浏览器立即关掉连接
+  //   2. 推进 activeChatRunId 让旧 run 的 isStillActive() 返回 false
+  //   3. clearSession 生成新的 currentSessionId,旧 run 的 sessionIdAtStart 也对不上
+  // 三道保险任意一条都足以丢弃旧流的 onMessage / onDone。
+  try { chatAbortController.value?.abort() } catch (_) { /* 忽略 */ }
+  chatAbortController.value = null
+  activeChatRunId.value = nextRunId()
+  // 兜底关闭 isLoading(旧 run 的 finally 不会再触发了)
+  chatStore.isLoading = false
   chatStore.clearSession()
   userChatInput.value = ''
   showNewChatModal.value = false
   router.push('/')
+}
+
+/** ChatDock 「新建对话」按钮回调:abort + clearSession + focus 输入框 */
+const handleChatDockNewChat = () => {
+  try { chatAbortController.value?.abort() } catch (_) { /* 忽略 */ }
+  chatAbortController.value = null
+  activeChatRunId.value = nextRunId()
+  chatStore.isLoading = false
+  chatStore.clearSession()
+  nextTick(() => chatDockRef.value?.focus())
 }
 
 const handleNewChat = () => {
@@ -1137,21 +1076,6 @@ const saveAndStartNew = async () => {
   }
 }
 
-const handleChatFileUpload = async (fileOrEvent) => {
-  // 支持两种调用方式：直接传 File 对象（ChatDock），或传 event（旧路径）
-  if (fileOrEvent instanceof File) {
-    await uploadKnowledgeFile(fileOrEvent)
-  } else if (fileOrEvent?.target?.files?.length > 0) {
-    await uploadKnowledgeFile(fileOrEvent.target.files[0])
-    fileOrEvent.target.value = ''
-  }
-}
-
-const removeUploadedResume = () => {
-  uploadedGlobalResume.value = ''
-  clearKnowledge()
-}
-
 const handleChatEnter = (event) => {
   if (event.key === 'Enter' && !event.shiftKey) {
     event.preventDefault()
@@ -1160,7 +1084,6 @@ const handleChatEnter = (event) => {
 }
 
 const chatPlaceholder = computed(() => {
-  if (knowledgeId.value) return '基于你上传的文件提问...'
   if (uploadedGlobalResume.value) return '请输入关于此文件的问题...'
   return placeholderText.value || '系统预设已就绪，问专业、志愿、就业都可以...'
 })
@@ -1233,12 +1156,9 @@ async function loadLatestRadarData() {
     let latestResume = null
     let latestInterview = null
     for (const r of records) {
-      const cat = r.category || ''
-      const type = r.record_type || ''  // D1 之后会用，目前只是预留
-      const isResume = type === 'resume_diagnosis' || cat === 'resume_diagnosis'
-      const isInterview = type === 'interview_session' || cat?.startsWith?.('interview')
-      if (isResume && !latestResume) latestResume = r
-      if (isInterview && !latestInterview) latestInterview = r
+      const t = normalizeRecordType(r).type
+      if (t === RECORD_TYPES.RESUME_DIAGNOSIS && !latestResume) latestResume = r
+      if (t === RECORD_TYPES.INTERVIEW && !latestInterview) latestInterview = r
       if (latestResume && latestInterview) break
     }
 
@@ -1480,6 +1400,14 @@ watch(() => userStore.targetGoal, () => {
 
 // 生命周期
 onMounted(() => {
+  // 清理已下线的旧 ChatDock 附件挂载残留(/api/knowledge/upload 已被后端 410)。
+  // 这两个 key 在新版本不再写入,只做幂等清除,避免老用户残留态影响。
+  try {
+    localStorage.removeItem('dashboard_knowledge_id')
+    localStorage.removeItem('dashboard_knowledge_file_name')
+  } catch (e) {
+    /* localStorage 不可用时忽略 */
+  }
   // loadFromStorage() 已在 main.js 应用启动时统一调用（Phase 1.1 收口），此处无需重复调用
   chatStore.restoreFromLocalStorage()
   typeWriter()
@@ -1510,6 +1438,9 @@ onUnmounted(() => {
   if (radarAbortController) {
     radarAbortController.abort()
   }
+  // 同步取消 ChatDock 流式请求,防止卸载后旧流仍在写 store(虽然 isStillActive 也会兜底)
+  try { chatAbortController.value?.abort() } catch (_) { /* 忽略 */ }
+  chatAbortController.value = null
 })
 </script>
 
@@ -1673,32 +1604,10 @@ onUnmounted(() => {
 
 
               <div
-                v-if="knowledgeId"
-                class="mt-2 px-2.5 py-1.5 rounded-lg border border-gray-500/20 bg-white/5 flex items-center gap-2"
-              >
-                <FileText class="w-3.5 h-3.5 text-gray-300 flex-shrink-0" />
-                <span class="text-xs text-gray-300 truncate flex-1">
-                  [个人文件] {{ knowledgeFileName }}
-                </span>
-                <button
-                  @click.stop="clearKnowledge"
-                  class="w-4 h-4 rounded-full border border-gray-500/20 text-gray-400 hover:text-white hover:border-gray-400/50 hover:bg-white/10 transition-all duration-200 flex items-center justify-center"
-                  title="清空文件挂载"
-                >
-                  <X class="w-2.5 h-2.5" />
-                </button>
-              </div>
-              <div
-                v-else
                 class="mt-2 px-2.5 py-1.5 rounded-lg system-knowledge-tag-sidebar flex items-center gap-2"
               >
                 <Sparkles class="w-3.5 h-3.5 text-emerald-300 flex-shrink-0" />
                 <span class="text-xs text-emerald-200 truncate flex-1 system-carousel-text" :class="{ 'carousel-fade-out': !carouselFade, 'carousel-fade-in': carouselFade }">{{ currentCarouselText }}</span>
-              </div>
-
-              <div v-if="isKnowledgeUploading" class="mt-2 px-2.5 py-1.5 rounded-lg border border-cyan-400/20 bg-cyan-500/10 flex items-center gap-2">
-                <Loader2 class="w-3.5 h-3.5 animate-spin text-cyan-300" />
-                <span class="text-xs text-cyan-200">Knowledge indexing...</span>
               </div>
 
 
@@ -2004,7 +1913,7 @@ onUnmounted(() => {
                       <div class="absolute bottom-0 left-0 w-full h-[2px] bg-gradient-to-r from-transparent via-purple-500/50 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500"></div>
                       <div class="flex items-center justify-between mb-2">
                         <div class="flex items-center gap-2">
-                          <span class="text-xs px-2 py-0.5 rounded-full border" :class="getCategoryColor(record.category)">{{ getRecordTypeLabel(record) }}</span>
+                          <span class="text-xs px-2 py-0.5 rounded-full border" :class="getCategoryColor(record)">{{ getRecordTypeLabel(record) }}</span>
                           <span v-if="getDifficultyBadge(record) && getDifficultyBadgeConfig(getDifficultyBadge(record))" class="text-xs px-1.5 py-0.5 rounded-full border" :class="getDifficultyBadgeConfig(getDifficultyBadge(record)).class">{{ getDifficultyBadgeConfig(getDifficultyBadge(record)).label }}</span>
                         </div>
                         <span class="text-xs text-gray-500">{{ record.created_at }}</span>
@@ -2314,13 +2223,10 @@ onUnmounted(() => {
           <ChatDock
             ref="chatDockRef"
             :placeholder="chatPlaceholder"
-            :knowledgeId="knowledgeId"
-            :knowledgeFileName="knowledgeFileName"
             :carouselText="currentCarouselText"
             :carouselFade="carouselFade"
             @send="sendGeneralChatMessage"
-            @file-upload="handleChatFileUpload"
-            @clear-knowledge="clearKnowledge"
+            @new-chat="handleChatDockNewChat"
             @toast="showToastMsg"
           />
         </div>

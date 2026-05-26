@@ -8,7 +8,7 @@ import ActionDock from './components/ActionDock.vue'
 import SidebarEducationPlaceholder from './components/SidebarEducationPlaceholder.vue'
 import GlobalProviderSwitcher from './components/GlobalProviderSwitcher.vue'
 import { showToast, resolveLoader } from '@/utils/uiFallbacks.js'
-import { upsertSession, generateSessionId } from '@/services/historyClient.js'
+import { upsertSession, generateSessionId, loadRecordById } from '@/services/historyClient.js'
 import { useUserStore } from '@/stores/userStore'
 import { useLlmProviderStore } from '@/stores/llmProviderStore'
 
@@ -270,24 +270,22 @@ onMounted(async () => {
   if (recordId) {
     isRestoring.value = true
     try {
-      const res = await fetch(`${API_BASE_URL.replace('/api', '')}/api/history/${recordId}`)
-      if (res.ok) {
-        const data = await res.json()
-        if (data.success && data.data) {
-          const record = data.data
-          reportResult.value = record.ai_result || ''
-          displayedResult.value = record.ai_result || ''
-          if (record.user_input) {
-            const match = record.user_input.match(/困惑: (.+)/)
-            if (match) userConfusion.value = match[1]
-          }
-          // 恢复 session_id，后续再保存时 upsert 到同一条记录
-          if (record.session_id) {
-            currentSessionId.value = record.session_id
-          }
-          isComplete.value = true
-          return
+      // 走 historyClient.loadRecordById,内部已带 getAuthHeaders,
+      // 解决之前裸 fetch 不带 JWT 在登录态下被 401 的问题。
+      const record = await loadRecordById(recordId)
+      if (record) {
+        reportResult.value = record.ai_result || ''
+        displayedResult.value = record.ai_result || ''
+        if (record.user_input) {
+          const match = record.user_input.match(/困惑: (.+)/)
+          if (match) userConfusion.value = match[1]
         }
+        // 恢复 session_id，后续再保存时 upsert 到同一条记录
+        if (record.session_id) {
+          currentSessionId.value = record.session_id
+        }
+        isComplete.value = true
+        return
       }
     } catch (err) {
       console.error('恢复历史记录失败:', err)

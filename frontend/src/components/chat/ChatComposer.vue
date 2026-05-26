@@ -1,7 +1,17 @@
 <script setup>
 import { ref, computed } from 'vue'
 import { Send, Paperclip, Sparkles, X, FileText, Loader2 } from 'lucide-vue-next'
-import { ACCEPTED_EXTENSIONS } from '@/utils/fileConstants.js'
+
+/**
+ * ChatComposer.vue —— 主聊天输入区(P0 收口版)
+ *
+ * 本轮收口决策:
+ *   - 旧 /api/knowledge/upload 已被后端下线(返回 410)。
+ *   - 新 /api/kb/upload 是持久知识库,语义不同,不可临时接管"本轮对话附件"。
+ *   - 因此暂时禁用纸夹附件入口,避免触发已下线的旧端点,同时不误导用户。
+ *   - 为了把改动收敛在前端,保留 file-upload / clear-knowledge 事件签名不变,
+ *     上游(ChatDock / Dashboard)无需改动;按钮变为 disabled,不再触发任何上传。
+ */
 
 const props = defineProps({
   isLoading: { type: Boolean, default: false },
@@ -12,6 +22,8 @@ const props = defineProps({
   carouselFade: { type: Boolean, default: true }
 })
 
+// 注意:file-upload / clear-knowledge 事件保留是为了不破坏父组件 props/emit 契约。
+// 本轮 file-upload 实际不再被任何控件触发;clear-knowledge 仍然在历史挂载文件场景下可用。
 const emit = defineEmits(['send', 'file-upload', 'clear-knowledge'])
 
 const inputRef = ref(null)
@@ -32,20 +44,12 @@ function handleSend() {
   inputText.value = ''
 }
 
-function handleFileChange(event) {
-  const files = event.target.files
-  if (files.length > 0) {
-    emit('file-upload', files[0])
-    event.target.value = ''
-  }
-}
-
-/** 外部可调用：聚焦输入框 */
+/** 外部可调用:聚焦输入框 */
 function focus() {
   inputRef.value?.focus()
 }
 
-/** 外部可调用：设置输入内容 */
+/** 外部可调用:设置输入内容 */
 function setInput(text) {
   inputText.value = text
 }
@@ -54,7 +58,7 @@ defineExpose({ focus, setInput, inputText })
 </script>
 
 <template>
-  <!-- 个人文件挂载状态 -->
+  <!-- 个人文件挂载状态(历史挂载场景仍可清空,本轮不允许新增挂载) -->
   <div v-if="knowledgeId" class="mb-3 flex items-center gap-2">
     <div class="personal-file-tag rounded-full px-3 py-1 flex items-center gap-2">
       <FileText class="w-3.5 h-3.5 text-gray-300" />
@@ -77,17 +81,18 @@ defineExpose({ focus, setInput, inputText })
   </div>
 
   <div class="flex items-end gap-3">
-    <label class="relative flex-shrink-0 mb-0.5">
-      <input
-        type="file"
-        class="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
-        @change="handleFileChange"
-        :accept="ACCEPTED_EXTENSIONS"
-      />
-      <div class="w-9 h-9 rounded-lg border border-white/10 bg-white/5 flex items-center justify-center hover:bg-white/10 hover:border-purple-500/30 transition-all duration-300 cursor-pointer">
-        <Paperclip class="w-4 h-4 text-gray-400" />
-      </div>
-    </label>
+    <!-- 附件入口已禁用:旧 /api/knowledge/upload 已下线,新 /api/kb/upload 语义不一致,
+         本轮直接禁用按钮,避免误导用户和触发 410。视觉风格保持不变。 -->
+    <button
+      type="button"
+      disabled
+      class="composer-attach-btn w-9 h-9 rounded-lg flex items-center justify-center mb-0.5"
+      title="文档引用功能稍后开放"
+      aria-label="文档引用功能稍后开放"
+      data-test="chat-composer-attach-disabled"
+    >
+      <Paperclip class="w-4 h-4 text-gray-500" />
+    </button>
 
     <textarea
       ref="inputRef"
@@ -110,7 +115,8 @@ defineExpose({ focus, setInput, inputText })
 
   <div class="flex items-center gap-2 mt-2">
     <Sparkles class="w-3 h-3 text-cyan-500/50" />
-    <span class="text-xs text-gray-500">AI 职场领航员 · 附件仅作本轮对话上下文</span>
+    <!-- 旧文案"附件仅作本轮对话上下文"会让用户以为可以临时上传;附件入口已禁用,因此改为中性提示。 -->
+    <span class="text-xs text-gray-500">AI 职场领航员 · 文档引用功能稍后开放</span>
   </div>
 </template>
 
@@ -150,5 +156,19 @@ defineExpose({ focus, setInput, inputText })
 .carousel-fade-out {
   opacity: 0;
   transition: opacity 0.3s ease-out;
+}
+
+/* 附件入口禁用态:与原 enabled 视觉风格保持一致,仅降低饱和度并屏蔽交互。 */
+.composer-attach-btn {
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  background: rgba(255, 255, 255, 0.02);
+  cursor: not-allowed;
+  opacity: 0.55;
+  transition: opacity 0.18s ease, border-color 0.18s ease;
+}
+.composer-attach-btn:hover {
+  /* 悬停态保持禁用视觉,只有边框微亮以提示存在 */
+  border-color: rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.03);
 }
 </style>
