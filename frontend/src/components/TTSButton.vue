@@ -35,7 +35,18 @@ const props = defineProps({
   /** 朗读音色,缺省由后端 ENV 决定 */
   voice: { type: String, default: '' },
   /** 风格指令(可选) */
-  style: { type: String, default: '' }
+  style: { type: String, default: '' },
+  /**
+   * 视觉变体:
+   *   - compact(默认): 24×24 紧凑图标按钮,用于 ChatDock 消息气泡
+   *   - inline:        图标 + 文字 pill,用于三功能页报告区 / 评估区
+   * 仅影响 UI,不影响播放逻辑、缓存策略和文本来源。
+   */
+  variant: {
+    type: String,
+    default: 'compact',
+    validator: (v) => v === 'compact' || v === 'inline'
+  }
 })
 
 // ─── 模块级单例资源 ────────────────────────────
@@ -90,6 +101,18 @@ const tooltip = computed(() => {
   if (state.value === 'playing') return '点击停止朗读'
   if (state.value === 'error')   return errorMsg.value || '朗读失败'
   return '朗读这段回复'
+})
+
+/**
+ * inline variant 的状态文字标签(图标右侧的小字)。
+ * compact variant 不显示文字,仅用 tooltip 透出。
+ */
+const stateLabel = computed(() => {
+  if (props.disabled && state.value === 'idle') return '朗读'
+  if (state.value === 'loading') return '合成中'
+  if (state.value === 'playing') return '停止'
+  if (state.value === 'error')   return '朗读失败'
+  return '朗读'
 })
 
 function setError(msg) {
@@ -215,6 +238,8 @@ onUnmounted(() => {
     type="button"
     class="tts-btn"
     :class="{
+      'tts-btn--compact': variant === 'compact',
+      'tts-btn--inline':  variant === 'inline',
       'tts-btn--idle':    state === 'idle',
       'tts-btn--loading': state === 'loading',
       'tts-btn--playing': state === 'playing',
@@ -227,10 +252,11 @@ onUnmounted(() => {
     data-test="tts-button"
     @click="handleClick"
   >
-    <Loader2  v-if="state === 'loading'" class="w-3 h-3 animate-spin" />
-    <Square   v-else-if="state === 'playing'" class="w-3 h-3" />
-    <AlertCircle v-else-if="state === 'error'" class="w-3 h-3" />
-    <Volume2  v-else class="w-3 h-3" />
+    <Loader2     v-if="state === 'loading'"     class="tts-btn__icon animate-spin" />
+    <Square      v-else-if="state === 'playing'" class="tts-btn__icon" />
+    <AlertCircle v-else-if="state === 'error'"   class="tts-btn__icon" />
+    <Volume2     v-else                          class="tts-btn__icon" />
+    <span v-if="variant === 'inline'" class="tts-btn__label">{{ stateLabel }}</span>
   </button>
 </template>
 
@@ -239,25 +265,56 @@ onUnmounted(() => {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 22px;
-  height: 22px;
+  gap: 6px;
   padding: 0;
-  border-radius: 6px;
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  background: rgba(255, 255, 255, 0.03);
-  color: rgba(229, 231, 235, 0.7);
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  background: rgba(255, 255, 255, 0.04);
+  color: rgba(229, 231, 235, 0.85);
   cursor: pointer;
   transition: all 0.18s ease;
+  font-size: 12px;
+  line-height: 1;
+  white-space: nowrap;
 }
+
+/* ─── compact:ChatDock 消息气泡专用 ─────────────────────── */
+.tts-btn--compact {
+  width: 26px;
+  height: 26px;
+  border-radius: 7px;
+}
+.tts-btn--compact .tts-btn__icon {
+  width: 14px;
+  height: 14px;
+}
+
+/* ─── inline:三功能页报告区 / 评估区,带文字标签 ─────── */
+.tts-btn--inline {
+  height: 30px;
+  padding: 0 12px;
+  border-radius: 9999px;
+  font-weight: 500;
+}
+.tts-btn--inline .tts-btn__icon {
+  width: 14px;
+  height: 14px;
+}
+.tts-btn--inline .tts-btn__label {
+  font-size: 12px;
+  letter-spacing: 0.02em;
+}
+
+/* ─── 通用 hover / state 变体(沿用 accent 变量,自动跟随主题) ───── */
 .tts-btn:hover:not(:disabled) {
-  border-color: var(--accent-border, rgba(34, 211, 238, 0.4));
-  background: var(--accent-soft, rgba(34, 211, 238, 0.1));
+  border-color: var(--accent-border, rgba(34, 211, 238, 0.45));
+  background: var(--accent-soft, rgba(34, 211, 238, 0.10));
   color: rgb(var(--accent-rgb, 34, 211, 238));
-  box-shadow: 0 0 8px rgba(var(--accent-rgb, 34, 211, 238), 0.20);
+  box-shadow: 0 0 10px rgba(var(--accent-rgb, 34, 211, 238), 0.20);
 }
 .tts-btn--playing {
-  border-color: var(--accent-border, rgba(34, 211, 238, 0.4)) !important;
-  background: var(--accent-soft, rgba(34, 211, 238, 0.12)) !important;
+  border-color: var(--accent-border, rgba(34, 211, 238, 0.45)) !important;
+  background: var(--accent-soft, rgba(34, 211, 238, 0.14)) !important;
   color: rgb(var(--accent-rgb, 34, 211, 238)) !important;
   box-shadow: 0 0 10px rgba(var(--accent-rgb, 34, 211, 238), 0.25) !important;
   animation: tts-pulse 1.4s ease-in-out infinite;
@@ -268,11 +325,13 @@ onUnmounted(() => {
 }
 .tts-btn--loading {
   color: rgb(var(--accent-rgb, 34, 211, 238));
+  border-color: var(--accent-border, rgba(34, 211, 238, 0.35));
+  background: rgba(var(--accent-rgb, 34, 211, 238), 0.06);
 }
 .tts-btn--error {
   border-color: rgba(239, 68, 68, 0.45);
   color: rgb(252, 165, 165);
-  background: rgba(239, 68, 68, 0.08);
+  background: rgba(239, 68, 68, 0.10);
 }
 .tts-btn--disabled {
   opacity: 0.4;

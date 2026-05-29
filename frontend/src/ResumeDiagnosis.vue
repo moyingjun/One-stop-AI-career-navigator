@@ -575,6 +575,7 @@ onUnmounted(() => {})
                   <!-- 朗读按钮（Beta）：仅在已有报告内容时显示，streaming 中禁用 -->
                   <TTSButton
                     v-if="displayedResult"
+                    variant="inline"
                     :text="displayedResult"
                     :cache-key="`resume:${currentSessionId}:diagnosis`"
                     :disabled="isDiagnosing && !isComplete"

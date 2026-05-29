@@ -531,6 +531,7 @@ onUnmounted(() => {})
                     <span class="font-mono uppercase tracking-wider">Blueprint</span>
                   </div>
                   <TTSButton
+                    variant="inline"
                     :text="reportResult"
                     :cache-key="`career:${currentSessionId}:plan`"
                     :disabled="isGenerating && !isComplete"
