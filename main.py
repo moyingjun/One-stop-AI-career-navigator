@@ -33,6 +33,7 @@ from Router import (
     llm_provider_router,
     ocr,
     resumeDiagnosis,
+    tts,
 )
 from Router import knowledge_base
 
@@ -104,3 +105,4 @@ app.include_router(history_router.router)
 app.include_router(auth.router)
 app.include_router(llm_provider_router.router)
 app.include_router(document.router)
+app.include_router(tts.router)

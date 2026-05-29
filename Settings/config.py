@@ -53,3 +53,24 @@ RAG_MAX_UPLOAD_MB: int = int(os.getenv("RAG_MAX_UPLOAD_MB", "20"))
 # 同时在响应中附带 debug_request_id 给前端打日志。
 # 生产环境必须保持 false。
 DEBUG_MODE: bool = (os.getenv("DEBUG_MODE", "false").strip().lower() in ("1", "true", "yes", "on"))
+
+
+# ─────────────────────────────────────────────
+# TTS 配置(Mimo TTS · MiMo-V2.5-TTS 系列)
+# ─────────────────────────────────────────────
+# 设计要点:
+#   1. 复用同一 Mimo Open Platform 的 API Key,fallback 链:TTS_API_KEY → MIMO_API_KEY → LLM_API_KEY
+#   2. base_url 不硬编码 api.xiaomimimo.com,优先读 TTS_BASE_URL,其次 MIMO_BASE_URL,
+#      二者都缺再走最后一道兜底 https://api.xiaomimimo.com/v1。
+#   3. TTS 走 chat-completions 协议,与 LLM 同源端点,所以 base_url 末尾不带 /chat/completions,
+#      由 Service/tts_service.py 自行拼接。
+#   4. TTS_TIMEOUT_SEC 是整体合成超时(整段一次返回,文本越长合成越久)。
+#   5. TTS_MAX_TEXT_LEN 是应用层防护上限,前端、后端各拦一次。
+TTS_API_KEY: str       = os.getenv("TTS_API_KEY") or os.getenv("MIMO_API_KEY") or os.getenv("LLM_API_KEY") or ""
+TTS_BASE_URL: str      = os.getenv("TTS_BASE_URL") or os.getenv("MIMO_BASE_URL") or "https://api.xiaomimimo.com/v1"
+TTS_BASE_URL = TTS_BASE_URL.rstrip("/")  # 末尾不含斜杠,Service 端拼接 /chat/completions
+TTS_MODEL_NAME: str    = os.getenv("TTS_MODEL_NAME", "mimo-v2.5-tts")
+TTS_VOICE: str         = os.getenv("TTS_VOICE", "mimo_default")
+TTS_FORMAT: str        = (os.getenv("TTS_FORMAT", "mp3") or "mp3").strip().lower()
+TTS_TIMEOUT_SEC: float = float(os.getenv("TTS_TIMEOUT_SEC", "60"))
+TTS_MAX_TEXT_LEN: int  = int(os.getenv("TTS_MAX_TEXT_LEN", "3000"))

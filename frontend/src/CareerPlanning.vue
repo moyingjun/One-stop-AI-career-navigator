@@ -7,6 +7,7 @@ import FeaturePageShell from './components/FeaturePageShell.vue'
 import ActionDock from './components/ActionDock.vue'
 import SidebarEducationPlaceholder from './components/SidebarEducationPlaceholder.vue'
 import GlobalProviderSwitcher from './components/GlobalProviderSwitcher.vue'
+import TTSButton from './components/TTSButton.vue'
 import { showToast, resolveLoader } from '@/utils/uiFallbacks.js'
 import { upsertSession, generateSessionId, loadRecordById } from '@/services/historyClient.js'
 import { useUserStore } from '@/stores/userStore'
@@ -522,14 +523,27 @@ onUnmounted(() => {})
           <!-- ============ Result：流式 Markdown 蓝图 + 路线图占位 ============ -->
           <template #result>
             <div ref="resultContainer" class="career-result-zone overflow-y-auto p-4 md:p-8 min-h-[320px] max-h-[78vh]">
-              <div
-                v-if="displayedResult"
-                class="markdown-body max-w-full"
-                data-test="career-blueprint"
-              >
-                <div v-html="parsedReport"></div>
-                <span v-if="!isComplete" class="inline-block w-2 h-[1.2em] bg-cyan-500 animate-pulse rounded-sm ml-0.5 align-middle"></span>
-              </div>
+              <template v-if="displayedResult">
+                <!-- 工具栏：朗读按钮放在正文上方,避免与 markdown 第一行重叠(P1 修复) -->
+                <div class="career-result-toolbar flex items-center justify-between mb-3 pb-2 border-b border-cyan-500/[0.10]">
+                  <div class="flex items-center gap-2 text-xs text-cyan-300/80">
+                    <Compass class="w-3.5 h-3.5" />
+                    <span class="font-mono uppercase tracking-wider">Blueprint</span>
+                  </div>
+                  <TTSButton
+                    :text="reportResult"
+                    :cache-key="`career:${currentSessionId}:plan`"
+                    :disabled="isGenerating && !isComplete"
+                  />
+                </div>
+                <div
+                  class="markdown-body max-w-full"
+                  data-test="career-blueprint"
+                >
+                  <div v-html="parsedReport"></div>
+                  <span v-if="!isComplete" class="inline-block w-2 h-[1.2em] bg-cyan-500 animate-pulse rounded-sm ml-0.5 align-middle"></span>
+                </div>
+              </template>
 
               <div v-else-if="isGenerating" class="flex flex-col items-center justify-center py-10 text-center" data-test="career-loading">
                 <component

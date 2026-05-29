@@ -2,6 +2,8 @@
 import { ref, nextTick, watch } from 'vue'
 import { Bot, Loader2 } from 'lucide-vue-next'
 import { renderSafeMarkdown } from '@/utils/safeMarkdown.js'
+import { useChatSessionStore } from '@/stores/chatSessionStore'
+import TTSButton from '@/components/TTSButton.vue'
 
 /**
  * ChatMessageList.vue —— 主聊天消息列表(P0 安全渲染版)
@@ -11,12 +13,20 @@ import { renderSafeMarkdown } from '@/utils/safeMarkdown.js'
  *     直接 v-html 等同于把第三方/用户输入直接插入 DOM,存在 XSS 风险。
  *   - 现统一通过 renderSafeMarkdown 清洗:禁止 raw HTML、链接协议白名单、二次正则兜底。
  *   - 不影响普通 Markdown(粗体、列表、代码块、引用、表格等)的展示。
+ *
+ * TTS 朗读(Beta):
+ *   - 每条 AI 消息时间戳右侧渲染 TTSButton。
+ *   - cacheKey 由 sessionId + index 组合,保证同一条消息重复点击零网络。
+ *   - streaming 中(chatStore.isLoading 且为最后一条 AI)按钮 disabled,
+ *     避免对未完整文本朗读 + 与流式 token 冲突。
  */
 
 const props = defineProps({
   messages: { type: Array, default: () => [] },
   isLoading: { type: Boolean, default: false }
 })
+
+const chatStore = useChatSessionStore()
 
 const containerRef = ref(null)
 
@@ -42,6 +52,17 @@ watch(
   () => { scrollToBottom() }
 )
 
+/**
+ * 是否为「正在 streaming 的最后一条 AI 消息」。
+ * 只有它需要 disabled,其它已结束的 AI 消息可以自由朗读。
+ */
+const isLastStreamingAI = (index, message) => {
+  if (!props.isLoading) return false
+  if (message?.role !== 'ai') return false
+  const last = props.messages[props.messages.length - 1]
+  return last && last === message && index === props.messages.length - 1
+}
+
 defineExpose({ scrollToBottom })
 </script>
 
@@ -65,7 +86,16 @@ defineExpose({ scrollToBottom })
         </div>
         <div class="max-w-[80%] bg-gradient-to-r from-gray-800/50 to-gray-900/50 border border-white/10 rounded-xl p-3">
           <div class="text-sm text-gray-200 chat-markdown" v-html="renderSafeMarkdown(message.content || '')"></div>
-          <p class="text-xs text-gray-500 mt-1">{{ message.timestamp }}</p>
+          <div class="mt-1 flex items-center gap-2">
+            <p class="text-xs text-gray-500 flex-1">{{ message.timestamp }}</p>
+            <!-- TTS 朗读按钮(Beta):cacheKey = 会话 id + 索引,保证重复点击零网络 -->
+            <TTSButton
+              v-if="(message.content || '').trim()"
+              :text="message.content || ''"
+              :cache-key="`${chatStore.currentSessionId}:${index}`"
+              :disabled="isLastStreamingAI(index, message)"
+            />
+          </div>
         </div>
       </div>
     </div>

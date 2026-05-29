@@ -11,6 +11,7 @@ import FeaturePageShell from '@/components/FeaturePageShell.vue'
 import ActionDock from '@/components/ActionDock.vue'
 import SidebarEducationPlaceholder from '@/components/SidebarEducationPlaceholder.vue'
 import GlobalProviderSwitcher from '@/components/GlobalProviderSwitcher.vue'
+import TTSButton from '@/components/TTSButton.vue'
 import { getAuthHeaders } from '@/services/authService.js'
 import { upsertSession, generateSessionId, loadRecordById } from '@/services/historyClient.js'
 import { useUserStore } from '@/stores/userStore'
@@ -571,6 +572,13 @@ onUnmounted(() => {})
                   <h2 class="text-sm font-semibold text-gray-200" data-test="report-title">AI 诊断报告</h2>
                 </div>
                 <div class="flex items-center gap-2">
+                  <!-- 朗读按钮（Beta）：仅在已有报告内容时显示，streaming 中禁用 -->
+                  <TTSButton
+                    v-if="displayedResult"
+                    :text="displayedResult"
+                    :cache-key="`resume:${currentSessionId}:diagnosis`"
+                    :disabled="isDiagnosing && !isComplete"
+                  />
                   <div v-if="isComplete" class="flex items-center gap-1.5">
                     <div class="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse"></div>
                     <span class="text-xs text-green-400">分析完成</span>

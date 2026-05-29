@@ -10,6 +10,7 @@ import SidebarEducationPlaceholder from './components/SidebarEducationPlaceholde
 import BaseModal from './components/BaseModal.vue'
 import CyberRadarChart from './components/CyberRadarChart.vue'
 import GlobalProviderSwitcher from './components/GlobalProviderSwitcher.vue'
+import TTSButton from './components/TTSButton.vue'
 import { streamInterviewChat } from '@/services/llm_service.js'
 import { getAuthHeaders } from '@/services/authService.js'
 import { showToast, resolveLoader } from '@/utils/uiFallbacks'
@@ -336,11 +337,16 @@ const addMessage = (role, content) => {
   scrollToBottom()
   if (role === 'user' || role === 'ai') {
     nextTick(() => calculatePressure())
-  }
+  }}
+
+// Beta：判定指定 idx 是否为正在 streaming 的最后一条 AI 消息（朗读按钮 disable 用）
+const isStreamingLastAi = (idx) => {
+  return isLoading.value
+    && idx === messages.value.length - 1
+    && messages.value[idx]?.role === 'ai'
 }
 
-const initInterview = async () => {
-  const recordId = route.query.id
+const initInterview = async () => {  const recordId = route.query.id
   if (recordId) {
     isRestoring.value = true
     try {
@@ -969,7 +975,17 @@ onUnmounted(() => {
                       <span v-if="index === messages.length - 1 && isAiSpeaking" class="geek-cursor">█</span>
                     </div>
                     <p v-else class="text-sm leading-relaxed whitespace-pre-wrap">{{ msg.content }}</p>
-                    <p class="text-[10px] text-gray-500 mt-1 text-right" :class="msg.role === 'ai' ? 'pl-3' : ''">{{ msg.timestamp }}</p>
+                    <div class="flex items-center justify-between mt-1 gap-2" :class="msg.role === 'ai' ? 'pl-3' : ''">
+                      <!-- AI 气泡左下角朗读按钮（Beta，仅 AI 消息 + 文本非空 + streaming 中禁用） -->
+                      <TTSButton
+                        v-if="msg.role === 'ai' && (msg.content || '').trim()"
+                        :text="cleanMessage(msg.content)"
+                        :cache-key="`interview:${currentSessionId}:${index}`"
+                        :disabled="isStreamingLastAi(index)"
+                      />
+                      <span v-else></span>
+                      <p class="text-[10px] text-gray-500">{{ msg.timestamp }}</p>
+                    </div>
                   </div>
                 </div>
 
@@ -1174,9 +1190,18 @@ onUnmounted(() => {
 
         <!-- 导师结语 -->
         <div class="rounded-xl p-4 mb-6" :class="[themeConfig.bg.replace('/20', '/10'), themeConfig.borderLight]">
-          <div class="flex items-center gap-2 mb-2">
-            <span class="text-lg">👑</span>
-            <span class="text-sm font-semibold" :class="themeConfig.text">导师结语</span>
+          <div class="flex items-center justify-between gap-2 mb-2">
+            <div class="flex items-center gap-2">
+              <span class="text-lg">👑</span>
+              <span class="text-sm font-semibold" :class="themeConfig.text">导师结语</span>
+            </div>
+            <!-- 朗读按钮（Beta）：仅在评估结果有 mentorComment 时显示，评估流程中禁用 -->
+            <TTSButton
+              v-if="(mentorComment || '').trim()"
+              :text="mentorComment"
+              :cache-key="`interview:${currentSessionId}:evaluation`"
+              :disabled="isEvaluating"
+            />
           </div>
           <p class="text-sm text-gray-300 leading-relaxed">{{ mentorComment }}</p>
         </div>
