@@ -4,6 +4,7 @@ import { useDebounceFn } from '@vueuse/core'
 import { llmService, streamChat } from '@/services/llm_service.js'
 import { normalizeRecordType, resolveHistoryRoute, getRecordColorClass, RECORD_TYPES } from '@/utils/historyRecordTypes.js'
 import { buildSearchUrl, openInNewTab } from '@/utils/searchIntent.js'
+import { buildNextActions } from '@/utils/actionSuggestions.js'
 import { ACCENT_THEME_LIST, setAccentTheme, getCurrentAccentName } from '@/utils/accentTheme.js'
 import { getAuthHeaders } from '@/services/authService.js'
 import { useRouter, useRoute } from 'vue-router'
@@ -274,11 +275,34 @@ const dailyTips = [
 ]
 
 const handleDailyTipClick = (tip) => {
-  const targetJob = userStore.targetJob || localStorage.getItem('target_job') || ''
+  // 仅从 userStore 读 targetJob;不再 fallback localStorage 旧值,
+  // 与 ChatDock payload 的清理规则保持一致。
+  const targetJob = (userStore.targetJob || '').trim()
   const url = buildSearchUrl({ text: tip.text }, targetJob)
   // 新标签页打开,带 noopener,noreferrer;不在当前页跳转,不破坏 Dashboard 状态
   openInNewTab(url)
 }
+
+// ── 「下一步行动」MVP(本轮新增) ─────────────────────────────
+// 基于 bentoRecordsPool 的最近一条历史记录,派生 1–3 条建议。
+// 不发后端请求、不接 AI、不写入任何 store,纯派生 + router.push。
+const nextActions = computed(() => buildNextActions(bentoRecordsPool.value))
+
+const handleNextActionClick = (action) => {
+  if (!action || !action.route) return
+  // 站内跳转;外部链接不在本卡片支持范围
+  router.push(action.route)
+}
+
+// 颜色 token → tailwind 三件套(沿用 historyRecordTypes 的 colorKey 语义)
+const NEXT_ACTION_COLOR = {
+  purple:  { dot: 'bg-purple-400/70',  text: 'text-purple-300',  hoverBg: 'hover:bg-purple-500/[0.06]',  hoverBorder: 'hover:border-purple-500/30' },
+  cyan:    { dot: 'bg-cyan-400/70',    text: 'text-cyan-300',    hoverBg: 'hover:bg-cyan-500/[0.06]',    hoverBorder: 'hover:border-cyan-500/30'   },
+  pink:    { dot: 'bg-pink-400/70',    text: 'text-pink-300',    hoverBg: 'hover:bg-pink-500/[0.06]',    hoverBorder: 'hover:border-pink-500/30'   },
+  emerald: { dot: 'bg-emerald-400/70', text: 'text-emerald-300', hoverBg: 'hover:bg-emerald-500/[0.06]', hoverBorder: 'hover:border-emerald-500/30'},
+  gray:    { dot: 'bg-gray-400/70',    text: 'text-gray-300',    hoverBg: 'hover:bg-white/[0.04]',       hoverBorder: 'hover:border-white/10'      }
+}
+const getNextActionColor = (key) => NEXT_ACTION_COLOR[key] || NEXT_ACTION_COLOR.gray
 
 // 新手启航舱卡片配置（静态数据，不依赖任何响应式数据源）
 // Requirements: 7.1, 7.2, 7.3, 7.4, 8.3
@@ -473,10 +497,46 @@ const handlePickAccentTheme = (name) => {
 // KnowledgePanel 悬浮面板控制
 const showKnowledgePanel = ref(false)
 
+// ── SetupModal 资料变更检测(本轮收口)──
+// 打开 SetupModal 时记录一份资料快照;关闭并保存后,如果关键字段变化(activeMode /
+// targetJob / jobDescription),清空当前 ChatDock 会话以防旧上下文污染新对话。
+let _profileSnapshotBeforeSetup = null
+function _captureProfileSnapshot() {
+  return {
+    activeMode: userStore.activeMode || '',
+    targetJob:  (userStore.targetJob || '').trim(),
+    jobDescription: (userStore.jobDescription || '').trim()
+  }
+}
+watch(
+  () => showSetupModal.value,
+  (open) => {
+    if (open) _profileSnapshotBeforeSetup = _captureProfileSnapshot()
+  }
+)
+
 const handleSetupComplete = () => {
   showSetupModal.value = false
   globalResumeStatus.value = 'ready'
   userName.value = localStorage.getItem('candidate_name') || ''
+
+  // 对比快照与最新值;关键字段任一变更即视为"语境变了"。
+  const before = _profileSnapshotBeforeSetup
+  const after  = _captureProfileSnapshot()
+  _profileSnapshotBeforeSetup = null
+  const profileChanged =
+    !before ||
+    before.activeMode !== after.activeMode ||
+    before.targetJob !== after.targetJob ||
+    before.jobDescription !== after.jobDescription
+
+  if (profileChanged) {
+    // 走与"新建对话"一致的链路:abort 旧流 + clearSession + 推进 runId,
+    // 同时 chatStore.persistLocal() 会用新的空状态覆盖 chat_session_state,
+    // 防止旧 messages / 旧 currentSessionId 把新资料推进给历史回复污染。
+    forceStartNew()
+    showToastMsg('已根据新资料重置对话上下文', 1800)
+  }
 }
 
 // 面试舱门模态框
@@ -986,15 +1046,21 @@ const sendGeneralChatMessage = async (inputText) => {
         }))
     }
 
-    const savedResume = uploadedGlobalResume.value || localStorage.getItem('resume_text') || ''
+    // ── 用户资料注入(本轮收口)──
+    // 严格只用 userStore 字段,不再 fallback 到 localStorage 旧 key,
+    // 避免历史 target_job=保安 / current_interview_jd 旧值污染当前会话。
+    const savedResume = (userStore.resumeText || '').trim()
     if (savedResume) payload.resume_text = savedResume
 
-    const savedJd = localStorage.getItem('current_interview_jd') || ''
-    if (savedJd) payload.jd_text = savedJd
+    // 仅在求职模式下注入 target_job / jd_text;升学模式不注入,
+    // 避免 AI 拿着求职上下文给升学场景错答。
+    if (userStore.activeMode === 'job') {
+      const tj = (userStore.targetJob || '').trim()
+      if (tj) payload.target_job = tj
 
-    // 注入求职意向，让 AI 知道用户的目标岗位
-    const targetJobValue = userStore.targetJob || localStorage.getItem('target_job') || ''
-    if (targetJobValue) payload.target_job = targetJobValue
+      const jd = (userStore.jobDescription || '').trim()
+      if (jd) payload.jd_text = jd
+    }
 
     // 附加当前选中的 LLM Provider（若有）
     const providerId = llmProviderStore.getCurrentProviderId()
@@ -1994,6 +2060,45 @@ onUnmounted(() => {
                 </div>
               </transition>
 
+              <!-- 下一步行动卡片(从右侧 Bento 迁入,放在「继续上次」下方) -->
+              <div
+                v-if="nextActions.length > 0"
+                class="next-actions-main mt-4 bg-white/[0.015] backdrop-blur-xl border border-white/5 rounded-2xl p-5 shadow-[inset_0_0_20px_rgba(255,255,255,0.01)] transition-all duration-500 hover:bg-white/[0.025] hover:border-cyan-500/20 hover:shadow-[0_10px_30px_rgba(34,211,238,0.08)]"
+                data-test="next-actions-card"
+              >
+                <div class="flex items-center justify-between mb-3">
+                  <h2 class="text-base font-semibold text-gray-200 text-left flex items-center gap-2">
+                    <Compass class="w-4 h-4" :style="{ color: 'rgb(var(--accent-rgb, 34, 211, 238))' }" />
+                    下一步行动
+                  </h2>
+                  <span class="text-[11px] text-gray-500">{{ nextActions.length }} 条 · 基于历史派生</span>
+                </div>
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-2">
+                  <button
+                    v-for="action in nextActions"
+                    :key="action.id"
+                    type="button"
+                    @click="handleNextActionClick(action)"
+                    :title="action.desc"
+                    data-test="next-action-row"
+                    class="next-action-row group/item w-full flex items-start gap-2.5 cursor-pointer rounded-xl px-3 py-2.5 text-left transition-all duration-200 border border-white/5 bg-white/[0.02] focus:outline-none focus:ring-1 focus:ring-cyan-400/40"
+                    :class="[getNextActionColor(action.colorKey).hoverBg, getNextActionColor(action.colorKey).hoverBorder]"
+                  >
+                    <div :class="['w-1.5 h-1.5 rounded-full mt-2 flex-shrink-0 transition-all duration-300', getNextActionColor(action.colorKey).dot]"></div>
+                    <div class="flex-1 min-w-0">
+                      <div class="text-xs font-medium text-gray-100 group-hover/item:text-white transition-colors truncate">{{ action.title }}</div>
+                      <p class="text-[11px] text-gray-500 leading-relaxed mt-1 line-clamp-2">{{ action.desc }}</p>
+                      <span
+                        class="inline-flex items-center gap-0.5 text-[11px] mt-1.5 transition-colors"
+                        :class="getNextActionColor(action.colorKey).text"
+                      >
+                        {{ action.actionText }}
+                        <ChevronRight class="w-3 h-3" />
+                      </span>
+                    </div>
+                  </button>
+                </div>
+              </div>
 
 
               </div>
@@ -2429,16 +2534,8 @@ onUnmounted(() => {
     <!-- AccentSettings 弹窗:系统设置 → 主题色 Accent Color -->
     <BaseModal v-model="showAccentSettingsModal" max-width="max-w-md">
       <div class="p-6">
-        <header class="flex items-center justify-between mb-1">
+        <header class="mb-1 pr-10">
           <h2 class="text-base font-semibold text-gray-100">主题强调色</h2>
-          <button
-            type="button"
-            @click="showAccentSettingsModal = false"
-            class="w-7 h-7 rounded-md border border-white/10 text-gray-400 hover:text-white hover:bg-white/5 flex items-center justify-center transition-colors"
-            aria-label="关闭"
-          >
-            <X class="w-4 h-4" />
-          </button>
         </header>
         <p class="text-xs text-gray-500 mb-4">选择全站主强调色,刷新后自动恢复。</p>
         <ul class="grid grid-cols-1 gap-2">

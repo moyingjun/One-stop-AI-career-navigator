@@ -175,7 +175,7 @@ defineExpose({ focus, setInput, scrollToBottom })
           ref="messageListRef"
           :messages="chatStore.messages"
           :isLoading="chatStore.isLoading"
-          class="max-h-[280px] mb-3"
+          class="max-h-[40vh] mb-3"
         />
 
         <!-- 输入区 -->
@@ -208,32 +208,49 @@ defineExpose({ focus, setInput, scrollToBottom })
   transform: translateY(8px) scale(0.985);
 }
 
-/* 顶部高亮分隔线 */
+/* 顶部高亮分隔线 — 跟随主题色渐变(本轮接入) */
 .chat-dock-accent {
   background: linear-gradient(
     90deg,
     transparent 0%,
-    rgba(168, 85, 247, 0.0) 8%,
-    rgba(168, 85, 247, 0.45) 30%,
-    rgba(34, 211, 238, 0.55) 50%,
-    rgba(168, 85, 247, 0.45) 70%,
-    rgba(168, 85, 247, 0.0) 92%,
+    rgba(var(--accent-rgb), 0)            8%,
+    rgba(var(--accent-rgb), 0.45)         30%,
+    rgba(var(--accent-secondary-rgb), 0.55) 50%,
+    rgba(var(--accent-rgb), 0.45)         70%,
+    rgba(var(--accent-rgb), 0)            92%,
     transparent 100%
   );
-  box-shadow: 0 0 8px rgba(34, 211, 238, 0.18);
+  box-shadow: 0 0 8px rgba(var(--accent-rgb), 0.18);
   border-top-left-radius: 12px;
   border-top-right-radius: 12px;
 }
 
-/* 折叠态 pill */
+/* 折叠态 pill — 跟随主题色渐变(本轮接入) */
 .chat-dock-collapsed {
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.38), 0 0 14px rgba(168, 85, 247, 0.18);
+  border-color: var(--accent-border) !important;
+  box-shadow:
+    0 8px 24px rgba(0, 0, 0, 0.38),
+    0 0 14px rgba(var(--accent-rgb), 0.22);
   animation: chat-dock-pill-breathe 3.2s ease-in-out infinite;
+}
+.chat-dock-collapsed:hover {
+  border-color: rgba(var(--accent-secondary-rgb), 0.6) !important;
+  box-shadow:
+    0 8px 28px rgba(0, 0, 0, 0.42),
+    0 0 22px rgba(var(--accent-secondary-rgb), 0.30) !important;
 }
 
 @keyframes chat-dock-pill-breathe {
-  0%, 100% { box-shadow: 0 8px 24px rgba(0,0,0,0.38), 0 0 10px rgba(168,85,247,0.14); }
-  50%      { box-shadow: 0 8px 28px rgba(0,0,0,0.42), 0 0 20px rgba(34,211,238,0.22); }
+  0%, 100% {
+    box-shadow:
+      0 8px 24px rgba(0, 0, 0, 0.38),
+      0 0 10px rgba(var(--accent-rgb), 0.18);
+  }
+  50% {
+    box-shadow:
+      0 8px 28px rgba(0, 0, 0, 0.42),
+      0 0 20px rgba(var(--accent-secondary-rgb), 0.28);
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -281,8 +298,14 @@ defineExpose({ focus, setInput, scrollToBottom })
 }
 
 .input-wrapper:focus-within {
-  border-color: rgba(168, 85, 247, 0.5) !important;
-  box-shadow: 0 0 20px rgba(168, 85, 247, 0.2) !important;
+  border-color: var(--accent-border) !important;
+  box-shadow: 0 0 20px rgba(var(--accent-rgb), 0.22) !important;
+}
+
+/* 静态 shell:覆盖 Tailwind 写死的紫色边/光晕,跟随主题色 */
+.input-wrapper {
+  border-color: var(--accent-border) !important;
+  box-shadow: 0 0 15px rgba(var(--accent-rgb), 0.12) !important;
 }
 
 @media (prefers-reduced-motion: reduce) {
