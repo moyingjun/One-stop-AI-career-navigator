@@ -11,6 +11,7 @@ import BaseModal from './components/BaseModal.vue'
 import CyberRadarChart from './components/CyberRadarChart.vue'
 import GlobalProviderSwitcher from './components/GlobalProviderSwitcher.vue'
 import TTSButton from './components/TTSButton.vue'
+import VoiceModeButton from './components/VoiceModeButton.vue'
 import { streamInterviewChat } from '@/services/llm_service.js'
 import { getAuthHeaders } from '@/services/authService.js'
 import { showToast, resolveLoader } from '@/utils/uiFallbacks'
@@ -717,6 +718,24 @@ const handleEnter = (event) => {
   }
 }
 
+const voiceInputDisabled = computed(() => isLoading.value || isInterviewEnded.value || strikeTerminated.value)
+const isVoiceListening = ref(false)
+
+const handleVoiceResult = (text) => {
+  const transcript = String(text || '').trim()
+  if (!transcript) return
+  const currentInput = userInput.value.trim()
+  userInput.value = currentInput ? `${currentInput}\n${transcript}` : transcript
+}
+
+const handleVoiceError = (message) => {
+  showToast(message || '语音输入失败，请稍后重试', { type: 'error' })
+}
+
+const handleVoiceListeningChange = (listening) => {
+  isVoiceListening.value = listening
+}
+
 onMounted(() => {
   initInterview()
 })
@@ -834,11 +853,19 @@ onUnmounted(() => {
 
             <!-- 消息输入 -->
             <div>
-              <label class="block text-xs font-semibold text-gray-300 mb-2">你的回答</label>
+              <div class="mb-2 flex items-center justify-between gap-3">
+                <label class="block text-xs font-semibold text-gray-300">你的回答</label>
+                <VoiceModeButton
+                  :disabled="voiceInputDisabled"
+                  @result="handleVoiceResult"
+                  @error="handleVoiceError"
+                  @listening-change="handleVoiceListeningChange"
+                />
+              </div>
               <textarea
                 v-model="userInput"
                 @keydown="handleEnter"
-                placeholder="输入你的回答...（Enter 发送，Shift+Enter 换行）"
+                :placeholder="isVoiceListening ? '正在识别语音...点击「录音中」停止' : '输入你的回答...（Enter 发送，Shift+Enter 换行）'"
                 rows="3"
                 :disabled="isLoading || strikeTerminated"
                 class="interview-textarea w-full rounded-xl px-4 py-2.5 text-sm resize-none focus:outline-none backdrop-blur-xl shadow-[inset_0_1px_1px_rgba(255,255,255,0.1)] transition-all duration-300 bg-black/60 text-gray-200 placeholder-gray-500 focus:ring-2 disabled:opacity-50 disabled:cursor-not-allowed border"
@@ -1198,6 +1225,7 @@ onUnmounted(() => {
             <!-- 朗读按钮（Beta）：仅在评估结果有 mentorComment 时显示，评估流程中禁用 -->
             <TTSButton
               v-if="(mentorComment || '').trim()"
+              variant="inline"
               :text="mentorComment"
               :cache-key="`interview:${currentSessionId}:evaluation`"
               :disabled="isEvaluating"
