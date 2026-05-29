@@ -1093,7 +1093,7 @@ watch(filterType, () => {
               <button
                 type="button"
                 @click="createDocument(filterType === 'all' ? 'resume' : filterType)"
-                class="w-full inline-flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl text-sm font-semibold text-white bg-gradient-to-r from-cyan-500 to-purple-500 shadow-lg shadow-cyan-500/20 hover:shadow-cyan-500/40 hover:scale-[1.01] active:scale-[0.99] transition-all"
+                class="dw-cta-accent w-full inline-flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl text-sm font-semibold text-white hover:scale-[1.01] active:scale-[0.99] transition-all"
                 data-test="docs-new-doc"
               >
                 <Plus class="w-4 h-4" />
@@ -1203,7 +1203,7 @@ watch(filterType, () => {
                 <button
                   type="button"
                   @click="createDocument('resume')"
-                  class="inline-flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold text-white bg-gradient-to-r from-cyan-500 to-purple-500 shadow-lg shadow-cyan-500/20 hover:shadow-cyan-500/40 transition-all"
+                  class="dw-cta-accent inline-flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold text-white transition-all"
                 >
                   <Plus class="w-4 h-4" />
                   新建简历草稿
@@ -1691,7 +1691,7 @@ watch(filterType, () => {
           <button
             type="button"
             @click="onConfirmOverwriteResume"
-            class="flex-1 py-2.5 rounded-xl text-sm font-semibold text-white bg-gradient-to-r from-cyan-500 to-purple-500 shadow-lg shadow-cyan-500/20 hover:shadow-cyan-500/40 transition-all"
+            class="dw-cta-accent flex-1 py-2.5 rounded-xl text-sm font-semibold text-white transition-all"
             data-test="docs-resume-overwrite-confirm"
           >
             确认覆盖
@@ -1776,8 +1776,8 @@ watch(filterType, () => {
   border-color: rgba(255, 255, 255, 0.08);
 }
 .dw-list-item--active {
-  background: rgba(34, 211, 238, 0.08);
-  border-color: rgba(34, 211, 238, 0.35);
+  background: var(--accent-soft);
+  border-color: var(--accent-border);
   box-shadow: 0 0 18px rgba(34, 211, 238, 0.08);
 }
 
@@ -1800,9 +1800,9 @@ watch(filterType, () => {
   color: #fff;
 }
 .dw-tb--active {
-  background: rgba(34, 211, 238, 0.12);
-  border-color: rgba(34, 211, 238, 0.35);
-  color: rgb(165, 243, 252);
+  background: var(--accent-soft);
+  border-color: var(--accent-border);
+  color: rgb(var(--accent-rgb));
 }
 .dw-tb-sep {
   display: inline-block;
@@ -1810,6 +1810,26 @@ watch(filterType, () => {
   height: 16px;
   background: rgba(255, 255, 255, 0.08);
   margin: 0 4px;
+}
+
+/* ─── 主品牌 CTA(新建文档 / 创建首份资料 / 覆盖确认 三处)── */
+/* 跟随主题渐变;不再硬编码 from-cyan-500 to-purple-500。
+   不影响导出按钮 / 工具栏 / 任何语义色(success / error / warning / 状态灯)。 */
+.dw-cta-accent {
+  background: var(--accent-gradient);
+  box-shadow: 0 6px 16px rgba(var(--accent-rgb), 0.22);
+  transition: box-shadow 0.18s ease, transform 0.18s ease, filter 0.18s ease;
+}
+.dw-cta-accent:hover:not(:disabled) {
+  box-shadow: 0 8px 22px rgba(var(--accent-rgb), 0.42);
+  filter: brightness(1.05);
+}
+.dw-cta-accent:active:not(:disabled) {
+  transform: scale(0.99);
+}
+.dw-cta-accent:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 /* ─── 导出按钮（右侧操作面板） ─── */
@@ -1829,10 +1849,10 @@ watch(filterType, () => {
   cursor: pointer;
 }
 .dw-export-btn:hover:not(:disabled) {
-  background: rgba(34, 211, 238, 0.12);
-  border-color: rgba(34, 211, 238, 0.5);
-  box-shadow: 0 0 16px rgba(34, 211, 238, 0.18);
+  background: rgba(var(--accent-rgb), 0.14);
+  border-color: var(--accent-border);
   color: #fff;
+  box-shadow: 0 0 16px rgba(var(--accent-rgb), 0.20);
 }
 .dw-export-btn:active:not(:disabled) {
   transform: scale(0.98);
@@ -1925,10 +1945,10 @@ watch(filterType, () => {
   transform: translateY(0) scale(0.96);
 }
 .dw-tb--active {
-  background: rgba(34, 211, 238, 0.16);
-  border-color: rgba(34, 211, 238, 0.5);
-  color: rgb(207, 250, 254);
-  box-shadow: 0 0 12px rgba(34, 211, 238, 0.18);
+  background: rgba(var(--accent-rgb), 0.18);
+  border-color: rgba(var(--accent-rgb), 0.5);
+  color: rgb(var(--accent-rgb));
+  box-shadow: 0 0 12px rgba(var(--accent-rgb), 0.20);
 }
 
 /* ─── 标题输入：聚焦时下边线提示 ─── */
@@ -1938,7 +1958,7 @@ watch(filterType, () => {
   transition: border-color 0.18s ease;
 }
 .dw-title-input:focus {
-  border-bottom-color: rgba(34, 211, 238, 0.35);
+  border-bottom-color: var(--accent-border);
 }
 
 /* ─── 工具栏 AI 润色按钮：可宽 + 文字标签 ─── */
@@ -1953,14 +1973,14 @@ watch(filterType, () => {
 
 /* ─── 工具栏「生成简历预览」按钮 ─── */
 .dw-tb-resume {
-  color: rgb(165, 243, 252);
-  border-color: rgba(34, 211, 238, 0.45);
-  background: rgba(34, 211, 238, 0.08);
+  color: rgb(var(--accent-rgb));
+  border-color: var(--accent-border);
+  background: var(--accent-soft);
 }
 .dw-tb-resume:hover:not(:disabled) {
-  background: rgba(34, 211, 238, 0.18);
+  background: rgba(var(--accent-rgb), 0.22);
   color: #fff;
-  box-shadow: 0 0 14px rgba(34, 211, 238, 0.2);
+  box-shadow: 0 0 14px rgba(var(--accent-rgb), 0.25);
 }
 .dw-tb-resume:disabled {
   opacity: 0.45;

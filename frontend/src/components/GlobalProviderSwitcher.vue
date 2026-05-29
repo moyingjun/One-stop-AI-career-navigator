@@ -62,6 +62,16 @@ const displayLabel = computed(() => {
   return llmProviderStore.currentDisplayLabel
 })
 
+/**
+ * 是否有任意 online 真实 provider。
+ * 用于决定徽章用「Online emerald」还是「Standby gray」配色,
+ * 避免 MiMo 未配置时仍显示绿色脉冲徽章误导用户。
+ */
+const hasOnlineProvider = computed(() => {
+  return Array.isArray(llmProviderStore.providers)
+    && llmProviderStore.providers.some((p) => p && !p.is_placeholder && p.status === 'online')
+})
+
 /** 判断 Provider 是否可选（必须 online 且非占位） */
 const isSelectable = (p) => !!p && !p.is_placeholder && p.status === 'online'
 
@@ -164,29 +174,48 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="global-provider-switcher relative inline-block">
-    <!-- 顶部徽章：emerald 主色 + 脉冲圆点 + 下拉箭头 -->
+    <!-- 顶部徽章:online 时 emerald 脉冲;无 online provider 时 gray 静态(不再误显示 Online) -->
     <button
       ref="triggerRef"
       type="button"
       @click="toggleDropdown"
-      class="bg-emerald-500/10 backdrop-blur-md border border-emerald-500/30 rounded-full flex items-center gap-2 shadow-[0_0_10px_rgba(16,185,129,0.15)] hover:bg-emerald-500/15 hover:border-emerald-400/50 transition-all duration-200"
-      :class="compact ? 'px-2.5 py-1' : 'px-3 py-1.5'"
+      class="backdrop-blur-md rounded-full flex items-center gap-2 transition-all duration-200"
+      :class="[
+        compact ? 'px-2.5 py-1' : 'px-3 py-1.5',
+        hasOnlineProvider
+          ? 'bg-emerald-500/10 border border-emerald-500/30 shadow-[0_0_10px_rgba(16,185,129,0.15)] hover:bg-emerald-500/15 hover:border-emerald-400/50'
+          : 'bg-gray-500/10 border border-gray-500/30 hover:bg-gray-500/15'
+      ]"
       :title="displayLabel"
       data-test="global-provider-switcher-trigger"
     >
       <span
-        class="rounded-full bg-emerald-500 animate-pulse shadow-[0_0_8px_rgba(16,185,129,0.8)]"
-        :class="compact ? 'w-1.5 h-1.5' : 'w-2 h-2'"
+        class="rounded-full"
+        :class="[
+          compact ? 'w-1.5 h-1.5' : 'w-2 h-2',
+          hasOnlineProvider
+            ? 'bg-emerald-500 animate-pulse shadow-[0_0_8px_rgba(16,185,129,0.8)]'
+            : 'bg-gray-500'
+        ]"
         aria-hidden="true"
       ></span>
       <span
         v-if="showLabel"
-        class="text-emerald-400 font-mono font-semibold tracking-wider drop-shadow-[0_0_5px_rgba(52,211,153,0.4)] whitespace-nowrap"
-        :class="compact ? 'text-[10px]' : 'text-xs'"
+        class="font-mono font-semibold tracking-wider whitespace-nowrap"
+        :class="[
+          compact ? 'text-[10px]' : 'text-xs',
+          hasOnlineProvider
+            ? 'text-emerald-400 drop-shadow-[0_0_5px_rgba(52,211,153,0.4)]'
+            : 'text-gray-400'
+        ]"
       >{{ displayLabel }}</span>
       <ChevronDown
-        class="text-emerald-400/70 transition-transform duration-200"
-        :class="[compact ? 'w-2.5 h-2.5' : 'w-3 h-3', open ? 'rotate-180' : '']"
+        class="transition-transform duration-200"
+        :class="[
+          compact ? 'w-2.5 h-2.5' : 'w-3 h-3',
+          open ? 'rotate-180' : '',
+          hasOnlineProvider ? 'text-emerald-400/70' : 'text-gray-400/70'
+        ]"
       />
     </button>
 

@@ -72,24 +72,42 @@ export const useLlmProviderStore = defineStore('llmProvider', {
     /** 当前选中的 Provider 对象（必须是真实可用的 online 项） */
     currentProvider: (state) => {
       if (!Array.isArray(state.providers) || state.providers.length === 0) return null
+      // 只在 online 真实 provider 中匹配:unconfigured/placeholder 一律视为不可用
+      const onlineReal = state.providers.filter(
+        (p) => p && !p.is_placeholder && p.status === 'online'
+      )
+      if (onlineReal.length === 0) return null
       // 优先按用户选择
       if (state.currentProviderId) {
-        const found = state.providers.find(p => p.id === state.currentProviderId && !p.is_placeholder)
+        const found = onlineReal.find((p) => p.id === state.currentProviderId)
         if (found) return found
       }
       // 否则用 is_default
-      const def = state.providers.find(p => p.is_default && !p.is_placeholder)
+      const def = onlineReal.find((p) => p.is_default)
       if (def) return def
-      // 兜底：第一个真实 online
-      return state.providers.find(p => p.status === 'online' && !p.is_placeholder) || null
+      // 兜底:第一个 online 真实 provider
+      return onlineReal[0]
     },
 
-    /** 当前 Provider 的展示名称（带 Online 状态后缀） */
+    /**
+     * 当前 Provider 的展示名称(带状态后缀)
+     *
+     * 修复:
+     *   - 没有任何 online provider 时显示「未配置」,不再硬编码 'Default LLM Online'
+     *   - 不再让 unconfigured/placeholder provider 借机展示为 Online
+     */
     currentDisplayLabel: (state) => {
-      const cur = state.providers.find(p => p.id === state.currentProviderId && !p.is_placeholder)
-        || state.providers.find(p => p.is_default && !p.is_placeholder)
-        || state.providers.find(p => p.status === 'online' && !p.is_placeholder)
-      if (!cur) return 'Default LLM Online'
+      const onlineReal = state.providers.filter(
+        (p) => p && !p.is_placeholder && p.status === 'online'
+      )
+      if (onlineReal.length === 0) {
+        // 全部未配置 → 标识为待配置,而不是误导用户某个引擎已 Online
+        return 'AI 引擎未配置'
+      }
+      const cur =
+        onlineReal.find((p) => p.id === state.currentProviderId)
+        || onlineReal.find((p) => p.is_default)
+        || onlineReal[0]
       return `${cur.display_name} Online`
     }
   },
