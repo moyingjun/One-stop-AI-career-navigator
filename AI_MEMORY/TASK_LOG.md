@@ -4,6 +4,74 @@
 
 ## 2026-05-29
 
+任务名称：PremiumInterview Feedback Coach v1 收工记录。
+
+执行工具：OpenCode
+
+使用模型：Mimo-2.5 Pro
+
+任务类型：AI_MEMORY 更新
+
+修改文件：
+
+- `AI_MEMORY/CURRENT_STATE.md`
+- `AI_MEMORY/TASK_LOG.md`
+
+结论：
+
+- 模拟面试结束评估已增强。
+- 新增六维评分解释（`*_explanation` 字段）。
+- 新增 3 条下一轮改进动作（`improvement_suggestions` 数组）。
+- 保留 `radarScores` 数字结构不变。
+- 旧历史记录缺失 explanation/suggestions 时降级隐藏，不报错。
+- 未做扣分原因数组、参考回答、总分。
+- 未改 `record_type`、History 主路径、Provider、TTS、VoiceInput。
+
+未执行：
+
+- 未修改业务代码。
+- 未运行命令。
+- 未安装依赖。
+- 未构建。
+- 未提交。
+
+## 2026-05-29
+
+任务名称：Hermes Project Steward v0.1 阶段开发收工记录。
+
+执行工具：OpenCode
+
+使用模型：Mimo-2.5 Pro
+
+任务类型：AI_MEMORY 更新 + 阶段收工
+
+修改文件：
+
+- `AI_MEMORY/CURRENT_STATE.md`
+- `AI_MEMORY/TASK_LOG.md`
+
+结论：
+
+- Agent Harness v1.2 已落地。
+- Hermes Project Steward v0.1 已定版。
+- OpenCode 定位为 Harness Caretaker / Memory Steward。
+- TTS 手动朗读 Beta 完成。
+- TTSButton Polish v1 完成。
+- Dashboard 下一步行动 + Layout Polish 完成。
+- PremiumInterview Voice Input MVP 审计完成。
+- 当前禁止继续扩展：不做全局自动朗读、不做自动发送、不做 RAG 主流程、不做大规模业务重构。
+- 下一步候选：模拟面试评分解释增强、职业规划导出增强、Dashboard 第二轮体验优化。
+
+未执行：
+
+- 未修改业务代码。
+- 未运行命令。
+- 未安装依赖。
+- 未构建。
+- 未提交。
+
+## 2026-05-29
+
 任务名称：只读核对 TTS 手动朗读边界并完成 Hermes Steward v0.1 阶段收口。
 
 执行工具：OpenCode

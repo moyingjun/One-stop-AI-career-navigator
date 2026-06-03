@@ -75,5 +75,10 @@ Hermes Steward 禁止：
 
 ## 7. 当前阶段
 
-- Agent Harness v1.2：规则、记忆、模板、检查清单和执行边界已建立。
-- Hermes Project Steward v0.1：开始孵化。
+- Agent Harness v1.2：稳定。规则、记忆、模板、检查清单和执行边界已建立。
+- Hermes Project Steward v0.1：定版。开始孵化，由用户人工触发。
+- OpenCode：本地项目管家控制台 / Harness Caretaker。
+- TTS 手动朗读 Beta：已完成。
+- TTSButton Polish v1：已完成。
+- Dashboard 下一步行动 + Layout Polish：已完成。
+- PremiumInterview Voice Input MVP：审计完成，待实现。

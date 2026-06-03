@@ -1,16 +1,16 @@
 # Current State
 
-更新时间：2026-05-29（TTS 核对更新 + Hermes Steward v0.1 阶段收口）
+更新时间：2026-05-29（开发收工记录）
 
 本文件记录当前 Agent Harness 视角下的项目状态。它不是业务代码真相源；若与实际代码冲突，以只读检查和后续验证为准，并把冲突放入“待确认事项”。
 
 ## 当前任务状态
 
-本轮任务：创建跨 Kiro / OpenCode / Codex / Trae / Antigravity 的本地 Agent Harness Markdown 规则与 AI_MEMORY。
+本轮任务：Hermes Project Steward v0.1 阶段收工记录。
 
 本轮范围：
 
-- 只创建 / 修改指定 Markdown 文件。
+- 只修改 AI_MEMORY 文件。
 - 不修改业务代码。
 - 不运行依赖安装。
 - 不运行构建。
@@ -165,3 +165,56 @@
 4. TTS 手动朗读：符合 D006，未发现自动播放或流式 chunk 自动朗读。
 
 **后续可回到业务开发任务，但所有工具仍需先读 AGENTS.md / DECISIONS.md / PROJECT_MAP.md / AI_MEMORY/CONTEXT_BRIEF.md。**
+
+## 开发收工记录（2026-05-29）
+
+**已完成事项：**
+
+1. Agent Harness v1.2 已落地：规则、记忆、模板、检查清单和执行边界已建立。
+2. Hermes Project Steward v0.1 已定版：长期项目管家型 Agent 形态开始孵化。
+3. OpenCode 定位为 Harness Caretaker / Memory Steward：偏向项目记忆与规则管护，不作为默认业务开发主力。
+4. TTS 手动朗读 Beta 完成：TTSButton.vue、ttsClient.js、Router/tts.py、Service/tts_service.py 已实现。
+5. TTSButton Polish v1 完成：暗黑赛博风格、单例 Audio、Blob 缓存、streaming 中禁用。
+6. Dashboard 下一步行动 + Layout Polish 完成：actionSuggestions.js、Bento 栏优化。
+7. PremiumInterview Voice Input MVP 审计完成：接入点、状态管理、冲突分析已完成。
+
+**当前禁止继续扩展：**
+
+- 不做全局自动朗读（D006 决策：TTS 先做手动朗读）。
+- 不做自动发送（避免误发送和隐私问题）。
+- 不做 RAG 主流程（D007 决策：RAG/文件上传主入口冻结）。
+- 不做大规模业务重构（D011 决策：小步提交，避免大改）。
+
+**下一步候选：**
+
+- 模拟面试评分解释增强。
+- 职业规划导出增强。
+- Dashboard 第二轮体验优化。
+- Voice Mode 语音输入实现（需用户明确授权）。
+
+## PremiumInterview Feedback Coach v1 收工（2026-05-29）
+
+**已完成：**
+
+- 模拟面试结束评估已增强。
+- 新增六维评分解释（`*_explanation` 字段）。
+- 新增 3 条下一轮改进动作（`improvement_suggestions` 数组）。
+- 保留 `radarScores` 数字结构不变。
+- 旧历史记录缺失 explanation/suggestions 时降级隐藏，不报错。
+
+**未做：**
+
+- 未做扣分原因数组。
+- 未做参考回答。
+- 未做总分。
+- 未改 `record_type`（仍为 `interview_session`）。
+- 未改 History 主路径。
+- 未改 Provider。
+- 未改 TTS。
+- 未改 VoiceInput。
+
+**涉及文件：**
+
+- `Service/Agents/prompts/interview_prompts.py`：Prompt 新增 explanation + improvement_suggestions。
+- `Service/Agents/interview_agent.py`：解析、clamp、兜底、写入 history。
+- `frontend/src/PremiumInterview.vue`：结果弹窗新增维度解释和改进建议展示。

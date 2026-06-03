@@ -4,6 +4,43 @@
 
 ## 2026-05-29
 
+任务：Hermes Project Steward v0.1 阶段开发收工记录。
+
+变更：
+
+- 更新 `AI_MEMORY/CURRENT_STATE.md`：新增开发收工记录章节。
+- 更新 `AI_MEMORY/TASK_LOG.md`：追加阶段收工任务记录。
+
+已完成事项：
+
+1. Agent Harness v1.2 已落地。
+2. Hermes Project Steward v0.1 已定版。
+3. OpenCode 定位为 Harness Caretaker / Memory Steward。
+4. TTS 手动朗读 Beta 完成。
+5. TTSButton Polish v1 完成。
+6. Dashboard 下一步行动 + Layout Polish 完成。
+7. PremiumInterview Voice Input MVP 审计完成。
+
+当前禁止继续扩展：
+
+- 不做全局自动朗读。
+- 不做自动发送。
+- 不做 RAG 主流程。
+- 不做大规模业务重构。
+
+下一步候选：
+
+- 模拟面试评分解释增强。
+- 职业规划导出增强。
+- Dashboard 第二轮体验优化。
+
+验证：
+
+- 未修改业务代码。
+- 未运行安装、构建或提交。
+
+## 2026-05-29
+
 任务：收紧 OpenCode 定位措辞。
 
 变更：
