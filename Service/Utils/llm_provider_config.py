@@ -85,13 +85,20 @@ def _load_providers() -> dict:
     """
     providers = {}
 
+    # 旧版项目只配置 LLM_*，但当前 UI 展示的是 mimo/deepseek。
+    # MiMo 是当前默认通用模型，因此允许 MIMO_* 缺省时复用 LLM_*，
+    # 避免真实调用可用而 /api/llm/providers 显示"未配置"。
+    fallback_key = os.getenv("LLM_API_KEY", "")
+    fallback_url = os.getenv("LLM_BASE_URL", "")
+    fallback_model = os.getenv("LLM_MODEL_NAME", "")
+
     # MiMo
     providers["mimo"] = LLMProvider(
         id="mimo",
         display_name="MiMo 2.5",
-        api_key=os.getenv("MIMO_API_KEY", ""),
-        base_url=os.getenv("MIMO_BASE_URL", ""),
-        model_name=os.getenv("MIMO_MODEL_NAME", "mimo-v2.5"),
+        api_key=os.getenv("MIMO_API_KEY", "") or fallback_key,
+        base_url=os.getenv("MIMO_BASE_URL", "") or fallback_url,
+        model_name=os.getenv("MIMO_MODEL_NAME", "") or fallback_model or "mimo-v2.5",
     )
 
     # DeepSeek
@@ -104,9 +111,6 @@ def _load_providers() -> dict:
     )
 
     # 通用 fallback Provider（兼容旧 LLM_* 环境变量）
-    fallback_key = os.getenv("LLM_API_KEY", "")
-    fallback_url = os.getenv("LLM_BASE_URL", "")
-    fallback_model = os.getenv("LLM_MODEL_NAME", "")
     if fallback_key and fallback_url and fallback_model:
         providers["default"] = LLMProvider(
             id="default",

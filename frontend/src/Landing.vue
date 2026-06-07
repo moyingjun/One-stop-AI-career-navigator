@@ -8,6 +8,7 @@ const router = useRouter()
 const mouseX = ref(0)
 const mouseY = ref(0)
 const smokeCanvas = ref(null)
+const prefersReducedMotion = ref(false)
 let smokeRenderer = null
 let smokeScene = null
 let smokeCamera = null
@@ -15,6 +16,8 @@ let smokeGeometry = null
 let smokeMaterial = null
 let smokeFrameId = null
 let smokeStartTime = 0
+let motionQuery = null
+let isParallaxListening = false
 
 const smokeVertexShader = `
   varying vec2 vUv;
@@ -180,16 +183,37 @@ const resizeSmoke = () => {
   smokeMaterial.uniforms.u_resolution.value.set(width * pixelRatio, height * pixelRatio)
 }
 
-const renderSmoke = () => {
+const renderSmokeFrame = (now = performance.now()) => {
   if (!smokeRenderer || !smokeScene || !smokeCamera || !smokeMaterial) return
 
-  smokeMaterial.uniforms.u_time.value = (performance.now() - smokeStartTime) * 0.001
+  smokeMaterial.uniforms.u_time.value = (now - smokeStartTime) * 0.001
   smokeRenderer.render(smokeScene, smokeCamera)
+}
+
+const renderSmoke = () => {
+  renderSmokeFrame()
   smokeFrameId = requestAnimationFrame(renderSmoke)
 }
 
-const initSmoke = () => {
-  if (!smokeCanvas.value || smokeRenderer) return
+const stopSmokeAnimation = () => {
+  if (!smokeFrameId) return
+  cancelAnimationFrame(smokeFrameId)
+  smokeFrameId = null
+}
+
+const initSmoke = (animate = true) => {
+  if (!smokeCanvas.value) return
+
+  if (smokeRenderer) {
+    resizeSmoke()
+    if (animate) {
+      if (!smokeFrameId) renderSmoke()
+    } else {
+      stopSmokeAnimation()
+      renderSmokeFrame(smokeStartTime + 12000)
+    }
+    return
+  }
 
   smokeRenderer = new THREE.WebGLRenderer({
     canvas: smokeCanvas.value,
@@ -217,14 +241,16 @@ const initSmoke = () => {
   smokeStartTime = performance.now()
   resizeSmoke()
   window.addEventListener('resize', resizeSmoke, { passive: true })
-  renderSmoke()
+
+  if (animate) {
+    renderSmoke()
+  } else {
+    renderSmokeFrame(smokeStartTime + 12000)
+  }
 }
 
 const destroySmoke = () => {
-  if (smokeFrameId) {
-    cancelAnimationFrame(smokeFrameId)
-    smokeFrameId = null
-  }
+  stopSmokeAnimation()
 
   window.removeEventListener('resize', resizeSmoke)
 
@@ -261,6 +287,18 @@ const goToDashboard = () => {
   router.push('/dashboard')
 }
 
+const addParallaxListener = () => {
+  if (isParallaxListening) return
+  window.addEventListener('mousemove', handleParallax, { passive: true })
+  isParallaxListening = true
+}
+
+const removeParallaxListener = () => {
+  if (!isParallaxListening) return
+  window.removeEventListener('mousemove', handleParallax)
+  isParallaxListening = false
+}
+
 const handleParallax = (e) => {
   mouseX.value = (e.clientX / window.innerWidth - 0.5) * 20
   mouseY.value = (e.clientY / window.innerHeight - 0.5) * 20
@@ -275,13 +313,23 @@ const videoRefs = ref([])
 // 每个视频总时长减去1秒过渡时间，实现完美淡出
 const slideDurations = [7000, 7000, 4000, 6000]
 
+const stopTimer = () => {
+  if (!timer) return
+  clearTimeout(timer)
+  timer = null
+}
+
 const startTimer = () => {
+  if (prefersReducedMotion.value) return
   // 清除旧定时器
-  if (timer) {
-    clearTimeout(timer)
-  }
+  stopTimer()
   // 启动新定时器
   timer = setTimeout(nextSlide, slideDurations[currentSlide.value])
+}
+
+const safePlayVideo = (video) => {
+  const playPromise = video?.play?.()
+  playPromise?.catch?.(() => {})
 }
 
 const setSlide = (index) => {
@@ -290,7 +338,7 @@ const setSlide = (index) => {
   // 重置视频播放进度
   if (index < 3 && videoRefs.value[index]) {
     videoRefs.value[index].currentTime = 0
-    videoRefs.value[index].play()
+    safePlayVideo(videoRefs.value[index])
   }
   startTimer()
 }
@@ -300,9 +348,44 @@ const nextSlide = () => {
   // 重置视频播放进度
   if (currentSlide.value < 3 && videoRefs.value[currentSlide.value]) {
     videoRefs.value[currentSlide.value].currentTime = 0
-    videoRefs.value[currentSlide.value].play()
+    safePlayVideo(videoRefs.value[currentSlide.value])
   }
   startTimer()
+}
+
+const applyMotionPreference = () => {
+  prefersReducedMotion.value = Boolean(motionQuery?.matches)
+
+  if (prefersReducedMotion.value) {
+    removeParallaxListener()
+    stopTimer()
+    initSmoke(false)
+    mouseX.value = 0
+    mouseY.value = 0
+    return
+  }
+
+  addParallaxListener()
+  initSmoke(true)
+  startTimer()
+}
+
+const addMotionPreferenceListener = () => {
+  if (!motionQuery) return
+  if (motionQuery.addEventListener) {
+    motionQuery.addEventListener('change', applyMotionPreference)
+  } else {
+    motionQuery.addListener?.(applyMotionPreference)
+  }
+}
+
+const removeMotionPreferenceListener = () => {
+  if (!motionQuery) return
+  if (motionQuery.removeEventListener) {
+    motionQuery.removeEventListener('change', applyMotionPreference)
+  } else {
+    motionQuery.removeListener?.(applyMotionPreference)
+  }
 }
 
 // 系统初始化控制台动画
@@ -326,15 +409,17 @@ const playConsoleAnimation = async () => {
 }
 
 onMounted(() => {
-  window.addEventListener('mousemove', handleParallax, { passive: true })
-  initSmoke()
-  startTimer()
+  motionQuery = window.matchMedia?.('(prefers-reduced-motion: reduce)') || null
+  addMotionPreferenceListener()
+  applyMotionPreference()
   playConsoleAnimation()
 })
 
 onBeforeUnmount(() => {
-  window.removeEventListener('mousemove', handleParallax)
-  if (timer) clearTimeout(timer)
+  removeParallaxListener()
+  removeMotionPreferenceListener()
+  motionQuery = null
+  stopTimer()
   destroySmoke()
 })
 </script>
@@ -343,11 +428,12 @@ onBeforeUnmount(() => {
   <!-- 最外层容器 -->
   <div class="min-h-screen relative z-0 overflow-hidden bg-[#020205]">
     <!-- 科技网格背景 -->
-    <canvas ref="smokeCanvas" class="smoke-canvas absolute inset-0 z-[-4] pointer-events-none"></canvas>
+    <canvas ref="smokeCanvas" class="smoke-canvas absolute inset-0 z-[-4] pointer-events-none" aria-hidden="true"></canvas>
 
     <div
       class="absolute inset-0 z-[-3] pointer-events-none mix-blend-screen overflow-hidden animate-orb-breathe"
       :style="{ transform: `translate(${mouseX * -1.5}px, ${mouseY * -1.5}px)` }"
+      aria-hidden="true"
     >
       <div class="orb-wrapper-x orb-1-x"><div class="orb-inner-y orb-1-y bg-purple-600/40"></div></div>
       <div class="orb-wrapper-x orb-2-x"><div class="orb-inner-y orb-2-y bg-cyan-500/30"></div></div>
@@ -357,6 +443,7 @@ onBeforeUnmount(() => {
     <div
       class="absolute inset-0 z-[-2] pointer-events-none parallax-stars"
       :style="{ transform: `translate(${mouseX * -0.5}px, ${mouseY * -0.5}px)` }"
+      aria-hidden="true"
     >
       <div class="meteor meteor-1"></div>
       <div class="meteor meteor-2"></div>
@@ -364,7 +451,7 @@ onBeforeUnmount(() => {
       <div class="meteor meteor-4"></div>
     </div>
 
-    <div class="absolute inset-0 z-[-1] pointer-events-none" style="background: radial-gradient(circle at center, transparent 30%, #020205 120%);"></div>
+    <div class="absolute inset-0 z-[-1] pointer-events-none" style="background: radial-gradient(circle at center, transparent 30%, #020205 120%);" aria-hidden="true"></div>
 
     <!-- 导航栏 -->
     <nav class="relative z-10 flex justify-between items-center py-4 px-4 md:py-6 md:px-8 max-w-7xl mx-auto">
@@ -376,9 +463,9 @@ onBeforeUnmount(() => {
       </div>
 
       <div class="hidden md:flex items-center gap-8">
-        <a href="#" class="text-gray-400 hover:text-white transition-colors duration-300">产品功能</a>
-        <a href="#" class="text-gray-400 hover:text-white transition-colors duration-300">工作原理</a>
-        <a href="#" class="text-gray-400 hover:text-white transition-colors duration-300">关于我们</a>
+        <button type="button" class="text-gray-400 hover:text-white transition-colors duration-300">产品功能</button>
+        <button type="button" class="text-gray-400 hover:text-white transition-colors duration-300">工作原理</button>
+        <button type="button" class="text-gray-400 hover:text-white transition-colors duration-300">关于我们</button>
       </div>
 
       <div class="flex items-center gap-4">
@@ -471,7 +558,10 @@ onBeforeUnmount(() => {
                   <button 
                     v-for="(item, index) in 4" 
                     :key="index"
+                    type="button"
                     @click="setSlide(index)"
+                    :aria-label="`切换到演示 ${index + 1}`"
+                    :aria-current="currentSlide === index ? 'true' : undefined"
                     class="rounded-full transition-all duration-200 hover:scale-110 cursor-pointer"
                     :class="currentSlide === index 
                       ? 'w-8 h-2 bg-purple-500 shadow-sm shadow-purple-500/30 cursor-default' 
@@ -520,7 +610,7 @@ onBeforeUnmount(() => {
                       <!-- 紫色渐变占位 -->
                       <div class="text-center p-4 md:p-8 animate-pulse">
                         <div class="w-20 h-20 rounded-full bg-gradient-to-r from-purple-500 to-indigo-500 flex items-center justify-center mx-auto mb-4 shadow-lg shadow-purple-500/30 animate-pulse">
-                          <svg class="w-10 h-10 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <svg class="w-10 h-10 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 10 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
                           </svg>
@@ -598,7 +688,7 @@ onBeforeUnmount(() => {
       © 2026 Designed & Developed by Moyingjun 广东水利电力职业技术学院
     </footer>
 
-    <div class="absolute inset-0 z-[1] pointer-events-none opacity-[0.03] mix-blend-overlay" style="background-image: url('data:image/svg+xml,%3Csvg viewBox=%220 0 200 200%22 xmlns=%22http://www.w3.org/2000/svg%22%3E%3Cfilter id=%22noiseFilter%22%3E%3CfeTurbulence type=%22fractalNoise%22 baseFrequency=%220.65%22 numOctaves=%223%22 stitchTiles=%22stitch%22/%3E%3C/filter%3E%3Crect width=%22100%25%22 height=%22100%25%22 filter=%22url(%23noiseFilter)%22/%3E%3C/svg%3E');"></div>
+    <div class="absolute inset-0 z-[1] pointer-events-none opacity-[0.03] mix-blend-overlay" style="background-image: url('data:image/svg+xml,%3Csvg viewBox=%220 0 200 200%22 xmlns=%22http://www.w3.org/2000/svg%22%3E%3Cfilter id=%22noiseFilter%22%3E%3CfeTurbulence type=%22fractalNoise%22 baseFrequency=%220.65%22 numOctaves=%223%22 stitchTiles=%22stitch%22/%3E%3C/filter%3E%3Crect width=%22100%25%22 height=%22100%25%22 filter=%22url(%23noiseFilter)%22/%3E%3C/svg%3E');" aria-hidden="true"></div>
   </div>
 </template>
 
@@ -914,5 +1004,35 @@ onBeforeUnmount(() => {
 
 .animate-pulse {
   animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-hologram-scan,
+  .animate-terminal-dot,
+  .animate-blur-in-up,
+  .animate-typewriter-1,
+  .animate-typewriter-2,
+  .animate-cursor-blink,
+  .animate-fade-in-right,
+  .animate-float,
+  .animate-float-1,
+  .animate-float-2,
+  .animate-float-3,
+  .animate-text-glow,
+  .animate-pulse {
+    animation: none !important;
+    transition-duration: 0.01ms !important;
+  }
+
+  .animate-blur-in-up,
+  .animate-typewriter-2,
+  .animate-fade-in-right {
+    opacity: 1 !important;
+  }
+
+  .animate-typewriter-1,
+  .animate-typewriter-2 {
+    max-width: 100% !important;
+  }
 }
 </style>

@@ -189,6 +189,31 @@ class InterviewEvalAgent(BaseAgent):
 
         return None
 
+    @staticmethod
+    def _fallback_scores() -> dict:
+        """
+        评估模型异常时的旧格式兜底。
+
+        保留 6 个分数字段 + comment，让前端仍能显示旧评估区域；
+        新增解释和建议字段保持空值，由前端自动隐藏。
+        """
+        return {
+            "professional": 50,
+            "logic": 50,
+            "communication": 50,
+            "problemSolving": 50,
+            "potential": 50,
+            "resilience": 50,
+            "professional_explanation": "",
+            "logic_explanation": "",
+            "communication_explanation": "",
+            "problemSolving_explanation": "",
+            "potential_explanation": "",
+            "resilience_explanation": "",
+            "improvement_suggestions": [],
+            "comment": "评估引擎暂时异常，已保留基础六维评估。",
+        }
+
     async def evaluate(
         self,
         history: List[dict],
@@ -199,6 +224,8 @@ class InterviewEvalAgent(BaseAgent):
         provider_id: Optional[str] = None,
     ) -> Optional[dict]:
         """执行面试评估，返回六维评分字典。"""
+        required_keys = ["professional", "logic", "communication", "problemSolving", "potential", "resilience"]
+
         raw_reply = await self.complete(
             history=history,
             resume_text=resume_text,
@@ -207,15 +234,52 @@ class InterviewEvalAgent(BaseAgent):
         )
 
         if not raw_reply:
-            return None
+            result = self._fallback_scores()
+        else:
+            result = self.extract_scores(raw_reply)
 
-        result = self.extract_scores(raw_reply)
-        if not result:
-            return None
+        if not result or not all(k in result for k in required_keys):
+            result = self._fallback_scores()
 
-        required_keys = ["professional", "logic", "communication", "problemSolving", "potential", "resilience"]
-        if not all(k in result for k in required_keys):
-            return None
+        # ── Phase 1: 维度解释 + 改进建议(可选字段,兼容旧 Prompt/旧记录) ──
+        # 主路径不会因为缺这些字段而失败;缺失时填空,前端按"无解释"降级显示。
+        def _norm_explanation(value) -> str:
+            if not isinstance(value, str):
+                return ""
+            text = value.strip()
+            # 30 字以内硬截断,防止 LLM 漏看长度限制把整段段落塞进来
+            return text[:30]
+
+        def _norm_suggestions(value) -> list:
+            if not isinstance(value, list):
+                return []
+            cleaned = []
+            for item in value:
+                if not isinstance(item, str):
+                    continue
+                text = item.strip()
+                if not text:
+                    continue
+                cleaned.append(text[:50])
+            # 固定保留前 3 条,数量不足时返回实际数量(前端自行降级)
+            return cleaned[:3]
+
+        for dim in required_keys:
+            key = f"{dim}_explanation"
+            result[key] = _norm_explanation(result.get(key, ""))
+        result["improvement_suggestions"] = _norm_suggestions(result.get("improvement_suggestions"))
+
+        # 数字 clamp 0-100 整数(兼容字符串数字 / 越界 / 浮点)
+        for dim in required_keys:
+            try:
+                v = int(round(float(result.get(dim, 0))))
+            except (TypeError, ValueError):
+                v = 0
+            result[dim] = max(0, min(100, v))
+
+        if not isinstance(result.get("comment"), str):
+            result["comment"] = ""
+        result["comment"] = result["comment"].strip()[:50]
 
         # 写入历史记录
         try:

@@ -1,6 +1,6 @@
 # AI Career Navigator Agent Harness Rules
 
-本文件是 One-stop-AI-career-navigator / AI Career Navigator 的跨工具 Agent 总入口。所有本地 Agent、Kiro、OpenCode、Codex、Trae、Antigravity 在执行任务前，都应先读取本文件，再读取 `DECISIONS.md`、`PROJECT_MAP.md`、`AI_MEMORY/CONTEXT_BRIEF.md`。
+本文件是 One-stop-AI-career-navigator / AI Career Navigator 的跨工具 Agent 总入口。所有本地 Agent、Kiro、OpenCode、Codex、Trae、Antigravity 在执行任务前，都应先读取默认入口 5 件套：`PROJECT_BRIEF.md`、`AGENTS.md`、`DECISIONS.md`、`HERMES_TOOL_POLICY.md`、`AI_MEMORY/CURRENT_STATE.md`。
 
 ## 目标
 
@@ -17,7 +17,14 @@
 
 长期稳定的是任务角色、项目规则和 AI_MEMORY 记忆层；具体工具根据当期模型能力、套餐性价比、上下文长度、文件读写能力、执行稳定性和用户当次选择临时决定。
 
-任何工具即使模型能力很强，也不能因此获得全仓库默认修改权。所有工具都必须遵守 AGENTS.md、DECISIONS.md、PROJECT_MAP.md 和 AI_MEMORY/CONTEXT_BRIEF.md。
+任何工具即使模型能力很强，也不能因此获得全仓库默认修改权。所有工具都必须遵守 AGENTS.md、DECISIONS.md、HERMES_TOOL_POLICY.md 和 AI_MEMORY/CURRENT_STATE.md。
+
+- 工具名不决定角色，任务模式决定角色。
+- 所有 vibe coding tools 进入项目后先读 5 件套：`PROJECT_BRIEF.md`、`AGENTS.md`、`DECISIONS.md`、`HERMES_TOOL_POLICY.md`、`AI_MEMORY/CURRENT_STATE.md`。
+- 执行类任务完成后，除聊天窗口交付报告外，应按任务要求写入 `AI_MEMORY/INBOX/`。
+- 不确定是否写入 INBOX 时，必须在交付报告中写明“建议是否更新 AI_MEMORY”。
+- `AI_MEMORY/INBOX/` 中内容是待 Hermes 主导消化的交付记录，不等同于已确认事实。
+- Hermes 消化后，才决定是否更新 `CURRENT_STATE.md`、`TASK_LOG.md`、`PROJECT_BRIEF.md`。
 
 ## Hermes Steward 原则
 
@@ -50,10 +57,23 @@
 
 每次任务开始前至少读取：
 
+- `PROJECT_BRIEF.md`
 - `AGENTS.md`
 - `DECISIONS.md`
+- `HERMES_TOOL_POLICY.md`
+- `AI_MEMORY/CURRENT_STATE.md`
+
+二级参考 / 按需读取：
+
 - `PROJECT_MAP.md`
 - `AI_MEMORY/CONTEXT_BRIEF.md`
+- `MODEL_ROLES.md`
+- `WORKFLOW.md`
+- `TASK_TEMPLATES.md`
+- `CHECKLISTS.md`
+- `HERMES_STEWARD.md`
+- `OPENCODE_USAGE.md`
+- `.kiro/steering/*`
 
 涉及工具分工时，再读取：
 

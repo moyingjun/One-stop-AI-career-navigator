@@ -151,9 +151,47 @@ const radarScores = ref({
 
 const mentorComment = ref('')
 
+// Phase 1：六维评分解释 + 下一轮改进建议(独立状态,不污染 radarScores)
+// - dimensionExplanations: { [dimKey]: '一句话解释' } 缺失则空字符串
+// - improvementSuggestions: string[] 缺失则空数组
+// 旧记录、旧 LLM 输出走默认空值,UI 自动降级为不显示该区域。
+const dimensionExplanations = ref({
+  professional: '',
+  logic: '',
+  communication: '',
+  problemSolving: '',
+  potential: '',
+  resilience: ''
+})
+const improvementSuggestions = ref([])
+
 const RADAR_LABELS = ['professional', 'logic', 'communication', 'problemSolving', 'potential', 'resilience']
+// 中文标签 + 英文 key 对齐(顺序与 RADAR_LABELS / 评分数字 / 解释字段一致)
+const RADAR_LABELS_CN = ['专业技能', '逻辑分析', '沟通表达', '问题解决', '综合潜力', '抗压韧性']
+
+// Phase 1: 是否有任意一个维度解释非空 → 决定六维评分解释区域的显隐
+const hasAnyExplanation = computed(() =>
+  Object.values(dimensionExplanations.value || {}).some(s => (s || '').trim())
+)
+// Phase 1: 是否有改进建议 → 决定下一轮改进动作区域的显隐
+const hasImprovementSuggestions = computed(() => (improvementSuggestions.value || []).length > 0)
 const RADAR_CENTER = 130
 const RADAR_MAX_RADIUS = 80
+
+const normalizeScoreValue = (value, fallback = 10) => {
+  const numeric = Number(value)
+  if (!Number.isFinite(numeric)) return fallback
+  return Math.max(0, Math.min(100, Math.round(numeric)))
+}
+
+const pickRadarScores = (source, fallback = 10) => ({
+  professional: normalizeScoreValue(source?.professional, fallback),
+  logic: normalizeScoreValue(source?.logic, fallback),
+  communication: normalizeScoreValue(source?.communication, fallback),
+  problemSolving: normalizeScoreValue(source?.problemSolving, fallback),
+  potential: normalizeScoreValue(source?.potential, fallback),
+  resilience: normalizeScoreValue(source?.resilience, fallback)
+})
 
 // 压力分趋势 / 色调：>= 60 上升、<= 40 下降、其它持平；色调随分数切换
 const pressureTrend = computed(() => {
@@ -388,10 +426,26 @@ const initInterview = async () => {  const recordId = route.query.id
               const scores = typeof record.scores === 'string' ? JSON.parse(record.scores) : record.scores
               const required = ['professional', 'logic', 'communication', 'problemSolving', 'potential', 'resilience']
               if (required.every(k => k in scores)) {
-                radarScores.value = { ...radarScores.value, ...scores }
+                radarScores.value = pickRadarScores(scores, 2)
                 // Phase 1：历史记录恢复时同步更新 Dashboard 雷达图
-                userStore.updateRadarFromInterview(scores)
+                userStore.updateRadarFromInterview(radarScores.value)
               }
+              // Phase 1：旧记录 scores 里若包含解释 / 建议字段则一并恢复;
+              //          缺失全部走默认空值,UI 自动隐藏对应区域,不报错。
+              const safeStr = (v) => (typeof v === 'string' ? v.trim() : '')
+              dimensionExplanations.value = {
+                professional:   safeStr(scores.professional_explanation),
+                logic:          safeStr(scores.logic_explanation),
+                communication:  safeStr(scores.communication_explanation),
+                problemSolving: safeStr(scores.problemSolving_explanation),
+                potential:      safeStr(scores.potential_explanation),
+                resilience:     safeStr(scores.resilience_explanation)
+              }
+              const rawSug = Array.isArray(scores.improvement_suggestions) ? scores.improvement_suggestions : []
+              improvementSuggestions.value = rawSug
+                .filter(s => typeof s === 'string' && s.trim())
+                .slice(0, 3)
+                .map(s => s.trim())
             } catch {}
           }
 
@@ -641,15 +695,26 @@ const endInterview = async () => {
     }
     
     if (resData.success && resData.data) {
-      radarScores.value = {
-        professional: resData.data.professional || 10,
-        logic: resData.data.logic || 10,
-        communication: resData.data.communication || 10,
-        problemSolving: resData.data.problemSolving || 10,
-        potential: resData.data.potential || 10,
-        resilience: resData.data.resilience || 10
-      }
+      radarScores.value = pickRadarScores(resData.data, 10)
       mentorComment.value = resData.data.comment || '无评价。'
+
+      // Phase 1：维度解释 + 改进建议(后端已 clamp/兜底,这里再做一次防御)
+      const safeStr = (v) => (typeof v === 'string' ? v.trim() : '')
+      dimensionExplanations.value = {
+        professional:   safeStr(resData.data.professional_explanation),
+        logic:          safeStr(resData.data.logic_explanation),
+        communication:  safeStr(resData.data.communication_explanation),
+        problemSolving: safeStr(resData.data.problemSolving_explanation),
+        potential:      safeStr(resData.data.potential_explanation),
+        resilience:     safeStr(resData.data.resilience_explanation)
+      }
+      const rawSuggestions = Array.isArray(resData.data.improvement_suggestions)
+        ? resData.data.improvement_suggestions
+        : []
+      improvementSuggestions.value = rawSuggestions
+        .filter(s => typeof s === 'string' && s.trim())
+        .slice(0, 3)
+        .map(s => s.trim())
       
       // Phase 1：打通 Dashboard 右侧雷达图 —— 面试评估完成时写入 interview 快照
       userStore.updateRadarFromInterview(radarScores.value)
@@ -1213,6 +1278,59 @@ onUnmounted(() => {
             <div class="text-base font-bold" :class="themeConfig.text">{{ radarScores[RADAR_LABELS[i]] }}</div>
             <div class="text-[9px] text-gray-500">{{ label }}</div>
           </div>
+        </div>
+
+        <!-- Phase 1：六维评分解释（缺失时整块隐藏,旧记录不报错） -->
+        <div
+          v-if="hasAnyExplanation"
+          class="rounded-xl border backdrop-blur-xl p-4 mb-6"
+          :class="[themeConfig.borderLight, 'bg-white/[0.02]']"
+          data-test="evaluation-dimension-explanations"
+        >
+          <div class="flex items-center gap-2 mb-3">
+            <span class="text-base">🧭</span>
+            <span class="text-sm font-semibold" :class="themeConfig.text">六维评分解释</span>
+          </div>
+          <ul class="space-y-2">
+            <li
+              v-for="(label, i) in RADAR_LABELS_CN"
+              :key="`exp-${RADAR_LABELS[i]}`"
+              v-show="(dimensionExplanations[RADAR_LABELS[i]] || '').trim()"
+              class="flex items-start gap-2 text-xs leading-relaxed"
+            >
+              <span class="mt-0.5 inline-flex items-center gap-1.5 flex-shrink-0">
+                <span class="text-gray-400">{{ label }}</span>
+                <span class="font-bold" :class="themeConfig.text">{{ radarScores[RADAR_LABELS[i]] }}</span>
+              </span>
+              <span class="text-gray-300/85 flex-1">— {{ dimensionExplanations[RADAR_LABELS[i]] }}</span>
+            </li>
+          </ul>
+        </div>
+
+        <!-- Phase 1：下一轮改进动作（缺失时整块隐藏,旧记录不报错） -->
+        <div
+          v-if="hasImprovementSuggestions"
+          class="rounded-xl border backdrop-blur-xl p-4 mb-6"
+          :class="[themeConfig.borderLight, 'bg-white/[0.02]']"
+          data-test="evaluation-improvement-suggestions"
+        >
+          <div class="flex items-center gap-2 mb-3">
+            <span class="text-base">🎯</span>
+            <span class="text-sm font-semibold" :class="themeConfig.text">下一轮改进动作</span>
+          </div>
+          <ol class="space-y-2 text-xs leading-relaxed">
+            <li
+              v-for="(suggestion, idx) in improvementSuggestions"
+              :key="`sug-${idx}`"
+              class="flex items-start gap-2"
+            >
+              <span
+                class="inline-flex items-center justify-center w-5 h-5 rounded-full text-[10px] font-bold flex-shrink-0 mt-0.5"
+                :class="[themeConfig.bg.replace('/20', '/15'), themeConfig.text]"
+              >{{ idx + 1 }}</span>
+              <span class="text-gray-300/90">{{ suggestion }}</span>
+            </li>
+          </ol>
         </div>
 
         <!-- 导师结语 -->

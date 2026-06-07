@@ -4,6 +4,195 @@
 
 ## 2026-05-29
 
+任务名称：最小收口补丁，统一默认入口 5 件套与 INBOX 规则。
+
+执行工具：OpenCode
+
+使用模型：Mimo-2.5 Pro
+
+任务类型：文档收口 + 规则修正
+
+修改文件：
+
+- `AGENTS.md`
+- `PROJECT_BRIEF.md`
+- `MODEL_ROLES.md`
+- `WORKFLOW.md`
+- `AI_MEMORY/TASK_LOG.md`
+
+结论：
+
+- 默认入口 5 件套已统一为：`PROJECT_BRIEF.md`、`AGENTS.md`、`DECISIONS.md`、`HERMES_TOOL_POLICY.md`、`AI_MEMORY/CURRENT_STATE.md`。
+- `PROJECT_MAP.md`、`AI_MEMORY/CONTEXT_BRIEF.md`、`MODEL_ROLES.md`、`WORKFLOW.md`、`TASK_TEMPLATES.md`、`CHECKLISTS.md`、`HERMES_STEWARD.md`、`OPENCODE_USAGE.md`、`.kiro/steering/*` 已降级为二级参考 / 按需读取。
+- 已补强 AGENTS 中的 INBOX 规则，明确 INBOX 是待消化记录，不是已确认事实。
+
+未执行：
+
+- 未修改业务代码。
+- 未运行命令。
+- 未安装 Skill / MCP。
+- 未构建。
+- 未提交。
+
+## 2026-05-29
+
+任务名称：新增 AI_MEMORY INBOX 标准报告模板。
+
+执行工具：OpenCode
+
+使用模型：Mimo-2.5 Pro
+
+任务类型：文档修正 + 模板补充
+
+修改文件：
+
+- `AI_MEMORY/INBOX/TEMPLATE.md`
+- `AI_MEMORY/INBOX/README.md`
+- `TASK_TEMPLATES.md`
+- `AI_MEMORY/TASK_LOG.md`
+
+结论：
+
+- 已新增 `AI_MEMORY/INBOX/TEMPLATE.md`，统一 Vibe Coding Tools 写入 INBOX 的报告格式。
+- `AI_MEMORY/INBOX/README.md` 已补充“写入时优先参考 TEMPLATE.md”。
+- `TASK_TEMPLATES.md` 已补充 INBOX 报告模板引用。
+
+未执行：
+
+- 未修改业务代码。
+- 未运行命令。
+- 未安装 Skill / MCP。
+- 未构建。
+- 未提交。
+
+## 2026-05-29
+
+任务名称：建立 Vibe Coding Tools → Hermes 的交付记录入口。
+
+执行工具：OpenCode
+
+使用模型：Mimo-2.5 Pro
+
+任务类型：规则扩展 + 文档修正
+
+修改文件：
+
+- `AI_MEMORY/INBOX/README.md`
+- `AGENTS.md`
+- `WORKFLOW.md`
+- `TASK_TEMPLATES.md`
+- `PROJECT_BRIEF.md`
+- `AI_MEMORY/TASK_LOG.md`
+
+结论：
+
+- 已建立 `AI_MEMORY/INBOX/` 作为 Hermes Project Steward 的交付报告收件箱。
+- 已明确重要任务完成后，vibe coding tools 可将结构化报告写入 INBOX，供 Hermes / OpenCode 后续消化。
+- 已补充 AGENTS / WORKFLOW / TASK_TEMPLATES / PROJECT_BRIEF 中的统一入口说明。
+
+未执行：
+
+- 未修改业务代码。
+- 未运行命令。
+- 未安装 Skill / MCP。
+- 未构建。
+- 未提交。
+
+## 2026-05-29
+
+任务名称：Steering 精华迁移 v1。
+
+执行工具：OpenCode
+
+使用模型：Mimo-2.5 Pro
+
+任务类型：规则迁移 + 文档修正
+
+修改文件：
+
+- `.kiro/steering/README.md`
+- `TASK_TEMPLATES.md`
+- `CHECKLISTS.md`
+- `AI_MEMORY/TASK_LOG.md`
+
+结论：
+
+- `.kiro/steering/` 已正式降级标注为 Legacy Kiro Steering / 历史 Skill Source。
+- 已将仍有效的交付纪律最小吸收到 `TASK_TEMPLATES.md` 与 `CHECKLISTS.md`。
+- 未吸收 SQLite、本地 embedding、阿瓦隆主线、RAG 上传主流程等过期内容。
+
+未执行：
+
+- 未修改业务代码。
+- 未运行命令。
+- 未安装依赖。
+- 未构建。
+- 未提交。
+
+## 2026-05-29
+
+任务名称：将 HERMES_TOOL_POLICY.md 纳入默认读取清单。
+
+执行工具：OpenCode
+
+使用模型：Mimo-2.5 Pro
+
+任务类型：文档修正 + AI_MEMORY 更新
+
+修改文件：
+
+- `AGENTS.md`
+- `PROJECT_BRIEF.md`
+- `HERMES_STEWARD.md`
+- `AI_MEMORY/TASK_LOG.md`
+
+结论：
+
+- `HERMES_TOOL_POLICY.md` 已纳入 `AGENTS.md` 默认读取清单。
+- `PROJECT_BRIEF.md` 已补充“开始任务前先读 `HERMES_TOOL_POLICY.md`”。
+- `HERMES_STEWARD.md` 已补充 Hermes 安装 Skill / MCP 前必须先遵守 `HERMES_TOOL_POLICY.md`。
+
+未执行：
+
+- 未修改业务代码。
+- 未运行命令。
+- 未安装 Skill / MCP。
+- 未构建。
+- 未提交。
+
+## 2026-05-29
+
+任务名称：新增 Hermes Tool Policy 并同步工具治理状态。
+
+执行工具：OpenCode
+
+使用模型：Mimo-2.5 Pro
+
+任务类型：文档修正 + AI_MEMORY 更新
+
+修改文件：
+
+- `HERMES_TOOL_POLICY.md`
+- `AI_MEMORY/CURRENT_STATE.md`
+- `AI_MEMORY/TASK_LOG.md`
+
+结论：
+
+- Hermes Tool Policy 已建立。
+- 已明确 Hermes / OpenCode / Codex / Claude Code / CCSwitch 的工具分层。
+- Hermes 当前只允许低风险 Skills / MCP，暂不授予数据库写入、全盘写入、GitHub push/merge/release、Secrets、SSH 高权限等能力。
+- Hermes 已成功接入 MiMo，不强行走 CCSwitch local router。
+
+未执行：
+
+- 未修改业务代码。
+- 未运行命令。
+- 未安装依赖。
+- 未构建。
+- 未提交。
+
+## 2026-05-29
+
 任务名称：PremiumInterview Feedback Coach v1 收工记录。
 
 执行工具：OpenCode
@@ -465,6 +654,77 @@
 - 规则体系已建立。
 - 旧 steering 中与当前明确决策冲突的部分已在新文档中裁决。
 - 代码实际完成度未验证，相关问题已写入 `AI_MEMORY/CURRENT_STATE.md` 待确认。
+
+## 任务记录模板
+
+## 2026-06-06
+
+任务名称：修复 Vibe Coding Tool Pool 同步后的文档冲突与模板污染。
+
+执行工具：Hermes（MiMo）
+
+任务类型：文档修正 + AI_MEMORY 更新
+
+读取文件：
+
+- `DECISIONS.md`
+- `AGENTS.md`
+- `HERMES_STEWARD.md`
+- `OPENCODE_USAGE.md`
+- `PROJECT_BRIEF.md`
+- `MODEL_ROLES.md`
+- `AI_MEMORY/TASK_LOG.md`
+
+修改文件：
+
+- `DECISIONS.md`：D012 从"OpenCode 是本地 Harness Runner"重写为"Vibe Coding Tool Pool 与可替换执行器"。
+- `PROJECT_BRIEF.md`：INBOX 消化表述改为"由 Hermes 主导消化，或由用户指定的 Vibe Coding Tool 辅助整理"；D012 摘要同步。
+- `AGENTS.md`：INBOX 消化表述从"Hermes / OpenCode"改为"Hermes 主导消化"。
+- `HERMES_STEWARD.md`：第 7 节 OpenCode 从"本地项目管家控制台 / Harness Caretaker"改为"当前常用于 Memory Maintainer / Rule Maintainer，但属于 Vibe Coding Tool Pool，不是固定岗位"。
+- `OPENCODE_USAGE.md`：标题加注"Vibe Coding Tool Pool 参考"，开头重新定位为"当 Vibe Coding Tool 被分配 Memory Maintainer / Rule Maintainer 角色时的使用边界"。
+- `MODEL_ROLES.md`：工具选择参考补回"前端体验能力"和"审计能力"两个维度。
+- `AI_MEMORY/TASK_LOG.md`：恢复被污染的通用模板，追加本轮记录。
+
+未处理范围：
+
+- 未修改业务代码。
+- 未运行命令。
+- 未安装依赖。
+- 未构建。
+- 未提交。
+
+已执行验证：
+
+- 已读取修正后 `DECISIONS.md` D012，确认已改为 Vibe Coding Tool Pool 表述。
+- 已读取修正后 `PROJECT_BRIEF.md` 第 1 段和 D012 摘要，确认一致。
+- 已读取修正后 `AGENTS.md` 第 26-27 行，确认不再写死 OpenCode。
+- 已读取修正后 `HERMES_STEWARD.md` 第 81 行，确认不再写死 OpenCode 为 Harness Caretaker。
+- 已读取修正后 `OPENCODE_USAGE.md` 标题和开头，确认已重新定位。
+- 已读取修正后 `MODEL_ROLES.md` 工具选择参考，确认补回前端体验和审计维度。
+- 已确认 TASK_LOG 模板已恢复为通用占位模板。
+
+未执行验证：
+
+- 未验证 WORKFLOW.md 中是否存在遗漏的 OpenCode 固定岗位表述。
+- 未验证 Obsidian Vault Graph View。
+
+风险：
+
+- 低：WORKFLOW.md 可能仍有 OpenCode 固定岗位残留，但当前不阻塞主流程。
+- 低：历史 TASK_LOG 中的旧记录仍写"执行工具：OpenCode"，属于历史事实，不需要回溯修改。
+
+待确认：
+
+- WORKFLOW.md 是否需要同步修正？（当前未在允许修改列表中）
+
+下一步：
+
+- 用户确认后，可检查 WORKFLOW.md。
+- 或用 Obsidian 打开 Vault 确认 Graph View 正常。
+
+## 2026-06-06
+
+修复 WORKFLOW.md 中 OpenCode 固定配对残留。第 158 行 "→ Hermes / OpenCode 定期消化" 改为 "→ Hermes 主导消化，或由用户指定的 Vibe Coding Tool 辅助整理"。仅修改 WORKFLOW.md，其余文件未动。
 
 ## 任务记录模板
 

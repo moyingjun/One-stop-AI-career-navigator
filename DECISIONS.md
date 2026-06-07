@@ -187,18 +187,25 @@
 - 新增未跟踪文件必须提示。
 - 大型重构必须拆阶段。
 
-## D012 OpenCode 是本地 Harness Runner
+## D012 Vibe Coding Tool Pool 与可替换执行器
 
-状态：已裁决
+状态：已裁决（2026-06-06 修正，覆盖原 D012）
 
 决策：
 
-- OpenCode 的第一阶段定位是本地 Harness Runner，不是主力业务开发器。
-- OpenCode 优先做 Markdown 规则维护、AI_MEMORY 更新、只读总结、小范围低风险任务。
+- Codex / OpenCode / Trae / Kiro / Antigravity / Cursor / Qoder / WorkBuddy / Claude Code / 未来新工具，统一视为可替换 Vibe Coding Tools，没有永久固定职责。
+- 每轮角色由任务提示词临时指定（Implementer / Auditor / Reviewer / Memory Maintainer / Rule Maintainer 等）。
+- 工具名不决定角色，任务模式决定角色。
+- OpenCode 当前常用于 Memory Maintainer / Rule Maintainer，但不是永久固定岗位，不是 Hermes 本体，也不是默认业务开发主力。
 
 影响：
 
-- OpenCode 禁止自动 git add / commit。
-- OpenCode 禁止 npm install / npm run build。
-- OpenCode 禁止修改 Provider / History / ChatDock / TTS / RAG / DB / Auth，除非任务明确要求。
+- 任何 Vibe Coding Tool 都禁止自动 git add / commit。
+- 任何 Vibe Coding Tool 都禁止 npm install / npm run build。
+- 任何 Vibe Coding Tool 都禁止修改 Provider / History / ChatDock / TTS / RAG / DB / Auth，除非任务明确要求。
+- 固定角色只有 Hermes（Project Steward）和 CCSwitch（Provider 路由 / 配置管理中枢）。
+
+冲突裁决：
+
+- 覆盖原 D012 中"OpenCode 是本地 Harness Runner"的固定岗位表述。
 

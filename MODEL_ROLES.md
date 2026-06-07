@@ -8,23 +8,40 @@
 
 工具包括但不限于：
 
-- Kiro
-- OpenCode
 - Codex
+- OpenCode
 - Trae
+- Kiro
 - Antigravity
 - Cursor
+- Qoder
 - WorkBuddy
-- Continue
-- DeepSeek / GLM 接入工具
+- Claude Code
 - 未来新增的 vibe coding 工具
+
+以上工具统一视为 Vibe Coding Tool Pool 中的可替换执行器，没有永久固定职责。本轮角色由任务提示词临时指定。工具名不决定角色，任务模式决定角色。
+
+固定角色只有：Hermes（Project Steward / 管家 / 记录员 / Skill 治理）、CCSwitch（Provider / 路由 / 配置 / Skills / MCP / WebUI 管理中枢）。
 
 任何工具进入项目后，都必须先读取：
 
+- `PROJECT_BRIEF.md`
 - `AGENTS.md`
 - `DECISIONS.md`
+- `HERMES_TOOL_POLICY.md`
+- `AI_MEMORY/CURRENT_STATE.md`
+
+二级参考 / 按需读取：
+
 - `PROJECT_MAP.md`
 - `AI_MEMORY/CONTEXT_BRIEF.md`
+- `MODEL_ROLES.md`
+- `WORKFLOW.md`
+- `TASK_TEMPLATES.md`
+- `CHECKLISTS.md`
+- `HERMES_STEWARD.md`
+- `OPENCODE_USAGE.md`
+- `.kiro/steering/*`
 
 不要因为某个工具以前常用，就默认继续使用。不要因为某个工具能写代码，就给它全仓库权限。
 
@@ -56,73 +73,21 @@
 
 ## 工具选择参考
 
-以下不是固定分工，只是当前选择工具时的参考。具体工具可以是 Kiro、OpenCode、Codex、Trae、Antigravity、Cursor、WorkBuddy、Continue 或未来新增工具。
+以下不是固定分工，只是当前选择工具时的参考。Vibe Coding Tool Pool 中的任何工具都可以承担任何角色，具体由任务提示词临时指定。
 
-### 高智能 / 高成本模型工具
+选择时考虑的因素：
 
-适合：
+- 任务风险等级
+- 当前工具可用模型质量
+- 套餐性价比
+- 是否需要长上下文
+- 是否需要本地文件读写
+- 是否需要前端体验能力（UI polish、组件交互、视觉一致性）
+- 是否需要审计能力（只读核对、风险发现、边界检查）
+- 是否需要低成本重复执行
+- 是否需要高质量架构判断
 
-- 架构判断。
-- 复杂只读审计。
-- 跨模块任务拆解。
-- 高质量规则文档生成。
-- 疑难 bug 小步修复。
-
-使用限制：
-
-- 不做低价值重复任务。
-- 不长期承担每日流水账维护。
-- 不因为模型强就获得全仓库权限。
-
-### 本地管家型工具 / 低成本记忆维护工具
-
-适合：
-
-- `AI_MEMORY` 更新。
-- Markdown 维护。
-- 只读总结。
-- 文件清单核对。
-- 交接摘要。
-- 低风险文档维护。
-
-使用限制：
-
-- 不默认业务代码开发。
-- 不承担跨模块修复。
-- 不默认修改 Provider / History / ChatDock / TTS / RAG / DB / Auth。
-- 不自动安装依赖、构建、提交。
-- 不替代高质量架构判断。
-
-业务开发主力应从 Trae / Kiro / Cursor / Codex / WorkBuddy / Antigravity 等可替换 coding tools 中按当期模型能力和性价比选择。
-
-### 前端体验型工具
-
-适合：
-
-- UI polish。
-- 组件交互微调。
-- 视觉一致性修复。
-- 响应式和可用性检查。
-
-使用限制：
-
-- 不改业务数据流。
-- 不改 Provider / History / DB。
-- 不把 ChatDock 扩成三大功能页替代品。
-
-### 实验型工具
-
-适合：
-
-- 隔离原型。
-- 不确定方案探索。
-- 非主线方案比较。
-
-使用限制：
-
-- 实验不能直接污染主线。
-- 实验结论必须回写为文档或待确认事项。
-- 不把原型代码直接合并到主流程。
+业务开发主力应从 Vibe Coding Tool Pool 中按当期模型能力和性价比选择。
 
 ## 工具选择规则
 

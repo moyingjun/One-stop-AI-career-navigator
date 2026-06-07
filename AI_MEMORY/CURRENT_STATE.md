@@ -149,6 +149,13 @@
 - P2：旧 steering 文档仍写 SQLite，可能误导后续 Agent。
 - P2：`Settings/config.py` 中 `RAG_EMBEDDING_MODEL` 配置为本地模型名称，但实际未使用，疑似历史残留。
 
+## 工具治理状态
+
+- `HERMES_TOOL_POLICY.md` 已建立。
+- Hermes / OpenCode / Codex / Claude Code / CCSwitch 的工具分层已明确。
+- Hermes 当前只允许低风险 Skills / MCP 边界，暂不授予数据库写入、全盘文件写入、GitHub push/merge/release、Secrets、SSH 高权限等能力。
+- Hermes 已成功接入 MiMo，但不强行走 CCSwitch local router。
+
 ## Hermes Steward v0.1 阶段收口（2026-05-29）
 
 **阶段状态：**

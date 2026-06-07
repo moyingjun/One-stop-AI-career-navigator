@@ -1,6 +1,8 @@
-# OpenCode Usage
+# OpenCode Usage（Vibe Coding Tool Pool 参考）
 
-本文件专门定义 OpenCode 在 AI Career Navigator 中的使用边界。OpenCode 第一阶段是本地项目管家控制台 / Harness Caretaker，不是主力业务开发器。
+本文件记录当 Vibe Coding Tool 被分配 Memory Maintainer / Rule Maintainer 角色时的使用边界。这些规则适用于 OpenCode 或任何被分配同类角色的 Vibe Coding Tool。
+
+OpenCode 属于 Vibe Coding Tool Pool，不是永久固定岗位。OpenCode 当前常用于 Memory Maintainer / Rule Maintainer，但不等于 Harness Caretaker 或 Hermes 本体。
 
 OpenCode 不是唯一管家工具。若未来 Cursor、WorkBuddy、Continue、Codex、本地脚本或其他工具更适合承担同类管护角色，也可以替代执行，但必须遵守本文件和 `AGENTS.md`、`DECISIONS.md` 中的同等规则。
 

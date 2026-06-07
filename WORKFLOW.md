@@ -8,10 +8,11 @@
 
 Agent 先读取：
 
+- `PROJECT_BRIEF.md`
 - `AGENTS.md`
 - `DECISIONS.md`
-- `PROJECT_MAP.md`
-- `AI_MEMORY/CONTEXT_BRIEF.md`
+- `HERMES_TOOL_POLICY.md`
+- `AI_MEMORY/CURRENT_STATE.md`
 
 然后判断任务类型：
 
@@ -147,3 +148,12 @@ Agent 先读取：
 跨工具交接、上下文压缩、项目记忆维护、规则演进属于 Hermes Steward 任务范畴。详见 `HERMES_STEWARD.md`。
 
 具体管家执行器可临时选择 OpenCode / Codex / WorkBuddy / 其他工具；业务开发执行器应另按任务风险、模型能力和性价比选择，并必须遵守 Hermes Steward 的行为规范。
+
+## 任务交付记录流
+
+用户 / GPT-5.5 CTO / Hermes 生成任务
+→ Vibe Coding Tool 执行
+→ 输出聊天交付报告
+→ 如任务重要，写入 `AI_MEMORY/INBOX/`
+→ Hermes 主导消化，或由用户指定的 Vibe Coding Tool 辅助整理
+→ 更新 `CURRENT_STATE.md` / `TASK_LOG.md` / `PROJECT_BRIEF.md`

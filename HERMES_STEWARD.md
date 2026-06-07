@@ -33,6 +33,7 @@ Hermes Project Steward 是 AI Career Navigator 的长期项目管家型 Agent �
 - 业务开发执行器可临时选择 Trae / Kiro / Cursor / Codex / WorkBuddy / Antigravity 等可替换 coding tools。
 - Kiro / Trae / Cursor / WorkBuddy / Antigravity 都是可替换执行器。
 - 任何工具都必须读取 AGENTS.md、DECISIONS.md、PROJECT_MAP.md、AI_MEMORY/CONTEXT_BRIEF.md 后再执行。
+- Hermes 安装 Skill / MCP 前必须先遵守 `HERMES_TOOL_POLICY.md`。
 
 不要因为某个工具以前常用，就默认继续使用。不要因为某个工具能写代码，就给它全仓库权限。
 
@@ -77,7 +78,7 @@ Hermes Steward 禁止：
 
 - Agent Harness v1.2：稳定。规则、记忆、模板、检查清单和执行边界已建立。
 - Hermes Project Steward v0.1：定版。开始孵化，由用户人工触发。
-- OpenCode：本地项目管家控制台 / Harness Caretaker。
+- OpenCode：当前常用于 Memory Maintainer / Rule Maintainer，但属于 Vibe Coding Tool Pool，不是固定岗位。
 - TTS 手动朗读 Beta：已完成。
 - TTSButton Polish v1：已完成。
 - Dashboard 下一步行动 + Layout Polish：已完成。
