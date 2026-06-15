@@ -103,6 +103,19 @@
 - 当前用户资料以 `userStore` 最新值为准，历史记录不能反向污染当前资料。
 - 小步提交，避免大改；Agent 不得自动 `git add` 或 `git commit`。
 
+## Python 运行环境规则
+
+- 本项目 Python 环境固定为项目根目录 `.venv`。
+- 禁止 Agent 在本项目中裸运行 `python`、`pip`、`uvicorn`、`celery`。
+- 禁止把项目依赖安装到 Hermes venv。
+- PowerShell 启动后端必须调用：
+  `.\scripts\start-backend.ps1`
+- Git Bash / Hermes Desktop 启动后端必须调用：
+  `bash scripts/start-backend.sh`
+- 安装依赖必须通过项目 `.venv\Scripts\python.exe -m pip`。
+- 若检测到解释器或 `sys.path` 包含 `hermes-agent`，必须停止。
+- 项目启动脚本会在自身执行范围内清理外部 Agent 注入的 `PYTHONPATH` / `PYTHONHOME`；不得因此修改用户级或系统级环境变量。
+
 ## 禁止事项
 
 除非用户在当前任务中明确要求，否则禁止：
