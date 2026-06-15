@@ -8,6 +8,7 @@ Service/Utils/tasks.py — Celery 异步任务定义
 """
 
 import logging
+import time
 
 import resend
 
@@ -15,6 +16,17 @@ from Service.Settings.config import RESEND_API_KEY
 from Service.Utils.celery_app import celery_app
 
 logger = logging.getLogger(__name__)
+
+
+def _mask_email(email: str) -> str:
+    """脱敏邮箱：m***@domain.com"""
+    email = str(email or "")
+    if "@" not in email:
+        return "***"
+    local, domain = email.split("@", 1)
+    if not local:
+        return f"***@{domain}"
+    return f"{local[0]}***@{domain}"
 
 # 配置 Resend API Key（在 worker 进程中初始化一次即可）
 resend.api_key = RESEND_API_KEY
@@ -46,6 +58,14 @@ def send_verification_email(self, email: str, code: str) -> dict:
         发送失败时自动重试（最多 3 次），超出重试次数后抛出异常
     """
     try:
+        masked = _mask_email(email)
+        task_id = self.request.id or "unknown"
+        retry_count = self.request.retries
+        logger.info(
+            "[auth-email] stage=task_start email=%s task_id=%s retry=%d/%d",
+            masked, task_id, retry_count, self.max_retries,
+        )
+
         # 1. 纯文本备份（html + text 双通道，物理降低垃圾邮件评分）
         text_content = (
             f"【One-stop AI Navigator】尊敬的先生/女士，您好！\n\n"
@@ -158,17 +178,39 @@ def send_verification_email(self, email: str, code: str) -> dict:
             "text": text_content,
             "html": html_content,
         }
+        logger.info(
+            "[auth-email] stage=resend_start email=%s task_id=%s retry=%d/%d",
+            masked,
+            task_id,
+            retry_count,
+            self.max_retries,
+        )
+        t_resend_start = time.monotonic()
         response = resend.Emails.send(params)
-        logger.info("验证码邮件发送成功 | email=%s | resend_id=%s", email, response.get("id"))
+        resend_ms = int((time.monotonic() - t_resend_start) * 1000)
+        resend_id = response.get("id", "unknown")
+        logger.info(
+            "[auth-email] stage=resend_done email=%s elapsed_ms=%d task_id=%s retry=%d/%d resend_id=%s",
+            masked,
+            resend_ms,
+            task_id,
+            retry_count,
+            self.max_retries,
+            resend_id,
+        )
         return {"status": "sent", "email": email}
 
     except Exception as exc:
+        masked = _mask_email(email)
+        task_id = self.request.id or "unknown"
+        retry_count = self.request.retries
         logger.warning(
-            "验证码邮件发送失败，准备重试 | email=%s | error=%s | retry=%d/%d",
-            email,
-            str(exc),
-            self.request.retries,
+            "[auth-email] stage=resend_failed email=%s task_id=%s retry=%d/%d error_type=%s",
+            masked,
+            task_id,
+            retry_count,
             self.max_retries,
+            type(exc).__name__,
         )
         # 自动重试，超出 max_retries 后异常会被 Celery 记录为 FAILURE
         raise self.retry(exc=exc)

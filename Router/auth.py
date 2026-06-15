@@ -11,6 +11,8 @@ Router/auth.py — JWT 鉴权路由模块
 执行铁律：Router 绝不包含验证码核对、密码哈希、数据库操作等底层业务逻辑。
 """
 
+import logging
+import time
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -22,6 +24,19 @@ from Service import auth_service
 from Service.Settings.config import JWT_ALGORITHM, JWT_EXPIRE_DAYS, JWT_SECRET_KEY
 from Service.Utils.databases.db import get_db
 from Service.Utils.captcha_utils import verify_turnstile
+
+logger = logging.getLogger(__name__)
+
+
+def _mask_email(email: str) -> str:
+    """脱敏邮箱：m***@domain.com"""
+    email = str(email or "")
+    if "@" not in email:
+        return "***"
+    local, domain = email.split("@", 1)
+    if not local:
+        return f"***@{domain}"
+    return f"{local[0]}***@{domain}"
 
 # ─────────────────────────────────────────────
 # JWT 配置校验（启动时 fail-fast）
@@ -77,13 +92,37 @@ async def send_code(
       2. 委托 auth_service.request_email_code() 处理业务逻辑
       3. 返回 200 {"msg": "验证码发送中"}
     """
+    t_req_start = time.monotonic()
+    masked = _mask_email(request.email)
+    logger.info("[auth-email] stage=router_start email=%s", masked)
+
     # 步骤 1：人机验证（Router 层职责：协议安全门控）
+    t0 = time.monotonic()
     captcha_ok = await verify_turnstile(request.captcha_token)
+    captcha_ms = int((time.monotonic() - t0) * 1000)
     if not captcha_ok:
+        elapsed_ms = int((time.monotonic() - t_req_start) * 1000)
+        logger.warning(
+            "[auth-email] stage=router_captcha_failed email=%s elapsed_ms=%d captcha_elapsed_ms=%d",
+            masked,
+            elapsed_ms,
+            captcha_ms,
+        )
         raise HTTPException(status_code=403, detail="人机验证失败，请刷新页面重试")
 
     # 步骤 2：委托 Service 层（冷却检查、验证码生成、数据库写入、Celery 推送）
+    t0 = time.monotonic()
     await auth_service.request_email_code(email=request.email, db=db)
+    service_ms = int((time.monotonic() - t0) * 1000)
+
+    total_ms = int((time.monotonic() - t_req_start) * 1000)
+    logger.info(
+        "[auth-email] stage=router_end email=%s elapsed_ms=%d captcha_elapsed_ms=%d service_elapsed_ms=%d",
+        masked,
+        total_ms,
+        captcha_ms,
+        service_ms,
+    )
 
     return {"msg": "验证码发送中"}
 

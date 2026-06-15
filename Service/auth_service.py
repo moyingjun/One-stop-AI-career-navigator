@@ -14,8 +14,10 @@ Router 层只负责 HTTP 协议处理，具体业务均委托此模块。
     register_with_code 验证码通过后原子性创建 User 记录，is_verified=True。
 """
 
+import logging
 import random
 import string
+import time
 from datetime import datetime, timedelta, timezone
 
 from fastapi import HTTPException
@@ -25,6 +27,19 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from Service.Utils.databases.models.user_model import EmailLog, User
 from Service.Utils.tasks import send_verification_email
+
+logger = logging.getLogger(__name__)
+
+
+def _mask_email(email: str) -> str:
+    """脱敏邮箱：m***@domain.com"""
+    email = str(email or "")
+    if "@" not in email:
+        return "***"
+    local, domain = email.split("@", 1)
+    if not local:
+        return f"***@{domain}"
+    return f"{local[0]}***@{domain}"
 
 # ─────────────────────────────────────────────
 # 常量
@@ -85,6 +100,8 @@ async def request_email_code(email: str, db: AsyncSession) -> None:
         HTTPException(429) — 发送过于频繁（冷却中）
         HTTPException(500) — 数据库写入失败
     """
+    masked = _mask_email(email)
+    logger.info("[auth-email] stage=service_start email=%s", masked)
     now = _utc_now()
 
     # ── 步骤 1：查询该邮箱对应的 User（后续冷却检查和拦截均依赖此结果）──
@@ -151,17 +168,35 @@ async def request_email_code(email: str, db: AsyncSession) -> None:
         db.add(email_log)
 
     # ── 步骤 4：提交事务，确保数据完全落库 ──
+    t_commit_start = time.monotonic()
     try:
         await db.commit()
     except Exception as exc:
         await db.rollback()
+        commit_ms = int((time.monotonic() - t_commit_start) * 1000)
+        logger.error(
+            "[auth-email] stage=db_commit_failed email=%s elapsed_ms=%d error_type=%s",
+            masked,
+            commit_ms,
+            type(exc).__name__,
+        )
         raise HTTPException(
             status_code=500,
             detail="数据库写入失败，请稍后重试",
         ) from exc
+    commit_ms = int((time.monotonic() - t_commit_start) * 1000)
+    logger.info("[auth-email] stage=db_commit email=%s elapsed_ms=%d", masked, commit_ms)
 
     # ── 步骤 5：数据落库后，推入 Celery 异步队列 ──
-    send_verification_email.delay(email, code)
+    enqueue_start = time.monotonic()
+    task = send_verification_email.delay(email, code)
+    enqueue_ms = int((time.monotonic() - enqueue_start) * 1000)
+    logger.info(
+        "[auth-email] stage=enqueue email=%s elapsed_ms=%d task_id=%s",
+        masked,
+        enqueue_ms,
+        task.id,
+    )
 
 
 async def register_with_code(
