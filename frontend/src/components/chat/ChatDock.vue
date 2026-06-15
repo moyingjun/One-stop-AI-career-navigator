@@ -231,7 +231,8 @@ defineExpose({ focus, setInput, scrollToBottom })
   box-shadow:
     0 8px 24px rgba(0, 0, 0, 0.38),
     0 0 14px rgba(var(--accent-rgb), 0.22);
-  animation: chat-dock-pill-breathe 3.2s ease-in-out infinite;
+  animation: chat-dock-pill-breathe 8s ease-in-out infinite;
+  will-change: transform;
 }
 .chat-dock-collapsed:hover {
   border-color: rgba(var(--accent-secondary-rgb), 0.6) !important;
@@ -242,14 +243,10 @@ defineExpose({ focus, setInput, scrollToBottom })
 
 @keyframes chat-dock-pill-breathe {
   0%, 100% {
-    box-shadow:
-      0 8px 24px rgba(0, 0, 0, 0.38),
-      0 0 10px rgba(var(--accent-rgb), 0.18);
+    transform: translateZ(0) scale(1);
   }
   50% {
-    box-shadow:
-      0 8px 28px rgba(0, 0, 0, 0.42),
-      0 0 20px rgba(var(--accent-secondary-rgb), 0.28);
+    transform: translateZ(0) scale(1.012);
   }
 }
 

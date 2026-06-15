@@ -618,14 +618,32 @@ const typeWriter = () => {
   }
 }
 
-// 鼠标跟随微光效果
-const mouseX = ref(50)
-const mouseY = ref(50)
+// 鼠标跟随微光效果：直接写 CSS 变量，避免 mousemove 高频触发 Vue 渲染。
+const mouseGlowRef = ref(null)
+let mouseGlowFrame = null
+let lastMouseGlowUpdate = 0
+let pendingMouseX = 50
+let pendingMouseY = 50
+const MOUSE_GLOW_FRAME_MS = 1000 / 30
+
+const flushMouseGlow = () => {
+  mouseGlowFrame = null
+  const el = mouseGlowRef.value
+  if (!el || document.hidden) return
+  el.style.setProperty('--mouse-glow-x', `${pendingMouseX}vw`)
+  el.style.setProperty('--mouse-glow-y', `${pendingMouseY}vh`)
+}
+
 const handleMouseMove = (e) => {
-  const x = (e.clientX / window.innerWidth) * 100
-  const y = (e.clientY / window.innerHeight) * 100
-  mouseX.value = x
-  mouseY.value = y
+  if (document.hidden) return
+  const now = performance.now()
+  if (now - lastMouseGlowUpdate < MOUSE_GLOW_FRAME_MS) return
+  lastMouseGlowUpdate = now
+  pendingMouseX = (e.clientX / window.innerWidth) * 100
+  pendingMouseY = (e.clientY / window.innerHeight) * 100
+  if (mouseGlowFrame == null) {
+    mouseGlowFrame = requestAnimationFrame(flushMouseGlow)
+  }
 }
 
 const confirmResumeUpdate = () => {
@@ -781,6 +799,10 @@ const featureTrackStyle = computed(() => ({
 }))
 
 let jumpTimer = null
+let jumpFrame = null
+let autoPlayResumeTimer = null
+let isFeatureSliderHovered = false
+const AUTOPLAY_RESUME_DELAY = 5000
 
 const checkAndJump = () => {
   const len = FEATURE_COUNT
@@ -792,26 +814,45 @@ const checkAndJump = () => {
     isTransitioning.value = false
     virtualIndex.value = targetIndex
     nextTick(() => {
-      document.body.offsetHeight
-      isTransitioning.value = true
+      if (jumpFrame != null) cancelAnimationFrame(jumpFrame)
+      jumpFrame = requestAnimationFrame(() => {
+        jumpFrame = null
+        isTransitioning.value = true
+      })
     })
   }
 }
 
-const slideFeature = (direction) => {
+const scheduleAutoPlayRestart = (delay = AUTOPLAY_RESUME_DELAY) => {
+  if (autoPlayResumeTimer) clearTimeout(autoPlayResumeTimer)
+  if (document.hidden || isFeatureSliderHovered) return
+  autoPlayResumeTimer = setTimeout(() => {
+    autoPlayResumeTimer = null
+    startAutoPlay()
+  }, delay)
+}
+
+const slideFeature = (direction, userInitiated = false) => {
   if (!isTransitioning.value) return
+  if (userInitiated) {
+    stopAutoPlay()
+    scheduleAutoPlayRestart()
+  }
   virtualIndex.value += direction
   if (jumpTimer) clearTimeout(jumpTimer)
   jumpTimer = setTimeout(checkAndJump, TRANSITION_DURATION + 20)
 }
 
 const setActiveFeature = (index) => {
+  stopAutoPlay()
   virtualIndex.value = FEATURE_COUNT + index
+  scheduleAutoPlayRestart()
 }
 
 let autoPlayTimer = null
 
 const startAutoPlay = () => {
+  if (document.hidden || isFeatureSliderHovered) return
   if (autoPlayTimer) clearInterval(autoPlayTimer)
   autoPlayTimer = setInterval(() => {
     slideFeature(1)
@@ -825,14 +866,42 @@ const stopAutoPlay = () => {
   }
 }
 
+const handleFeatureSliderEnter = () => {
+  isFeatureSliderHovered = true
+  if (autoPlayResumeTimer) {
+    clearTimeout(autoPlayResumeTimer)
+    autoPlayResumeTimer = null
+  }
+  stopAutoPlay()
+}
+
+const handleFeatureSliderLeave = () => {
+  isFeatureSliderHovered = false
+  scheduleAutoPlayRestart(800)
+}
+
+const handleVisibilityChange = () => {
+  if (document.hidden) {
+    stopAutoPlay()
+    if (autoPlayResumeTimer) {
+      clearTimeout(autoPlayResumeTimer)
+      autoPlayResumeTimer = null
+    }
+    return
+  }
+  scheduleAutoPlayRestart(800)
+}
+
 const onCardClick = (index, feature) => {
   if (index === virtualIndex.value) {
     handleFeatureAction(feature)
   } else {
     if (!isTransitioning.value) return
+    stopAutoPlay()
     virtualIndex.value = index
     if (jumpTimer) clearTimeout(jumpTimer)
     jumpTimer = setTimeout(checkAndJump, TRANSITION_DURATION + 20)
+    scheduleAutoPlayRestart()
   }
 }
 
@@ -1200,14 +1269,18 @@ const systemCarouselTexts = [
 const carouselIndex = ref(0)
 const carouselFade = ref(true)
 let carouselTimer = null
+let carouselFadeTimer = null
 
 const startCarousel = () => {
   if (carouselTimer) clearInterval(carouselTimer)
   carouselTimer = setInterval(() => {
+    if (document.hidden) return
     carouselFade.value = false
-    setTimeout(() => {
+    if (carouselFadeTimer) clearTimeout(carouselFadeTimer)
+    carouselFadeTimer = setTimeout(() => {
       carouselIndex.value = (carouselIndex.value + 1) % systemCarouselTexts.length
       carouselFade.value = true
+      carouselFadeTimer = null
     }, 300)
   }, 4000)
 }
@@ -1518,6 +1591,7 @@ onMounted(() => {
   startAutoPlay()
   window.addEventListener('mousemove', handleMouseMove)
   window.addEventListener('storage', handleStorageChange)
+  document.addEventListener('visibilitychange', handleVisibilityChange)
   playConsoleAnimation()
   loadHistory()
   loadDashboardBentoRecords()
@@ -1531,12 +1605,30 @@ onUnmounted(() => {
   if (carouselTimer) {
     clearInterval(carouselTimer)
   }
+  if (carouselFadeTimer) {
+    clearTimeout(carouselFadeTimer)
+  }
   if (toastTimer) {
     clearTimeout(toastTimer)
+  }
+  if (jumpTimer) {
+    clearTimeout(jumpTimer)
+  }
+  if (autoPlayResumeTimer) {
+    clearTimeout(autoPlayResumeTimer)
+  }
+  if (jumpFrame != null) {
+    cancelAnimationFrame(jumpFrame)
+    jumpFrame = null
+  }
+  if (mouseGlowFrame != null) {
+    cancelAnimationFrame(mouseGlowFrame)
+    mouseGlowFrame = null
   }
   stopAutoPlay()
   window.removeEventListener('mousemove', handleMouseMove)
   window.removeEventListener('storage', handleStorageChange)
+  document.removeEventListener('visibilitychange', handleVisibilityChange)
   // 组件卸载时取消任何 in-flight 的雷达图请求，避免内存泄漏
   if (radarAbortController) {
     radarAbortController.abort()
@@ -1605,11 +1697,11 @@ onUnmounted(() => {
     </Teleport>
     <!-- 背景光影效果 -->
     <div class="absolute top-0 left-0 w-full h-full z-0 pointer-events-none overflow-hidden">
-      <div class="absolute top-[-10%] left-[-5%] w-[50vw] h-[50vw] bg-purple-600/35 blur-[150px] rounded-full mix-blend-screen animate-ambient-1 pointer-events-none"></div>
+      <div class="absolute top-[-10%] left-[-5%] w-[46vw] h-[46vw] bg-purple-600/30 blur-[120px] rounded-full mix-blend-screen pointer-events-none"></div>
       
-      <div class="absolute bottom-[-10%] right-[-5%] w-[50vw] h-[50vw] bg-cyan-600/30 blur-[150px] rounded-full mix-blend-screen animate-ambient-2 pointer-events-none"></div>
+      <div class="absolute bottom-[-10%] right-[-5%] w-[46vw] h-[46vw] bg-cyan-600/24 blur-[120px] rounded-full mix-blend-screen pointer-events-none"></div>
       
-      <div class="absolute top-[45%] left-[50%] -translate-x-1/2 -translate-y-1/2 w-[80vw] h-[30vw] bg-indigo-500/25 blur-[120px] rounded-[100%] mix-blend-screen animate-ambient-center pointer-events-none"></div>
+      <div class="absolute top-[45%] left-[50%] -translate-x-1/2 -translate-y-1/2 w-[68vw] h-[24vw] bg-indigo-500/18 blur-[96px] rounded-[100%] mix-blend-screen animate-ambient-center pointer-events-none"></div>
       <div class="absolute inset-0 z-[-1] opacity-[0.03]" style="background-image: linear-gradient(rgba(255,255,255,1) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,1) 1px, transparent 1px); background-size: 40px 40px; mask-image: radial-gradient(circle at 50% 50%, black 40%, transparent 80%); -webkit-mask-image: radial-gradient(circle at 50% 50%, black 40%, transparent 80%);"></div>
       <div class="absolute inset-0 z-[1] opacity-[0.02] mix-blend-overlay pointer-events-none" style="background-image: url('data:image/svg+xml,%3Csvg viewBox=%220 0 200 200%22 xmlns=%22http://www.w3.org/2000/svg%22%3E%3Cfilter id=%22noiseFilter%22%3E%3CfeTurbulence type=%22fractalNoise%22 baseFrequency=%220.85%22 numOctaves=%223%22 stitchTiles=%22stitch%22/%3E%3C/filter%3E%3Crect width=%22100%25%22 height=%22100%25%22 filter=%22url(%23noiseFilter)%22/%3E%3C/svg%3E');"></div>
     </div>
@@ -1756,8 +1848,8 @@ onUnmounted(() => {
           <div class="main-content flex-1 overflow-hidden relative flex flex-col">
             <!-- 鼠标跟随环境光 -->
             <div 
-              class="absolute w-[600px] h-[600px] bg-purple-600/15 rounded-full blur-[150px] pointer-events-none z-0 transition-all duration-700 ease-out"
-              :style="{ left: `calc(${mouseX}% - 300px)`, top: `calc(${mouseY}% - 300px)` }"
+              ref="mouseGlowRef"
+              class="dashboard-mouse-glow absolute w-[600px] h-[600px] bg-purple-600/15 rounded-full blur-[150px] pointer-events-none z-0 transition-transform duration-700 ease-out"
             ></div>
             <div class="absolute bottom-20 right-10 w-[600px] h-[600px] bg-cyan-600/10 rounded-full blur-[150px] pointer-events-none z-0"></div>
             
@@ -1808,11 +1900,11 @@ onUnmounted(() => {
 
                 <div
                   class="feature-slider-wrapper relative w-full overflow-hidden h-[320px]"
-                  @mouseenter="stopAutoPlay"
-                  @mouseleave="startAutoPlay"
+                  @mouseenter="handleFeatureSliderEnter"
+                  @mouseleave="handleFeatureSliderLeave"
                 >
                   <button
-                    @click.stop="slideFeature(-1)"
+                    @click.stop="slideFeature(-1, true)"
                     class="pointer-events-auto absolute left-2 top-1/2 -translate-y-1/2 z-30 w-10 h-10 rounded-full bg-black/50 backdrop-blur border border-white/10 text-gray-300 hover:text-white hover:border-cyan-300/50 hover:bg-cyan-500/20 hover:shadow-[0_0_22px_rgba(34,211,238,0.28)] transition-all duration-300 flex items-center justify-center"
                     aria-label="上一张"
                   >
@@ -1867,7 +1959,7 @@ onUnmounted(() => {
                   </div>
 
                   <button
-                    @click.stop="slideFeature(1)"
+                    @click.stop="slideFeature(1, true)"
                     class="pointer-events-auto absolute right-2 top-1/2 -translate-y-1/2 z-30 w-10 h-10 rounded-full bg-black/50 backdrop-blur border border-white/10 text-gray-300 hover:text-white hover:border-cyan-300/50 hover:bg-cyan-500/20 hover:shadow-[0_0_22px_rgba(34,211,238,0.28)] transition-all duration-300 flex items-center justify-center"
                     aria-label="下一张"
                   >
@@ -2203,7 +2295,7 @@ onUnmounted(() => {
                   <div class="relative flex-1 overflow-hidden">
                     <transition name="widget-fade" mode="out-in">
                       <div v-if="activeDataTab === 'resume'" key="resume" class="flex flex-col">
-                        <CyberRadarChart :chartData="displayedRadarData" style="height: 220px;" class="-mt-4 -mb-2" />
+                        <CyberRadarChart :chartData="displayedRadarData" height="220px" class="-mt-4 -mb-2" />
                         <div class="grid grid-cols-2 gap-x-4 gap-y-3">
                           <div v-for="(item, idx) in displayedRadarItems" :key="'resume-' + item.name">
                             <div class="flex justify-between text-xs text-gray-500 mb-1">
@@ -2218,7 +2310,7 @@ onUnmounted(() => {
                       </div>
 
                       <div v-else-if="activeDataTab === 'interview'" key="interview" class="flex flex-col">
-                        <CyberRadarChart :chartData="displayedRadarData" style="height: 220px;" class="-mt-4 -mb-2" />
+                        <CyberRadarChart :chartData="displayedRadarData" height="220px" class="-mt-4 -mb-2" />
                         <div class="grid grid-cols-2 gap-x-4 gap-y-3">
                           <div v-for="(item, idx) in displayedRadarItems" :key="'interview-' + item.name">
                             <div class="flex justify-between text-xs text-gray-500 mb-1">
@@ -2654,6 +2746,17 @@ onUnmounted(() => {
   will-change: transform;
 }
 
+.dashboard-mouse-glow {
+  left: 0;
+  top: 0;
+  transform: translate3d(
+    calc(var(--mouse-glow-x, 50vw) - 300px),
+    calc(var(--mouse-glow-y, 50vh) - 300px),
+    0
+  );
+  will-change: transform;
+}
+
 .toast-slide-enter-active,
 .toast-slide-leave-active {
   transition: opacity 0.25s ease, transform 0.25s ease;
@@ -2897,32 +3000,14 @@ button.bg-gradient-to-r.from-purple-500.to-indigo-600 {
   filter: blur(0);
 }
 
-/* Dashboard 专属极光沉浮动画 */
-@keyframes ambient-drift-1 {
-  0%, 100% { transform: translate(0, 0) scale(1); opacity: 0.7; }
-  50% { transform: translate(3vw, 5vh) scale(1.1); opacity: 1; }
-}
-
-@keyframes ambient-drift-2 {
-  0%, 100% { transform: translate(0, 0) scale(1); opacity: 0.6; }
-  50% { transform: translate(-4vw, -4vh) scale(1.15); opacity: 1; }
-}
-
+/* Dashboard 专属极光沉浮动画：只保留一个慢速 transform/opacity 动层。 */
 @keyframes ambient-center-pulse {
   0%, 100% { opacity: 0.4; transform: translate(-50%, -50%) scale(0.95); }
   50% { opacity: 0.9; transform: translate(-50%, -50%) scale(1.05); }
 }
 
-.animate-ambient-1 {
-  animation: ambient-drift-1 12s ease-in-out infinite;
-}
-
-.animate-ambient-2 {
-  animation: ambient-drift-2 15s ease-in-out infinite;
-}
-
 .animate-ambient-center {
-  animation: ambient-center-pulse 8s ease-in-out infinite;
+  animation: ambient-center-pulse 24s ease-in-out infinite;
 }
 
 .left-sidebar::-webkit-scrollbar,

@@ -1,5 +1,5 @@
 <script setup>
-import { computed } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 
 // ECharts tree-shaking imports
 import { use } from 'echarts/core'
@@ -17,10 +17,17 @@ const props = defineProps({
   chartData: {
     type: Object,
     default: null
+  },
+  height: {
+    type: String,
+    default: '220px'
   }
 })
 
 const userStore = useUserStore()
+const chartRoot = ref(null)
+const chartVisible = ref(true)
+let chartObserver = null
 
 // 若未传入 chartData，则默认读取 userStore.radarData
 const radarData = computed(() => props.chartData || userStore.radarData)
@@ -90,8 +97,33 @@ const radarOption = computed(() => ({
     }]
   }]
 }))
+
+const chartStyle = computed(() => ({
+  height: props.height,
+  width: '100%'
+}))
+
+onMounted(() => {
+  if (!('IntersectionObserver' in window) || !chartRoot.value) return
+  chartObserver = new IntersectionObserver(
+    ([entry]) => {
+      chartVisible.value = !!entry?.isIntersecting
+    },
+    { threshold: 0.01 }
+  )
+  chartObserver.observe(chartRoot.value)
+})
+
+onBeforeUnmount(() => {
+  if (chartObserver) {
+    chartObserver.disconnect()
+    chartObserver = null
+  }
+})
 </script>
 
 <template>
-  <v-chart :option="radarOption" style="height: 300px; width: 100%;" :autoresize="true" />
+  <div ref="chartRoot" class="cyber-radar-chart" :style="chartStyle">
+    <v-chart :option="radarOption" style="height: 100%; width: 100%;" :autoresize="chartVisible" />
+  </div>
 </template>

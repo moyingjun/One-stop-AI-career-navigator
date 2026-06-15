@@ -1,5 +1,5 @@
 <script setup>
-import { ref, nextTick, watch } from 'vue'
+import { ref, computed, nextTick, onBeforeUnmount, watch } from 'vue'
 import { Bot, Loader2 } from 'lucide-vue-next'
 import { renderSafeMarkdown } from '@/utils/safeMarkdown.js'
 import { useChatSessionStore } from '@/stores/chatSessionStore'
@@ -29,8 +29,52 @@ const props = defineProps({
 const chatStore = useChatSessionStore()
 
 const containerRef = ref(null)
+const renderTick = ref(0)
+const markdownCache = new Map()
+const MARKDOWN_BATCH_MS = 80
+const SCROLL_BATCH_MS = 80
+const MARKDOWN_CACHE_LIMIT = 80
+let scrollTimer = null
+let scrollFrame = null
+let markdownBatchTimer = null
 
-function scrollToBottom() {
+function pruneMarkdownCache() {
+  while (markdownCache.size > MARKDOWN_CACHE_LIMIT) {
+    const firstKey = markdownCache.keys().next().value
+    markdownCache.delete(firstKey)
+  }
+}
+
+function cacheMarkdown(key, entry) {
+  markdownCache.set(key, entry)
+  pruneMarkdownCache()
+}
+
+function getCacheKey(index, message) {
+  return `${chatStore.currentSessionId}:${index}:${message?.role || 'unknown'}`
+}
+
+function getRenderedMarkdown(message, index, isStreaming, tick) {
+  if (message?.role !== 'ai') return ''
+  const content = message.content || ''
+  const key = getCacheKey(index, message)
+  const cached = markdownCache.get(key)
+
+  if (isStreaming) {
+    if (cached && cached.tick === tick) return cached.html
+    const html = renderSafeMarkdown(content)
+    cacheMarkdown(key, { content, html, tick, streaming: true })
+    return html
+  }
+
+  if (cached && !cached.streaming && cached.content === content) return cached.html
+  const html = renderSafeMarkdown(content)
+  cacheMarkdown(key, { content, html, tick: -1, streaming: false })
+  return html
+}
+
+function flushScrollToBottom() {
+  scrollFrame = null
   nextTick(() => {
     if (containerRef.value) {
       containerRef.value.scrollTop = containerRef.value.scrollHeight
@@ -38,9 +82,26 @@ function scrollToBottom() {
   })
 }
 
+function scrollToBottom() {
+  if (scrollTimer || scrollFrame) return
+  scrollTimer = setTimeout(() => {
+    scrollTimer = null
+    scrollFrame = requestAnimationFrame(flushScrollToBottom)
+  }, SCROLL_BATCH_MS)
+}
+
+function scheduleMarkdownRefresh() {
+  if (markdownBatchTimer) return
+  markdownBatchTimer = setTimeout(() => {
+    markdownBatchTimer = null
+    renderTick.value += 1
+  }, MARKDOWN_BATCH_MS)
+}
+
 // 自动滚动：消息变化时滚到底部
 watch(() => props.messages.length, () => {
   scrollToBottom()
+  if (props.messages.length === 0) markdownCache.clear()
 })
 
 // streaming 内容变化时也滚动
@@ -49,7 +110,24 @@ watch(
     const last = props.messages[props.messages.length - 1]
     return last?.content?.length || 0
   },
-  () => { scrollToBottom() }
+  () => {
+    if (props.isLoading) scheduleMarkdownRefresh()
+    scrollToBottom()
+  }
+)
+
+watch(
+  () => props.isLoading,
+  (loading) => {
+    if (!loading) {
+      if (markdownBatchTimer) {
+        clearTimeout(markdownBatchTimer)
+        markdownBatchTimer = null
+      }
+      renderTick.value += 1
+      scrollToBottom()
+    }
+  }
 )
 
 /**
@@ -63,7 +141,26 @@ const isLastStreamingAI = (index, message) => {
   return last && last === message && index === props.messages.length - 1
 }
 
+const renderedMessages = computed(() => {
+  const tick = renderTick.value
+  return props.messages.map((message, index) => {
+    const streaming = isLastStreamingAI(index, message)
+    return {
+      message,
+      index,
+      html: getRenderedMarkdown(message, index, streaming, tick)
+    }
+  })
+})
+
 defineExpose({ scrollToBottom })
+
+onBeforeUnmount(() => {
+  if (scrollTimer) clearTimeout(scrollTimer)
+  if (scrollFrame) cancelAnimationFrame(scrollFrame)
+  if (markdownBatchTimer) clearTimeout(markdownBatchTimer)
+  markdownCache.clear()
+})
 </script>
 
 <template>
@@ -71,12 +168,12 @@ defineExpose({ scrollToBottom })
     ref="containerRef"
     class="chat-message-list flex-1 overflow-y-auto custom-scrollbar space-y-3 pr-1"
   >
-    <div v-for="(message, index) in messages" :key="index" class="chat-message">
+    <div v-for="item in renderedMessages" :key="item.index" class="chat-message">
       <!-- 用户消息 -->
-      <div v-if="message.role === 'user'" class="flex justify-end">
+      <div v-if="item.message.role === 'user'" class="flex justify-end">
         <div class="max-w-[80%] bg-gradient-to-r from-fuchsia-500/20 to-purple-500/20 border border-fuchsia-500/30 rounded-xl p-3 text-right">
-          <p class="text-sm text-gray-200">{{ message.content }}</p>
-          <p class="text-xs text-gray-500 mt-1">{{ message.timestamp }}</p>
+          <p class="text-sm text-gray-200">{{ item.message.content }}</p>
+          <p class="text-xs text-gray-500 mt-1">{{ item.message.timestamp }}</p>
         </div>
       </div>
       <!-- AI 消息 -->
@@ -85,15 +182,15 @@ defineExpose({ scrollToBottom })
           <Bot class="w-4 h-4 text-cyan-400" />
         </div>
         <div class="max-w-[80%] bg-gradient-to-r from-gray-800/50 to-gray-900/50 border border-white/10 rounded-xl p-3">
-          <div class="text-sm text-gray-200 chat-markdown" v-html="renderSafeMarkdown(message.content || '')"></div>
+          <div class="text-sm text-gray-200 chat-markdown" v-html="item.html"></div>
           <div class="mt-1 flex items-center gap-2">
-            <p class="text-xs text-gray-500 flex-1">{{ message.timestamp }}</p>
+            <p class="text-xs text-gray-500 flex-1">{{ item.message.timestamp }}</p>
             <!-- TTS 朗读按钮(Beta):cacheKey = 会话 id + 索引,保证重复点击零网络 -->
             <TTSButton
-              v-if="(message.content || '').trim()"
-              :text="message.content || ''"
-              :cache-key="`${chatStore.currentSessionId}:${index}`"
-              :disabled="isLastStreamingAI(index, message)"
+              v-if="(item.message.content || '').trim()"
+              :text="item.message.content || ''"
+              :cache-key="`${chatStore.currentSessionId}:${item.index}`"
+              :disabled="isLastStreamingAI(item.index, item.message)"
             />
           </div>
         </div>
