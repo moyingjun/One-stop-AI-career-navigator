@@ -1,33 +1,17 @@
 """鉴权路由的 Pydantic 请求/响应模型。"""
 
-import re
-
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, EmailStr, field_validator
 
 
-EMAIL_PATTERN = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
-
-
-class EmailRequestBase(BaseModel):
-    """共享的轻量邮箱校验，避免运行时依赖 email-validator。"""
-    email: str
-
-    @field_validator("email")
-    @classmethod
-    def email_format(cls, v: str) -> str:
-        email = v.strip()
-        if not EMAIL_PATTERN.match(email):
-            raise ValueError("邮箱格式错误")
-        return email
-
-
-class SendCodeRequest(EmailRequestBase):
+class SendCodeRequest(BaseModel):
     """发送验证码请求体。"""
+    email: EmailStr
     captcha_token: str  # Cloudflare Turnstile 前端生成的验证 token
 
 
-class RegisterRequest(EmailRequestBase):
+class RegisterRequest(BaseModel):
     """注册请求体（邮箱验证码注册）。"""
+    email: EmailStr
     password: str
     code: str  # 6 位数字验证码
 
@@ -46,8 +30,9 @@ class RegisterRequest(EmailRequestBase):
         return v
 
 
-class LoginRequest(EmailRequestBase):
+class LoginRequest(BaseModel):
     """登录请求体（邮箱 + 密码）。"""
+    email: EmailStr
     password: str
 
 
